@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Newslet - daily RSS newsletter app (two Lambdas + HttpApi + DynamoDB)
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    Description: Deployment stage name (used for API stage and resource naming)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    CodeUri: ../
+
+Resources:
+
+  # ---------- HTTP API ----------
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+
+  # ---------- DynamoDB Tables ----------
+  FeedsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: url
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url
+          KeyType: HASH
+
+  ProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  SeenArticlesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: url_hash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url_hash
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  IssuesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: date
+          KeyType: HASH
+
+  FeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: article_url
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      KeySchema:
+        - AttributeName: article_url
+          KeyType: HASH
+        - AttributeName: ts
+          KeyType: RANGE
+
+  # ---------- Lambda Functions ----------
+  DigestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: newslet.handlers.digest.handler
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfileTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SeenArticlesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IssuesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedbackTable
+      Environment:
+        Variables:
+          TABLE_FEEDS: !Ref FeedsTable
+          TABLE_PROFILE: !Ref ProfileTable
+          TABLE_SEEN: !Ref SeenArticlesTable
+          TABLE_ISSUES: !Ref IssuesTable
+          TABLE_FEEDBACK: !Ref FeedbackTable
+          ANTHROPIC_API_KEY: !Sub '{{resolve:ssm:/newslet/anthropic-api-key}}'
+          RESEND_API_KEY: !Sub '{{resolve:ssm:/newslet/resend-api-key}}'
+          ADMIN_TOKEN: !Sub '{{resolve:ssm:/newslet/admin-token}}'
+          SIGNING_KEY: !Sub '{{resolve:ssm:/newslet/signing-key}}'
+          FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
+          TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
+          PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+          CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 6 * * ? *)
+            Description: Trigger digest generation daily at 06:00 UTC
+
+  WebFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: newslet.handlers.web.handler
+      Timeout: 30
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfileTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedbackTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IssuesTable
+      Environment:
+        Variables:
+          TABLE_FEEDS: !Ref FeedsTable
+          TABLE_PROFILE: !Ref ProfileTable
+          TABLE_SEEN: !Ref SeenArticlesTable
+          TABLE_ISSUES: !Ref IssuesTable
+          TABLE_FEEDBACK: !Ref FeedbackTable
+          ANTHROPIC_API_KEY: !Sub '{{resolve:ssm:/newslet/anthropic-api-key}}'
+          RESEND_API_KEY: !Sub '{{resolve:ssm:/newslet/resend-api-key}}'
+          ADMIN_TOKEN: !Sub '{{resolve:ssm:/newslet/admin-token}}'
+          SIGNING_KEY: !Sub '{{resolve:ssm:/newslet/signing-key}}'
+          FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
+          TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
+          PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+          CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
+      Events:
+        RootRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: ANY
+            Path: /
+        ProxyRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: ANY
+            Path: /{proxy+}
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API invoke URL
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+  DigestFunctionName:
+    Description: Name of the digest Lambda function
+    Value: !Ref DigestFunction
+  WebFunctionName:
+    Description: Name of the web Lambda function
+    Value: !Ref WebFunction

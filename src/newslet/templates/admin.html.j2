@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>newslet · admin</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #888;
+    --border: #e6e6e1;
+    --accent: #0b3d91;
+    --danger: #9a2a2a;
+    --danger-bg: #fbeeee;
+    --danger-border: #e8d4d4;
+    --input-bg: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15151a;
+      --panel: #1d1d22;
+      --fg: #ececec;
+      --muted: #9a9aa3;
+      --border: #2c2c33;
+      --accent: #8ab4ff;
+      --danger: #ff8a8a;
+      --danger-bg: #2a1c1c;
+      --danger-border: #4a2a2a;
+      --input-bg: #15151a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+  }
+  .brand { font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .logout { font-size: 13px; color: var(--muted); text-decoration: none; }
+  .logout:hover { color: var(--fg); text-decoration: underline; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin-bottom: 24px; }
+  h2 { margin: 0 0 16px 0; font-size: 18px; }
+  .count { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 6px; }
+  ul.feeds { list-style: none; padding: 0; margin: 0 0 20px 0; }
+  ul.feeds li {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 0; border-bottom: 1px solid var(--border); gap: 12px;
+  }
+  ul.feeds li:last-child { border-bottom: none; }
+  .feed-info { min-width: 0; flex: 1; }
+  .feed-title { font-weight: 600; word-break: break-word; }
+  .feed-url { font-size: 12px; color: var(--muted); word-break: break-all; margin-top: 2px; }
+  .feed-added { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  form.inline { display: inline; margin: 0; }
+  button, input[type="submit"] {
+    font: inherit; cursor: pointer; padding: 6px 12px;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+  }
+  button:hover { border-color: var(--accent); }
+  button.danger {
+    color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border);
+  }
+  button.primary {
+    color: #fff; background: var(--accent); border-color: var(--accent);
+  }
+  .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 12px; border-top: 1px solid var(--border); }
+  .add-form input[type="text"], .add-form input[type="url"] {
+    flex: 1; min-width: 180px; padding: 8px 10px;
+    background: var(--input-bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; font: inherit;
+  }
+  textarea {
+    width: 100%; padding: 10px; font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 14px; background: var(--input-bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; resize: vertical;
+  }
+  .save-row { margin-top: 12px; }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">newslet · admin</div>
+      <a class="logout" href="/logout">log out</a>
+    </header>
+
+    <section>
+      <h2>Feeds<span class="count">({{ feeds|length }})</span></h2>
+
+      {% if feeds %}
+      <ul class="feeds">
+        {% for feed in feeds %}
+        <li>
+          <div class="feed-info">
+            <div class="feed-title">{{ (feed.title or feed.url)|e }}</div>
+            <div class="feed-url">{{ feed.url|e }}</div>
+            {% if feed.added_at %}<div class="feed-added">added {{ feed.added_at|e }}</div>{% endif %}
+          </div>
+          <form class="inline" method="POST" action="/api/feeds/delete" onsubmit="return confirm('Delete this feed?');">
+            <input type="hidden" name="url" value="{{ feed.url|e }}">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty">No feeds yet.</div>
+      {% endif %}
+
+      <form class="add-form" method="POST" action="/api/feeds">
+        <input type="url" name="url" placeholder="https://example.com/rss" required>
+        <input type="text" name="title" placeholder="Title (optional)">
+        <button type="submit" class="primary">Add</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Profile</h2>
+      <form method="POST" action="/api/profile">
+        <textarea name="markdown" rows="12" placeholder="Tell newslet about your interests in plain text or Markdown.">{{ profile_md|e }}</textarea>
+        <div class="save-row">
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</body>
+</html>

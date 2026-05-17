@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>newslet · {{ date|e }}</title>
+</head>
+<body style="margin:0; padding:0; background:#f6f6f4; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#1a1a1a; -webkit-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f6f4;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px; background:#ffffff; border:1px solid #e6e6e1; border-radius:6px;">
+          <tr>
+            <td style="padding:24px 24px 12px 24px; border-bottom:1px solid #efefea;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="font-family:Georgia,'Times New Roman',serif; font-size:24px; font-weight:700; letter-spacing:-0.01em; color:#111;">
+                    newslet
+                  </td>
+                  <td align="right" style="font-size:13px; color:#888;">
+                    {{ date|e }}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {% for pick in picks %}
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px;">
+                    <div style="font-size:17px; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
+                      <a href="{{ pick.url|e }}" target="_blank" rel="noopener noreferrer" style="color:#0b3d91; text-decoration:none;">{{ pick.title|e }}</a>
+                    </div>
+                    <div style="font-size:12px; color:#888; margin:0 0 8px 0;">
+                      {{ pick.source|e }}
+                    </div>
+                    <div style="font-size:15px; line-height:1.5; color:#222; margin:0;">
+                      {{ pick.blurb|e }}
+                    </div>
+                  </td>
+                  <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
+                    <a href="{{ pick.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#1a7a3a; background:#eef7ef; border:1px solid #d4e8d8; border-radius:4px; text-decoration:none;">+</a>
+                    <a href="{{ pick.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#9a2a2a; background:#fbeeee; border:1px solid #e8d4d4; border-radius:4px; text-decoration:none;">&#8722;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+
+          <tr>
+            <td align="center" style="padding:16px 24px 24px 24px; font-size:11px; color:#aaa;">
+              newslet · {{ picks|length }} picks today
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
