@@ -35,21 +35,27 @@ def run_digest(
     is_seen: callable,
     rank_fn=rank.rank,
     now: datetime | None = None,
-) -> Issue:
-    """Pure pipeline: fetch → rank → assemble Issue. No I/O of its own."""
+) -> tuple[Issue, list[Article]]:
+    """Pure pipeline: fetch → rank → assemble Issue. No I/O of its own.
+
+    Returns ``(issue, candidates)`` so callers can mark every fetched
+    article seen (not just the picked ones) and avoid re-evaluating
+    rejects on subsequent days.
+    """
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
     candidates = feeds.fetch_recent(feed_urls, since=since, is_seen=is_seen)
     log.info("fetched %d candidate articles from %d feeds", len(candidates), len(feed_urls))
+    date = now.strftime("%Y-%m-%d")
     if not candidates:
-        return _build_issue([], date=now.strftime("%Y-%m-%d"))
+        return _build_issue([], date=date), []
     response: RankResponse = rank_fn(
         profile_md=profile.markdown,
         feedback=feedback,
         candidates=candidates,
     )
     log.info("claude returned %d picks", len(response.picks))
-    return _build_issue(response.picks, date=now.strftime("%Y-%m-%d"))
+    return _build_issue(response.picks, date=date), candidates
 
 
 def _send_email(subject: str, html: str) -> None:
@@ -69,24 +75,32 @@ def _send_email(subject: str, html: str) -> None:
 
 def handler(event: dict, context: Any) -> dict:
     s = settings()
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+
+    # Idempotency: don't re-send if today's issue already exists.
+    # To force a re-run, delete the row in the Issues table.
+    if db.issue_exists(today):
+        log.info("issue %s already exists; skipping (delete row to force re-send)", today)
+        return {"status": "already_sent", "date": today}
+
     feeds_list = db.list_feeds()
     profile = db.get_profile()
     feedback = db.recent_feedback(limit=50)
 
-    issue = run_digest(
+    issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
         profile=profile,
         feedback=feedback,
         is_seen=db.is_seen,
     )
 
-    if not issue.picks:
-        log.warning("no picks for today; skipping email")
-        return {"status": "no_picks", "date": issue.date}
+    # Mark every candidate as seen (not just picks). An article Claude
+    # rejected today shouldn't be re-evaluated tomorrow when it crosses
+    # the 24h window boundary.
+    if candidates:
+        db.mark_seen([str(a.url) for a in candidates])
 
     db.put_issue(issue)
-    db.mark_seen([str(p.url) for p in issue.picks])
-
     subject, html = email_render.render_email(issue, s.public_base_url)
     _send_email(subject, html)
     log.info("sent issue %s with %d picks", issue.date, len(issue.picks))
@@ -152,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     profile_md = Path(args.profile).read_text() if Path(args.profile).exists() else ""
     profile = Profile(markdown=profile_md, updated_at=datetime.now(UTC))
 
-    issue = run_digest(
+    issue, _candidates = run_digest(
         feed_urls=feed_urls,
         profile=profile,
         feedback=[],

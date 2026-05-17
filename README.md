@@ -117,8 +117,9 @@ can click.
 
 ### 7. Wait for tomorrow
 
-EventBridge fires the digest Lambda at 06:00 UTC daily. Adjust the cron
-expression in `infra/template.yaml` if you want a different timezone.
+EventBridge fires the digest Lambda at 10:00 UTC daily. Adjust the cron
+expression in `infra/template.yaml` if you want a different time of day
+(EventBridge cron expressions are always UTC).
 
 ## Security review
 
