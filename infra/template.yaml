@@ -7,7 +7,10 @@ Globals:
     Runtime: python3.12
     Architectures:
       - x86_64
-    CodeUri: ../
+    # Point at src/ so the newslet package lands at the zip root —
+    # Lambda's handler resolution can then find newslet.handlers.*.
+    # requirements.txt lives alongside the package in src/.
+    CodeUri: ../src
 
 Resources:
 
@@ -154,6 +157,12 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref IssuesTable
       Environment:
+        # PUBLIC_BASE_URL is intentionally NOT set here. If we referenced
+        # !Sub '...${Api}...' on this function, CloudFormation sees a
+        # circular dependency (Api integrations point at WebFunction via
+        # the Events block, and the env var points back at Api). The
+        # web handler computes its base URL from request.base_url at
+        # runtime instead.
         Variables:
           TABLE_FEEDS: !Ref FeedsTable
           TABLE_PROFILE: !Ref ProfileTable
@@ -166,7 +175,6 @@ Resources:
           SIGNING_KEY: !Sub '{{resolve:ssm:/newslet/signing-key}}'
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
-          PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
           CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
       Events:
         RootRoute:

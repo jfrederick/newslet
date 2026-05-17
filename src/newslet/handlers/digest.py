@@ -97,6 +97,10 @@ def handler(event: dict, context: Any) -> dict:
     empty email when ``mark_seen`` ran but ``put_issue`` failed.
     """
     s = settings()
+    if not s.public_base_url:
+        # Optional in config because the web Lambda doesn't need it,
+        # but the digest *must* have it to render rate links.
+        raise RuntimeError("PUBLIC_BASE_URL env var is required for the digest Lambda")
     today = datetime.now(UTC).strftime("%Y-%m-%d")
 
     if db.issue_sent(today):
