@@ -30,14 +30,20 @@ FIXTURE_PICKS = [
     Pick(
         url="https://www.lesswrong.com/posts/example/a-quiet-revolution-in-protein-design",
         title="A quiet revolution in protein design",
-        blurb="New diffusion models can hallucinate proteins that bind to arbitrary targets, with hit rates that would have been unthinkable two years ago.",
+        blurb=(
+            "New diffusion models can hallucinate proteins that bind to arbitrary "
+            "targets, with hit rates that would have been unthinkable two years ago."
+        ),
         source="LessWrong",
         score=0.94,
     ),
     Pick(
         url="https://stratechery.com/2026/example/the-bundling-of-everything",
         title="The bundling of everything",
-        blurb="Ben Thompson on why the long tail of subscriptions is collapsing back into a handful of mega-bundles.",
+        blurb=(
+            "Ben Thompson on why the long tail of subscriptions is collapsing "
+            "back into a handful of mega-bundles."
+        ),
         source="Stratechery",
         score=0.88,
     ),
@@ -51,7 +57,10 @@ FIXTURE_PICKS = [
     Pick(
         url="https://www.theverge.com/example/apple-vision-pro-2-leaks",
         title="Vision Pro 2 leaks point to half the weight and a third the price",
-        blurb="If accurate, this is the price point that finally moves headsets out of the enthusiast tier.",
+        blurb=(
+            "If accurate, this is the price point that finally moves "
+            "headsets out of the enthusiast tier."
+        ),
         source="The Verge",
         score=0.71,
     ),
