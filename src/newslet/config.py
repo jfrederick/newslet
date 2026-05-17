@@ -25,7 +25,9 @@ class Settings:
     admin_token: str
     signing_key: str
 
-    # Public base URL for rate links (https://<api-id>.execute-api.<region>.amazonaws.com)
+    # Public base URL for rate links (https://<api-id>.execute-api.<region>.amazonaws.com).
+    # Required for the digest Lambda (no request context); the web Lambda
+    # derives this from request.base_url at runtime and leaves it empty.
     public_base_url: str
 
     # AWS / Dynamo
@@ -54,7 +56,8 @@ def settings() -> Settings:
         to_email=_required("TO_EMAIL"),
         admin_token=_required("ADMIN_TOKEN"),
         signing_key=_required("SIGNING_KEY"),
-        public_base_url=_required("PUBLIC_BASE_URL"),
+        # Not required on the web Lambda — see Settings.public_base_url.
+        public_base_url=os.environ.get("PUBLIC_BASE_URL", ""),
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),
         table_feeds=os.environ.get("TABLE_FEEDS", "newslet-feeds"),
         table_profile=os.environ.get("TABLE_PROFILE", "newslet-profile"),

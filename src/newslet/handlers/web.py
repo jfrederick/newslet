@@ -230,6 +230,16 @@ def rate(
 # ---------------------------------------------------------------------------
 
 
+def _base_url(request: Request) -> str:
+    """Compute the public base URL from the current request.
+
+    The web Lambda doesn't get ``PUBLIC_BASE_URL`` in its environment
+    (that would create a CloudFormation circular dependency with the
+    HTTP API), so we derive it from the request the browser made.
+    """
+    return str(request.base_url).rstrip("/")
+
+
 @app.get("/issues/{date}", response_class=HTMLResponse)
 def view_issue(
     date: str,
@@ -247,7 +257,7 @@ def view_issue(
     issue = db.get_issue(date)
     if not issue:
         raise HTTPException(status_code=404, detail="no issue for that date")
-    _, html = email_render.render_email(issue, settings().public_base_url)
+    _, html = email_render.render_email(issue, _base_url(request))
     return HTMLResponse(html)
 
 
