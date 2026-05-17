@@ -1,0 +1,43 @@
+[project]
+name = "newslet"
+version = "0.1.0"
+description = "Personalized daily RSS newsletter via Claude + Resend on AWS Lambda."
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.40",
+    "boto3>=1.34",
+    "fastapi>=0.115",
+    "feedparser>=6.0",
+    "jinja2>=3.1",
+    "mangum>=0.19",
+    "pydantic>=2.9",
+    "python-dateutil>=2.9",
+    "resend>=2.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "moto[dynamodb]>=5.0",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/newslet"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
