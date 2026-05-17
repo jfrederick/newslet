@@ -1,6 +1,6 @@
 # newslet
 
-A personal daily RSS newsletter. Every morning at 6am UTC, a Lambda
+A personal daily RSS newsletter. Every morning at 10:00 UTC, a Lambda
 fetches the last 24h from your RSS feeds, asks Claude to rank and
 summarize them against a profile you maintain, and emails you the top
 ~10 picks via Resend. Each pick has a `+` / `−` button you can tap
@@ -10,12 +10,12 @@ tomorrow's prompt.
 ## Architecture
 
 ```
-EventBridge cron (06:00) ──▶ digest Lambda ──▶ Resend (email)
-                                  │
-                                  ▼
-                              DynamoDB ◀── web Lambda ◀── HTTP API
-                                                              │
-                                                              └─ admin UI + /rate
+EventBridge cron (10:00 UTC) ──▶ digest Lambda ──▶ Resend (email)
+                                      │
+                                      ▼
+                                  DynamoDB ◀── web Lambda ◀── HTTP API
+                                                                  │
+                                                                  └─ admin UI + /rate
 ```
 
 Five DynamoDB tables (`Feeds`, `Profile`, `SeenArticles` w/ 21d TTL,
@@ -40,20 +40,22 @@ open out/email.html
 
 ## Deploying
 
-You'll need the AWS CLI and SAM CLI (`brew install aws-sam-cli`),
+You need the AWS CLI and SAM CLI ≥ 1.91 (`brew install aws-sam-cli`),
 plus accounts at [Resend](https://resend.com) and
 [Anthropic](https://console.anthropic.com).
 
 ### 1. Verify your sender domain in Resend
 
-Create a domain in the Resend dashboard, add the DNS records, and
-note the `FROM_EMAIL` you want to send from (e.g. `newslet@yourdomain.com`).
+Add a domain in the Resend dashboard, set the DNS records it asks for,
+and note the address you want to send from (e.g.
+`newslet@yourdomain.com`).
 
-### 2. Put four secrets in SSM Parameter Store
+### 2. Put the seven config values in SSM Parameter Store
 
 ```bash
 REGION=us-east-1
 
+# Secrets
 aws ssm put-parameter --region $REGION --type SecureString \
   --name /newslet/anthropic-api-key --value 'sk-ant-...'
 aws ssm put-parameter --region $REGION --type SecureString \
@@ -63,18 +65,19 @@ aws ssm put-parameter --region $REGION --type SecureString \
 aws ssm put-parameter --region $REGION --type SecureString \
   --name /newslet/signing-key --value "$(openssl rand -hex 32)"
 
+# Plain config
 aws ssm put-parameter --region $REGION --type String \
   --name /newslet/from-email --value 'newslet@yourdomain.com'
 aws ssm put-parameter --region $REGION --type String \
   --name /newslet/to-email --value 'you@yourdomain.com'
 aws ssm put-parameter --region $REGION --type String \
   --name /newslet/claude-model --value 'claude-opus-4-7'
-# Placeholder; overwritten with the real API URL after first deploy
-aws ssm put-parameter --region $REGION --type String \
-  --name /newslet/public-base-url --value 'https://placeholder.example.com'
 ```
 
-### 3. First deploy
+`PUBLIC_BASE_URL` is *not* an SSM parameter — the SAM template derives
+it from the HTTP API's invoke URL at deploy time.
+
+### 3. Deploy
 
 ```bash
 cd infra
@@ -82,44 +85,38 @@ sam build
 sam deploy --guided
 ```
 
-Accept the defaults. Note the `ApiUrl` in the outputs — that's your
-admin UI and rate-link base.
+Accept the defaults; pick a stack name (e.g. `newslet`); say `y` to
+"create managed ECR repositories" if asked and `y` to "allow IAM role
+creation". Note the `ApiUrl` and `DigestFunctionName` outputs.
 
-### 4. Set `PUBLIC_BASE_URL` to the real URL
+Subsequent deploys are just `sam build && sam deploy`.
 
-```bash
-aws ssm put-parameter --region $REGION --type String --overwrite \
-  --name /newslet/public-base-url --value 'https://<api-id>.execute-api.us-east-1.amazonaws.com'
-```
+### 4. Configure your feeds and profile
 
-Then re-deploy so the Lambdas pick up the new value:
+Open the `ApiUrl` from step 3 in a browser, sign in with the value of
+`/newslet/admin-token`, then add RSS feeds and write a short markdown
+profile of what you care about.
 
-```bash
-sam deploy
-```
-
-### 5. Configure your feeds and profile
-
-Visit `https://<api-id>.execute-api.us-east-1.amazonaws.com/` in a
-browser, enter your `ADMIN_TOKEN`, add some RSS feed URLs, and write
-a short profile in markdown describing what you care about.
-
-### 6. Smoke-test the digest
+### 5. Smoke-test the digest
 
 ```bash
 aws lambda invoke --region $REGION \
-  --function-name newslet-DigestFunction-... \
+  --function-name "$(aws cloudformation describe-stacks \
+    --stack-name newslet --region $REGION \
+    --query 'Stacks[0].Outputs[?OutputKey==`DigestFunctionName`].OutputValue' \
+    --output text)" \
   /tmp/out.json && cat /tmp/out.json
 ```
 
-You should receive the email within seconds and see `+`/`−` links you
-can click.
+You should see `{"status":"sent",...}` and receive the email within
+seconds. Click `+` or `−` in the email — you'll get a tiny "thanks"
+page back and the vote will appear in the `Feedback` table.
 
-### 7. Wait for tomorrow
+### 6. Wait for tomorrow
 
-EventBridge fires the digest Lambda at 10:00 UTC daily. Adjust the cron
-expression in `infra/template.yaml` if you want a different time of day
-(EventBridge cron expressions are always UTC).
+EventBridge fires the digest Lambda at 10:00 UTC daily. Change the
+cron in `infra/template.yaml` if you want a different time of day
+(EventBridge cron is always UTC).
 
 ## Security review
 
