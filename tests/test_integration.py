@@ -74,12 +74,13 @@ def aws(env):
             TableName="newslet-feedback",
             KeySchema=[
                 {"AttributeName": "article_url", "KeyType": "HASH"},
-                {"AttributeName": "ts", "KeyType": "RANGE"},
+                {"AttributeName": "issue_date", "KeyType": "RANGE"},
             ],
             AttributeDefinitions=[
                 {"AttributeName": "article_url", "AttributeType": "S"},
-                {"AttributeName": "ts", "AttributeType": "S"},
+                {"AttributeName": "issue_date", "AttributeType": "S"},
                 {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "ts", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -248,6 +249,123 @@ def test_handler_is_idempotent_within_a_day(aws, monkeypatch):
     second = digest.handler({}, None)
     assert second["status"] == "already_sent"
     assert len(sent) == 1  # not incremented
+
+
+def test_handler_recovers_from_failed_send(aws, monkeypatch):
+    """If the first attempt stores the issue but fails to send, the
+    retry must re-send the *same* picks (not re-rank, not empty)."""
+    from newslet import db, feeds, rank
+    from newslet.handlers import digest
+
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        feeds,
+        "feedparser",
+        SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(now)),
+    )
+
+    rank_calls = {"count": 0}
+
+    def counting_anthropic(**_):
+        rank_calls["count"] += 1
+        return _FakeAnthropic(
+            json.dumps({"picks": [
+                {"url": "https://example.com/fresh-1", "title": "Fresh One",
+                 "blurb": "b", "source": "Test Feed", "score": 0.9},
+            ]})
+        )
+
+    monkeypatch.setattr(rank.anthropic, "Anthropic", counting_anthropic)
+
+    # First attempt: send fails
+    send_state = {"fail": True, "calls": []}
+
+    def flaky_send(subject, html):
+        send_state["calls"].append({"subject": subject, "html": html})
+        if send_state["fail"]:
+            raise RuntimeError("Resend down")
+
+    monkeypatch.setattr(digest, "_send_email", flaky_send)
+
+    db.add_feed("https://example.com/rss")
+
+    # Attempt 1: rank runs, issue stored, send blows up
+    with pytest.raises(RuntimeError, match="Resend down"):
+        digest.handler({}, None)
+    assert rank_calls["count"] == 1
+    assert len(send_state["calls"]) == 1
+
+    today = now.strftime("%Y-%m-%d")
+    assert db.issue_exists(today)
+    assert db.issue_sent(today) is False
+
+    # Attempt 2: send works
+    send_state["fail"] = False
+    result = digest.handler({}, None)
+    assert result["status"] == "sent"
+    # Did NOT pay for another rank call — reused the stored issue
+    assert rank_calls["count"] == 1
+    # The second send used the same picks (re-rendered with same content)
+    assert len(send_state["calls"]) == 2
+    assert "Fresh One" in send_state["calls"][1]["html"]
+    assert db.issue_sent(today) is True
+
+
+def test_handler_does_not_mark_seen_until_after_send(aws, monkeypatch):
+    """mark_seen must run only after a confirmed send. Otherwise a
+    crashed retry sees its own candidates as 'already seen' and emits
+    an empty newsletter."""
+    from newslet import db, feeds, rank
+    from newslet.handlers import digest
+
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        feeds,
+        "feedparser",
+        SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(now)),
+    )
+    monkeypatch.setattr(
+        rank.anthropic,
+        "Anthropic",
+        lambda **_: _FakeAnthropic(json.dumps({"picks": [
+            {"url": "https://example.com/fresh-1", "title": "Fresh One",
+             "blurb": "b", "source": "s", "score": 0.9},
+        ]})),
+    )
+    def boom(_s, _h):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(digest, "_send_email", boom)
+
+    db.add_feed("https://example.com/rss")
+
+    with pytest.raises(RuntimeError):
+        digest.handler({}, None)
+
+    # Candidates should NOT have been marked seen — otherwise a retry
+    # would lose them.
+    assert db.is_seen("https://example.com/fresh-1") is False
+    assert db.is_seen("https://example.com/fresh-2") is False
+
+
+def test_send_email_invokes_resend_correctly(aws, monkeypatch):
+    """Exercise the real _send_email so a signature change in the
+    resend SDK is caught here rather than at 10am UTC."""
+    import resend
+
+    from newslet.handlers import digest
+
+    calls: list[dict] = []
+    monkeypatch.setattr(resend.Emails, "send", lambda payload: calls.append(payload) or {"id": "x"})
+
+    digest._send_email("subject line", "<p>hi</p>")
+
+    assert len(calls) == 1
+    payload = calls[0]
+    assert payload["subject"] == "subject line"
+    assert payload["html"] == "<p>hi</p>"
+    assert payload["from"] == "from@example.com"
+    assert payload["to"] == ["to@example.com"]
 
 
 def test_handler_sends_even_with_zero_picks(aws, monkeypatch):

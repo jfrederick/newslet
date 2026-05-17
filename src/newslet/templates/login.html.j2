@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>newslet · login</title>
+<style>
+  body {
+    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    max-width: 24rem; margin: 6rem auto; padding: 0 1rem;
+    background: #f6f6f4; color: #1a1a1a;
+  }
+  h1 { font-family: Georgia, serif; font-weight: 700; }
+  label { display: block; margin-top: 1rem; }
+  input, button {
+    font: inherit; padding: .5rem; width: 100%;
+    box-sizing: border-box; margin: .25rem 0;
+    border: 1px solid #ddd; border-radius: 4px;
+  }
+  button { background: #0b3d91; color: #fff; border-color: #0b3d91; cursor: pointer; }
+  .err { color: #a00; margin-top: 1rem; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #15151a; color: #ececec; }
+    input { background: #1d1d22; color: #ececec; border-color: #2c2c33; }
+  }
+</style>
+</head>
+<body>
+<h1>newslet</h1>
+<form method="post" action="/login">
+  <label>Admin token
+    <input type="password" name="token" autofocus>
+  </label>
+  <button type="submit">Sign in</button>
+</form>
+{% if error %}<p class="err">{{ error|e }}</p>{% endif %}
+</body>
+</html>

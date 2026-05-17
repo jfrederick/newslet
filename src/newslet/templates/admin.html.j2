@@ -91,8 +91,25 @@
   <div class="wrap">
     <header class="top">
       <div class="brand">newslet · admin</div>
-      <a class="logout" href="/logout">log out</a>
+      <div>
+        <a class="logout" href="/issues">issues</a>
+        &nbsp;·&nbsp;
+        <a class="logout" href="/logout">log out</a>
+      </div>
     </header>
+    {% if last_sent %}
+      <div style="font-size:13px;color:var(--muted);margin:-8px 0 24px;">
+        Last sent: <strong>{{ last_sent|e }}</strong>
+      </div>
+    {% elif recent_issues %}
+      <div style="font-size:13px;color:var(--warn,#a06000);margin:-8px 0 24px;">
+        Latest issue ({{ recent_issues[0].date|e }}) has not been delivered.
+      </div>
+    {% else %}
+      <div style="font-size:13px;color:var(--muted);margin:-8px 0 24px;">
+        No issues sent yet.
+      </div>
+    {% endif %}
 
     <section>
       <h2>Feeds<span class="count">({{ feeds|length }})</span></h2>

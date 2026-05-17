@@ -64,12 +64,13 @@ def dynamo(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             TableName="newslet-feedback",
             KeySchema=[
                 {"AttributeName": "article_url", "KeyType": "HASH"},
-                {"AttributeName": "ts", "KeyType": "RANGE"},
+                {"AttributeName": "issue_date", "KeyType": "RANGE"},
             ],
             AttributeDefinitions=[
                 {"AttributeName": "article_url", "AttributeType": "S"},
-                {"AttributeName": "ts", "AttributeType": "S"},
+                {"AttributeName": "issue_date", "AttributeType": "S"},
                 {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "ts", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -242,19 +243,105 @@ def test_feedback_put_and_recent_descending(dynamo: None) -> None:
             title=f"Article {i}",
             rating="up" if i % 2 == 0 else "down",
             ts=base + timedelta(minutes=i),
+            issue_date="2026-05-17",
         )
         for i in range(5)
     ]
     for row in rows:
         db.put_feedback(row)
 
-    recent = db.recent_feedback(limit=10)
+    recent = db.recent_feedback(limit=10, now=base + timedelta(hours=1))
     assert len(recent) == 5
     timestamps = [r.ts for r in recent]
     assert timestamps == sorted(timestamps, reverse=True)
     assert recent[0].ts == rows[-1].ts
 
-    limited = db.recent_feedback(limit=2)
+    limited = db.recent_feedback(limit=2, now=base + timedelta(hours=1))
     assert len(limited) == 2
-    limited_ts = [r.ts for r in limited]
-    assert limited_ts == sorted(limited_ts, reverse=True)
+
+
+def test_feedback_repeat_click_overwrites(dynamo: None) -> None:
+    """Two clicks on the same article in the same issue must collapse
+    to a single row (latest wins) — preventing contradictory + / -
+    pairs in Claude's feedback prompt."""
+    from newslet import db
+
+    base = datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://example.com/a",
+            title="Article",
+            rating="up",
+            ts=base,
+            issue_date="2026-05-17",
+        )
+    )
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://example.com/a",
+            title="Article",
+            rating="down",
+            ts=base + timedelta(minutes=1),
+            issue_date="2026-05-17",
+        )
+    )
+    recent = db.recent_feedback(limit=10, now=base + timedelta(hours=1))
+    assert len(recent) == 1
+    assert recent[0].rating == "down"
+
+
+def test_recent_feedback_supplements_from_previous_year(dynamo: None) -> None:
+    """If the current-year shard is sparse, we fall back to last year."""
+    from newslet import db
+
+    last_year = datetime(2025, 12, 30, 12, 0, 0, tzinfo=UTC)
+    this_year = datetime(2026, 1, 2, 9, 0, 0, tzinfo=UTC)
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://example.com/old",
+            title="Old",
+            rating="up",
+            ts=last_year,
+            issue_date="2025-12-30",
+        )
+    )
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://example.com/new",
+            title="New",
+            rating="up",
+            ts=this_year,
+            issue_date="2026-01-02",
+        )
+    )
+    recent = db.recent_feedback(limit=10, now=this_year)
+    assert len(recent) == 2
+    assert recent[0].ts > recent[1].ts
+
+
+def test_issue_sent_flag(dynamo: None) -> None:
+    from newslet import db
+
+    db.put_issue(Issue(date="2026-05-17", picks=[], created_at=datetime.now(UTC)))
+    assert db.issue_exists("2026-05-17") is True
+    assert db.issue_sent("2026-05-17") is False  # not yet flagged
+
+    db.mark_issue_sent("2026-05-17")
+    assert db.issue_sent("2026-05-17") is True
+
+
+def test_list_issues_descending(dynamo: None) -> None:
+    from newslet import db
+
+    for d in ["2026-05-15", "2026-05-17", "2026-05-16"]:
+        db.put_issue(Issue(date=d, picks=[], created_at=datetime.now(UTC)))
+    db.mark_issue_sent("2026-05-15")
+
+    issues = db.list_issues(limit=10)
+    assert [i["date"] for i in issues] == ["2026-05-17", "2026-05-16", "2026-05-15"]
+    sent_flags = {i["date"]: bool(i["sent_at"]) for i in issues}
+    assert sent_flags == {
+        "2026-05-17": False,
+        "2026-05-16": False,
+        "2026-05-15": True,
+    }

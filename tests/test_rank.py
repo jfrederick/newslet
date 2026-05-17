@@ -95,12 +95,14 @@ def sample_feedback() -> list[FeedbackRow]:
             title="Old one",
             rating="up",
             ts=datetime(2026, 1, 1, tzinfo=UTC),
+            issue_date="2026-01-01",
         ),
         FeedbackRow(
             article_url="https://example.com/old2",
             title="Old two",
             rating="down",
             ts=datetime(2026, 1, 1, tzinfo=UTC),
+            issue_date="2026-01-01",
         ),
     ]
 
