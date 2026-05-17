@@ -74,35 +74,62 @@ def _send_email(subject: str, html: str) -> None:
 
 
 def handler(event: dict, context: Any) -> dict:
+    """Run the daily digest pipeline once, idempotently.
+
+    Idempotency is keyed on ``sent_at`` — *not* mere existence of the
+    Issue row — so a partial failure (e.g. ``put_issue`` succeeded but
+    Resend was down) on the first attempt does not cause subsequent
+    EventBridge retries to silently skip the day.
+
+    Operation order is chosen so that any single-step failure leaves
+    the system in a state a retry can recover cleanly from:
+
+      1. issue_sent check  -> if True, exit
+      2. Reuse a previously-stored issue if present (skip rank cost on retry)
+      3. Otherwise: fetch + rank, then put_issue immediately
+      4. _send_email
+      5. mark_issue_sent (flips the idempotency marker)
+      6. mark_seen (only after a confirmed send)
+
+    If 5 fails after a successful 4, a retry will re-send (duplicate
+    email — annoying but not silent). Better than the previous order
+    which could either lose the day's content entirely or emit an
+    empty email when ``mark_seen`` ran but ``put_issue`` failed.
+    """
     s = settings()
     today = datetime.now(UTC).strftime("%Y-%m-%d")
 
-    # Idempotency: don't re-send if today's issue already exists.
-    # To force a re-run, delete the row in the Issues table.
-    if db.issue_exists(today):
-        log.info("issue %s already exists; skipping (delete row to force re-send)", today)
+    if db.issue_sent(today):
+        log.info("issue %s already sent; skipping", today)
         return {"status": "already_sent", "date": today}
 
-    feeds_list = db.list_feeds()
-    profile = db.get_profile()
-    feedback = db.recent_feedback(limit=50)
+    existing = db.get_issue(today)
+    if existing is not None and existing.picks:
+        log.info("reusing partial issue %s from previous attempt", today)
+        issue = existing
+        candidates: list[Article] = []  # already-marked on the failed run
+    else:
+        feeds_list = db.list_feeds()
+        profile = db.get_profile()
+        feedback = db.recent_feedback(limit=50)
+        issue, candidates = run_digest(
+            feed_urls=[str(f.url) for f in feeds_list],
+            profile=profile,
+            feedback=feedback,
+            is_seen=db.is_seen,
+        )
+        db.put_issue(issue)
 
-    issue, candidates = run_digest(
-        feed_urls=[str(f.url) for f in feeds_list],
-        profile=profile,
-        feedback=feedback,
-        is_seen=db.is_seen,
-    )
+    subject, html = email_render.render_email(issue, s.public_base_url)
+    _send_email(subject, html)
+    db.mark_issue_sent(issue.date)
 
-    # Mark every candidate as seen (not just picks). An article Claude
-    # rejected today shouldn't be re-evaluated tomorrow when it crosses
-    # the 24h window boundary.
+    # Mark every candidate as seen — but only *after* a confirmed send.
+    # An article Claude rejected today shouldn't be re-evaluated when it
+    # crosses tomorrow's 24h window boundary.
     if candidates:
         db.mark_seen([str(a.url) for a in candidates])
 
-    db.put_issue(issue)
-    subject, html = email_render.render_email(issue, s.public_base_url)
-    _send_email(subject, html)
     log.info("sent issue %s with %d picks", issue.date, len(issue.picks))
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
 
@@ -133,14 +160,23 @@ def _fake_rank(
 
 
 def _dry_run_env() -> None:
-    """Populate harmless env vars so settings() succeeds without secrets."""
-    os.environ.setdefault("ANTHROPIC_API_KEY", "dry-run")
-    os.environ.setdefault("RESEND_API_KEY", "dry-run")
-    os.environ.setdefault("FROM_EMAIL", "newslet@example.com")
-    os.environ.setdefault("TO_EMAIL", "you@example.com")
-    os.environ.setdefault("ADMIN_TOKEN", "dry-run")
-    os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
-    os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
+    """Force dry-run env values.
+
+    Uses ``os.environ[key] = ...`` (not ``setdefault``) so a developer
+    machine that has real ``ANTHROPIC_API_KEY`` / ``RESEND_API_KEY``
+    exported can't accidentally leak them into a dry run — even if the
+    dry-run code path is later modified to hit a real API.
+    """
+    os.environ["ANTHROPIC_API_KEY"] = "dry-run"
+    os.environ["RESEND_API_KEY"] = "dry-run"
+    os.environ["FROM_EMAIL"] = "newslet@example.com"
+    os.environ["TO_EMAIL"] = "you@example.com"
+    os.environ["ADMIN_TOKEN"] = "dry-run"
+    os.environ["SIGNING_KEY"] = "dry-run-signing-key"
+    os.environ["PUBLIC_BASE_URL"] = "https://api.example.com"
+    # Bust the lru_cache since settings() may have been called already
+    # with whatever real env was present at import.
+    settings.cache_clear()
 
 
 def main(argv: list[str] | None = None) -> int:

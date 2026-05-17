@@ -102,7 +102,7 @@ def rank(
     model = settings().claude_model
     response = client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=4096,
         system=_SYSTEM_PROMPT,
         messages=messages,
     )
@@ -123,7 +123,7 @@ def rank(
         )
         retry = client.messages.create(
             model=model,
-            max_tokens=2048,
+            max_tokens=4096,
             system=_SYSTEM_PROMPT,
             messages=messages,
         )

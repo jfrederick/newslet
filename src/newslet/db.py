@@ -23,8 +23,17 @@ from newslet.contracts import Feed, FeedbackRow, Issue, Pick, Profile
 log = logging.getLogger(__name__)
 
 _SEEN_TTL_SECONDS = 21 * 86400
-_FEEDBACK_BUCKET = "all"  # constant PK for the recent-feedback GSI
 _FEEDBACK_GSI = "feedback-by-ts"
+
+
+def _feedback_bucket(ts: datetime) -> str:
+    """Shard key for the recent-feedback GSI — one bucket per year.
+
+    Personal-app traffic comfortably fits in a single per-year partition;
+    sharding avoids the documented hot-partition anti-pattern from a
+    constant string PK without the complexity of monthly shards.
+    """
+    return ts.strftime("%Y")
 
 
 def normalize_url(url: str) -> str:
@@ -206,47 +215,122 @@ def get_issue(date: str) -> Issue | None:
 
 
 def put_feedback(row: FeedbackRow) -> None:
+    """Store a +/- click.
+
+    Primary key is ``(article_url, issue_date)`` so clicking the same
+    article again in the same issue overwrites the previous vote —
+    avoiding contradictory pairs of `+` and `-` rows that would confuse
+    Claude on the next run.
+    """
     _t_feedback().put_item(
         Item={
             "article_url": str(row.article_url),
+            "issue_date": row.issue_date,
             "ts": row.ts.isoformat(),
             "title": row.title,
             "rating": row.rating,
-            # Constant bucket attribute so the GSI can return all rows
-            # ordered by ts without a full table scan.
-            "bucket": _FEEDBACK_BUCKET,
+            "bucket": _feedback_bucket(row.ts),
         }
     )
 
 
-def recent_feedback(limit: int = 50) -> list[FeedbackRow]:
-    """Return the ``limit`` most-recent feedback rows, newest first.
-
-    Queries the ``feedback-by-ts`` GSI so we don't pay a full scan as
-    the table grows.
-    """
+def _query_feedback_bucket(bucket: str, limit: int) -> list[dict[str, Any]]:
     resp = _t_feedback().query(
         IndexName=_FEEDBACK_GSI,
-        KeyConditionExpression=Key("bucket").eq(_FEEDBACK_BUCKET),
+        KeyConditionExpression=Key("bucket").eq(bucket),
         ScanIndexForward=False,
         Limit=limit,
     )
-    return [
-        FeedbackRow(
-            article_url=item["article_url"],
-            title=item.get("title", ""),
-            rating=item["rating"],
-            ts=datetime.fromisoformat(item["ts"]),
-        )
-        for item in resp.get("Items", [])
-    ]
+    return resp.get("Items", [])
+
+
+def recent_feedback(limit: int = 50, *, now: datetime | None = None) -> list[FeedbackRow]:
+    """Return the ``limit`` most-recent feedback rows, newest first.
+
+    Reads from the current-year shard first; if it doesn't have enough
+    rows (e.g., early January), supplements from the previous year.
+    """
+    now = now or datetime.now(UTC)
+    items: list[dict[str, Any]] = _query_feedback_bucket(_feedback_bucket(now), limit)
+    if len(items) < limit:
+        prev = now.replace(year=now.year - 1)
+        items.extend(_query_feedback_bucket(_feedback_bucket(prev), limit - len(items)))
+
+    rows: list[FeedbackRow] = []
+    for item in items:
+        try:
+            rows.append(
+                FeedbackRow(
+                    article_url=item["article_url"],
+                    title=item.get("title", ""),
+                    rating=item["rating"],
+                    ts=datetime.fromisoformat(item["ts"]),
+                    issue_date=item.get("issue_date", ""),
+                )
+            )
+        except (ValidationError, KeyError, ValueError) as exc:
+            log.warning("skipping bad feedback row: %s", exc)
+    rows.sort(key=lambda r: r.ts, reverse=True)
+    return rows[:limit]
 
 
 def issue_exists(date: str) -> bool:
-    """Cheap idempotency check: was an issue already produced for this date?"""
+    """True if an Issue row has been written for ``date`` (regardless of send status)."""
     resp = _t_issues().get_item(
         Key={"date": date},
         ProjectionExpression="#d",
         ExpressionAttributeNames={"#d": "date"},
     )
     return "Item" in resp
+
+
+def issue_sent(date: str) -> bool:
+    """True if ``date``'s issue has been successfully emailed.
+
+    This is the real idempotency marker — distinct from ``issue_exists``
+    so a partial failure (Issue stored but email send failed) doesn't
+    silently skip the retry.
+    """
+    resp = _t_issues().get_item(
+        Key={"date": date},
+        ProjectionExpression="sent_at",
+    )
+    item = resp.get("Item") or {}
+    return bool(item.get("sent_at"))
+
+
+def mark_issue_sent(date: str) -> None:
+    """Flip the ``sent_at`` flag on today's issue. Called only after a
+    successful email send."""
+    _t_issues().update_item(
+        Key={"date": date},
+        UpdateExpression="SET sent_at = :ts",
+        ExpressionAttributeValues={":ts": datetime.now(UTC).isoformat()},
+    )
+
+
+def list_issues(limit: int = 30) -> list[dict[str, Any]]:
+    """Return a recent set of issues for the admin index, newest first.
+
+    Returns lightweight dicts (date + pick count + sent status); avoids
+    pulling the full picks JSON for each row.
+    """
+    resp = _t_issues().scan(
+        ProjectionExpression="#d, sent_at, picks_json",
+        ExpressionAttributeNames={"#d": "date"},
+    )
+    rows = []
+    for item in resp.get("Items", []):
+        try:
+            picks_count = len(json.loads(item.get("picks_json", "[]")))
+        except json.JSONDecodeError:
+            picks_count = 0
+        rows.append(
+            {
+                "date": item["date"],
+                "picks_count": picks_count,
+                "sent_at": item.get("sent_at"),
+            }
+        )
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return rows[:limit]

@@ -60,12 +60,13 @@ def aws(env):
             TableName="newslet-feedback",
             KeySchema=[
                 {"AttributeName": "article_url", "KeyType": "HASH"},
-                {"AttributeName": "ts", "KeyType": "RANGE"},
+                {"AttributeName": "issue_date", "KeyType": "RANGE"},
             ],
             AttributeDefinitions=[
                 {"AttributeName": "article_url", "AttributeType": "S"},
-                {"AttributeName": "ts", "AttributeType": "S"},
+                {"AttributeName": "issue_date", "AttributeType": "S"},
                 {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "ts", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -140,7 +141,9 @@ def test_rate_rejects_unsigned_token(client):
     url = "https://example.com/article"
     r = client.get(
         "/rate",
-        params={"a": quote(url, safe=""), "d": "2026-05-17", "v": "up", "t": "garbage"},
+        # TestClient percent-encodes `params` values once, mirroring what
+        # a real browser does with the email link.
+        params={"a": url, "d": "2026-05-17", "v": "up", "t": "garbage"},
     )
     assert r.status_code == 403
 
@@ -152,10 +155,24 @@ def test_rate_accepts_signed_token(client):
     token = tokens.sign(url, "2026-05-17")
     r = client.get(
         "/rate",
-        params={"a": quote(url, safe=""), "d": "2026-05-17", "v": "up", "t": token},
+        params={"a": url, "d": "2026-05-17", "v": "up", "t": token},
     )
     assert r.status_code == 200
     assert "thanks" in r.text.lower()
+
+
+def test_rate_accepts_url_with_literal_percent_xx(client):
+    """Articles whose path contains '%XX' (e.g., Wikipedia titles
+    encoded with %20) must not get double-decoded by /rate."""
+    from newslet import tokens
+
+    url = "https://en.wikipedia.org/wiki/Hello%20world"
+    token = tokens.sign(url, "2026-05-17")
+    r = client.get(
+        "/rate",
+        params={"a": url, "d": "2026-05-17", "v": "up", "t": token},
+    )
+    assert r.status_code == 200
 
 
 def test_add_feed_returns_400_on_garbage_url(client):
@@ -182,6 +199,43 @@ def test_add_then_delete_with_uppercase_input(client):
 
     r = client.get("/")
     assert 'value="https://example.com/Rss"' not in r.text
+
+
+def test_issues_index_lists_recent_issues(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import Issue
+
+    client.cookies.set("admin_token", "supersecret")
+
+    db.put_issue(Issue(date="2026-05-17", picks=[], created_at=datetime.now(UTC)))
+    db.put_issue(Issue(date="2026-05-16", picks=[], created_at=datetime.now(UTC)))
+    db.mark_issue_sent("2026-05-16")
+
+    r = client.get("/issues")
+    assert r.status_code == 200
+    assert "2026-05-17" in r.text
+    assert "2026-05-16" in r.text
+    # The 2026-05-16 issue should show as sent; 2026-05-17 as unsent
+    assert "sent" in r.text
+    assert "unsent" in r.text
+
+
+def test_admin_index_shows_last_sent(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import Issue
+
+    client.cookies.set("admin_token", "supersecret")
+    db.put_issue(Issue(date="2026-05-15", picks=[], created_at=datetime.now(UTC)))
+    db.mark_issue_sent("2026-05-15")
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Last sent" in r.text
+    assert "2026-05-15" in r.text
 
 
 def test_rate_rejects_bad_rating(client):

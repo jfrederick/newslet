@@ -57,6 +57,7 @@ class FeedbackRow(BaseModel):
     title: str
     rating: Rating
     ts: datetime
+    issue_date: str  # YYYY-MM-DD; together with article_url, the table PK
 
 
 class Feed(BaseModel):

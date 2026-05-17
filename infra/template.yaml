@@ -71,17 +71,23 @@ Resources:
       AttributeDefinitions:
         - AttributeName: article_url
           AttributeType: S
-        - AttributeName: ts
+        - AttributeName: issue_date
           AttributeType: S
         - AttributeName: bucket
           AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      # PK = (article_url, issue_date) so a +/- click on the same article
+      # in the same issue overwrites the previous vote rather than piling
+      # up contradictory rows for Claude to see.
       KeySchema:
         - AttributeName: article_url
           KeyType: HASH
-        - AttributeName: ts
+        - AttributeName: issue_date
           KeyType: RANGE
-      # GSI so we can query the N most-recent rows across all articles
-      # without scanning the full table.
+      # GSI gives chronological "most-recent" reads without a scan.
+      # bucket is the year (e.g. "2026") to avoid a single hot
+      # partition; the query side joins the current + previous year.
       GlobalSecondaryIndexes:
         - IndexName: feedback-by-ts
           KeySchema:
