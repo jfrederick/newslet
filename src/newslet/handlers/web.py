@@ -16,6 +16,7 @@ from fastapi import Cookie, FastAPI, Form, HTTPException, Query, Request, Respon
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mangum import Mangum
+from pydantic import ValidationError
 
 from newslet import db, email_render, tokens
 from newslet.config import settings
@@ -66,15 +67,18 @@ def login_form() -> HTMLResponse:
 
 
 @app.post("/login")
-def login(token: str = Form(...)) -> Response:
+def login(request: Request, token: str = Form(...)) -> Response:
     if token != settings().admin_token:
         return _login_page("Invalid token")
     resp = RedirectResponse(url="/", status_code=303)
+    # secure=True locks out plain-http local dev. Detect from the actual
+    # request scheme so prod (HTTPS via API Gateway) still gets the
+    # secure flag and `uvicorn` on localhost still works.
     resp.set_cookie(
         "admin_token",
         token,
         httponly=True,
-        secure=True,
+        secure=request.url.scheme == "https",
         samesite="lax",
         max_age=60 * 60 * 24 * 30,
     )
@@ -119,7 +123,13 @@ def add_feed(
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     _require_admin(admin_token)
-    db.add_feed(url, title=title)
+    try:
+        db.add_feed(url, title=title)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid feed URL: {exc.errors()[0]['msg']}",
+        ) from exc
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -129,7 +139,7 @@ def delete_feed(
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     _require_admin(admin_token)
-    db.delete_feed(url)
+    db.delete_feed(url)  # no-op on invalid input
     return RedirectResponse(url="/", status_code=303)
 
 

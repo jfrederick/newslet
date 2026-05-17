@@ -69,6 +69,17 @@ def dynamo(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             AttributeDefinitions=[
                 {"AttributeName": "article_url", "AttributeType": "S"},
                 {"AttributeName": "ts", "AttributeType": "S"},
+                {"AttributeName": "bucket", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "feedback-by-ts",
+                    "KeySchema": [
+                        {"AttributeName": "bucket", "KeyType": "HASH"},
+                        {"AttributeName": "ts", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -159,6 +170,66 @@ def test_issue_put_then_get(dynamo: None) -> None:
     assert got.picks[1].score == 0.4
 
     assert db.get_issue("1999-01-01") is None
+
+
+def test_add_feed_normalizes_url(dynamo: None) -> None:
+    from newslet import db
+
+    # pydantic HttpUrl lowercases the host and appends a trailing slash
+    # on bare hostnames; the stored key must use that normalized form
+    # so later list/delete operations roundtrip.
+    feed = db.add_feed("HTTPS://Example.COM")
+    assert str(feed.url) == "https://example.com/"
+
+    listed = db.list_feeds()
+    assert [str(f.url) for f in listed] == ["https://example.com/"]
+
+
+def test_delete_feed_uses_normalized_key(dynamo: None) -> None:
+    from newslet import db
+
+    db.add_feed("https://Example.com/Rss")
+    # Caller passes the un-normalized form; delete should still match
+    # what was stored.
+    db.delete_feed("HTTPS://example.com/Rss")
+    assert db.list_feeds() == []
+
+
+def test_add_feed_rejects_garbage(dynamo: None) -> None:
+    from pydantic import ValidationError
+
+    from newslet import db
+
+    with pytest.raises(ValidationError):
+        db.add_feed("not-a-url")
+
+
+def test_list_feeds_skips_bad_rows(dynamo: None) -> None:
+    from newslet import db
+
+    # Write one good row through the normal path
+    db.add_feed("https://good.example.com/rss")
+
+    # Inject one corrupt row directly via boto3 (simulating data from
+    # an older code version that didn't validate)
+    ddb = boto3.resource("dynamodb", region_name="us-east-1")
+    ddb.Table("newslet-feeds").put_item(
+        Item={"url": "garbage-not-a-url", "title": "", "added_at": "nope"}
+    )
+
+    # The admin page must still load
+    feeds = db.list_feeds()
+    assert len(feeds) == 1
+    assert str(feeds[0].url) == "https://good.example.com/rss"
+
+
+def test_issue_exists(dynamo: None) -> None:
+    from newslet import db
+
+    assert db.issue_exists("2026-05-17") is False
+    db.put_issue(Issue(date="2026-05-17", picks=[], created_at=datetime.now(UTC)))
+    assert db.issue_exists("2026-05-17") is True
+    assert db.issue_exists("2026-05-18") is False
 
 
 def test_feedback_put_and_recent_descending(dynamo: None) -> None:

@@ -8,20 +8,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import boto3
+from boto3.dynamodb.conditions import Key
+from pydantic import HttpUrl, ValidationError
 
 from newslet.config import settings
 from newslet.contracts import Feed, FeedbackRow, Issue, Pick, Profile
 
-if TYPE_CHECKING:
-    pass
-
+log = logging.getLogger(__name__)
 
 _SEEN_TTL_SECONDS = 21 * 86400
+_FEEDBACK_BUCKET = "all"  # constant PK for the recent-feedback GSI
+_FEEDBACK_GSI = "feedback-by-ts"
+
+
+def normalize_url(url: str) -> str:
+    """Validate + normalize a URL via pydantic HttpUrl.
+
+    Raises pydantic ValidationError on invalid input; the caller (web
+    layer) translates that to a 400.
+    """
+    return str(HttpUrl(url))
 
 
 def _resource() -> Any:
@@ -59,30 +71,49 @@ def _hash_url(url: str) -> str:
 
 def list_feeds() -> list[Feed]:
     items = _t_feeds().scan().get("Items", [])
-    return [
-        Feed(
-            url=item["url"],
-            title=item.get("title", ""),
-            added_at=datetime.fromisoformat(item["added_at"]),
-        )
-        for item in items
-    ]
+    feeds: list[Feed] = []
+    for item in items:
+        try:
+            feeds.append(
+                Feed(
+                    url=item["url"],
+                    title=item.get("title", ""),
+                    added_at=datetime.fromisoformat(item["added_at"]),
+                )
+            )
+        except (ValidationError, KeyError, ValueError) as exc:
+            log.warning("skipping bad feed row %r: %s", item.get("url"), exc)
+    return feeds
 
 
 def add_feed(url: str, title: str = "") -> Feed:
+    """Validate + normalize the URL before storing.
+
+    Storing the normalized form prevents a class of bugs where the
+    primary key in DynamoDB differs from what later reads expose
+    through pydantic (e.g., trailing slash, lowercased host) — which
+    would cause delete-by-url to silently miss.
+    """
+    normalized = normalize_url(url)
     now = datetime.now(UTC)
     _t_feeds().put_item(
         Item={
-            "url": url,
+            "url": normalized,
             "title": title,
             "added_at": now.isoformat(),
         }
     )
-    return Feed(url=url, title=title, added_at=now)
+    return Feed(url=normalized, title=title, added_at=now)
 
 
 def delete_feed(url: str) -> None:
-    _t_feeds().delete_item(Key={"url": url})
+    """Delete by the normalized URL so it matches what add_feed stored."""
+    try:
+        normalized = normalize_url(url)
+    except ValidationError:
+        # Caller passed garbage; nothing to delete.
+        return
+    _t_feeds().delete_item(Key={"url": normalized})
 
 
 # ---------------------------------------------------------------------------
@@ -181,20 +212,41 @@ def put_feedback(row: FeedbackRow) -> None:
             "ts": row.ts.isoformat(),
             "title": row.title,
             "rating": row.rating,
+            # Constant bucket attribute so the GSI can return all rows
+            # ordered by ts without a full table scan.
+            "bucket": _FEEDBACK_BUCKET,
         }
     )
 
 
 def recent_feedback(limit: int = 50) -> list[FeedbackRow]:
-    items = _t_feedback().scan(Limit=limit).get("Items", [])
-    rows = [
+    """Return the ``limit`` most-recent feedback rows, newest first.
+
+    Queries the ``feedback-by-ts`` GSI so we don't pay a full scan as
+    the table grows.
+    """
+    resp = _t_feedback().query(
+        IndexName=_FEEDBACK_GSI,
+        KeyConditionExpression=Key("bucket").eq(_FEEDBACK_BUCKET),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [
         FeedbackRow(
             article_url=item["article_url"],
             title=item.get("title", ""),
             rating=item["rating"],
             ts=datetime.fromisoformat(item["ts"]),
         )
-        for item in items
+        for item in resp.get("Items", [])
     ]
-    rows.sort(key=lambda r: r.ts, reverse=True)
-    return rows
+
+
+def issue_exists(date: str) -> bool:
+    """Cheap idempotency check: was an issue already produced for this date?"""
+    resp = _t_issues().get_item(
+        Key={"date": date},
+        ProjectionExpression="#d",
+        ExpressionAttributeNames={"#d": "date"},
+    )
+    return "Item" in resp

@@ -2,12 +2,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Newslet - daily RSS newsletter app (two Lambdas + HttpApi + DynamoDB)
 
-Parameters:
-  Stage:
-    Type: String
-    Default: prod
-    Description: Deployment stage name (used for API stage and resource naming)
-
 Globals:
   Function:
     Runtime: python3.12
@@ -18,10 +12,9 @@ Globals:
 Resources:
 
   # ---------- HTTP API ----------
+  # Uses the $default stage so URLs have no /<stage>/ prefix.
   Api:
     Type: AWS::Serverless::HttpApi
-    Properties:
-      StageName: !Ref Stage
 
   # ---------- DynamoDB Tables ----------
   FeedsTable:
@@ -80,11 +73,24 @@ Resources:
           AttributeType: S
         - AttributeName: ts
           AttributeType: S
+        - AttributeName: bucket
+          AttributeType: S
       KeySchema:
         - AttributeName: article_url
           KeyType: HASH
         - AttributeName: ts
           KeyType: RANGE
+      # GSI so we can query the N most-recent rows across all articles
+      # without scanning the full table.
+      GlobalSecondaryIndexes:
+        - IndexName: feedback-by-ts
+          KeySchema:
+            - AttributeName: bucket
+              KeyType: HASH
+            - AttributeName: ts
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
   # ---------- Lambda Functions ----------
   DigestFunction:
@@ -123,8 +129,8 @@ Resources:
         DailySchedule:
           Type: Schedule
           Properties:
-            Schedule: cron(0 6 * * ? *)
-            Description: Trigger digest generation daily at 06:00 UTC
+            Schedule: cron(0 10 * * ? *)
+            Description: Trigger digest generation daily at 10:00 UTC
 
   WebFunction:
     Type: AWS::Serverless::Function

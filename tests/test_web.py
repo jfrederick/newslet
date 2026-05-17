@@ -65,6 +65,17 @@ def aws(env):
             AttributeDefinitions=[
                 {"AttributeName": "article_url", "AttributeType": "S"},
                 {"AttributeName": "ts", "AttributeType": "S"},
+                {"AttributeName": "bucket", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "feedback-by-ts",
+                    "KeySchema": [
+                        {"AttributeName": "bucket", "KeyType": "HASH"},
+                        {"AttributeName": "ts", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -145,6 +156,32 @@ def test_rate_accepts_signed_token(client):
     )
     assert r.status_code == 200
     assert "thanks" in r.text.lower()
+
+
+def test_add_feed_returns_400_on_garbage_url(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/feeds", data={"url": "not-a-url"})
+    assert r.status_code == 400
+    assert "invalid feed URL" in r.text
+
+
+def test_add_then_delete_with_uppercase_input(client):
+    """User adds a feed in one case; deletes with a different case.
+
+    Both must hit the same normalized DynamoDB key.
+    """
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/feeds", data={"url": "HTTPS://Example.COM/Rss"})
+    assert r.status_code == 303
+
+    r = client.get("/")
+    assert 'value="https://example.com/Rss"' in r.text
+
+    r = client.post("/api/feeds/delete", data={"url": "https://EXAMPLE.com/Rss"})
+    assert r.status_code == 303
+
+    r = client.get("/")
+    assert 'value="https://example.com/Rss"' not in r.text
 
 
 def test_rate_rejects_bad_rating(client):
