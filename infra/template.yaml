@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Newslet - daily RSS newsletter app (two Lambdas + HttpApi + DynamoDB)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    # Point at src/ so the newslet package lands at the zip root —
+    # Lambda's handler resolution can then find newslet.handlers.*.
+    # requirements.txt lives alongside the package in src/.
+    CodeUri: ../src
+
+Resources:
+
+  # ---------- HTTP API ----------
+  # Uses the $default stage so URLs have no /<stage>/ prefix.
+  Api:
+    Type: AWS::Serverless::HttpApi
+
+  # ---------- DynamoDB Tables ----------
+  FeedsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: url
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url
+          KeyType: HASH
+
+  ProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  SeenArticlesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: url_hash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url_hash
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  IssuesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: date
+          KeyType: HASH
+
+  FeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: article_url
+          AttributeType: S
+        - AttributeName: issue_date
+          AttributeType: S
+        - AttributeName: bucket
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      # PK = (article_url, issue_date) so a +/- click on the same article
+      # in the same issue overwrites the previous vote rather than piling
+      # up contradictory rows for Claude to see.
+      KeySchema:
+        - AttributeName: article_url
+          KeyType: HASH
+        - AttributeName: issue_date
+          KeyType: RANGE
+      # GSI gives chronological "most-recent" reads without a scan.
+      # bucket is the year (e.g. "2026") to avoid a single hot
+      # partition; the query side joins the current + previous year.
+      GlobalSecondaryIndexes:
+        - IndexName: feedback-by-ts
+          KeySchema:
+            - AttributeName: bucket
+              KeyType: HASH
+            - AttributeName: ts
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ---------- Lambda Functions ----------
+  DigestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: newslet.handlers.digest.handler
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfileTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SeenArticlesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IssuesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedbackTable
+        # Secrets (anthropic/resend keys, admin token, signing key) are
+        # SecureString params under /newslet/*. CloudFormation's ssm:
+        # dynamic ref refuses SecureString and ssm-secure: isn't
+        # supported for Lambda env vars, so the handlers fetch them at
+        # cold start. kms:Decrypt is needed for the default SSM key.
+        - SSMParameterReadPolicy:
+            ParameterName: newslet/*
+        - Statement:
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
+      Environment:
+        Variables:
+          TABLE_FEEDS: !Ref FeedsTable
+          TABLE_PROFILE: !Ref ProfileTable
+          TABLE_SEEN: !Ref SeenArticlesTable
+          TABLE_ISSUES: !Ref IssuesTable
+          TABLE_FEEDBACK: !Ref FeedbackTable
+          FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
+          TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
+          PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+          CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 10 * * ? *)
+            Description: Trigger digest generation daily at 10:00 UTC
+
+  WebFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: newslet.handlers.web.handler
+      Timeout: 30
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfileTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FeedbackTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IssuesTable
+        - SSMParameterReadPolicy:
+            ParameterName: newslet/*
+        - Statement:
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
+      Environment:
+        # PUBLIC_BASE_URL is intentionally NOT set here. If we referenced
+        # !Sub '...${Api}...' on this function, CloudFormation sees a
+        # circular dependency (Api integrations point at WebFunction via
+        # the Events block, and the env var points back at Api). The
+        # web handler computes its base URL from request.base_url at
+        # runtime instead.
+        Variables:
+          TABLE_FEEDS: !Ref FeedsTable
+          TABLE_PROFILE: !Ref ProfileTable
+          TABLE_SEEN: !Ref SeenArticlesTable
+          TABLE_ISSUES: !Ref IssuesTable
+          TABLE_FEEDBACK: !Ref FeedbackTable
+          FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
+          TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
+          CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
+      Events:
+        RootRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: ANY
+            Path: /
+        ProxyRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: ANY
+            Path: /{proxy+}
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API invoke URL
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+  DigestFunctionName:
+    Description: Name of the digest Lambda function
+    Value: !Ref DigestFunction
+  WebFunctionName:
+    Description: Name of the web Lambda function
+    Value: !Ref WebFunction

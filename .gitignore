@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+out/
+.aws-sam/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/

@@ -1,0 +1,336 @@
+"""Thin DynamoDB wrappers for newslet.
+
+All functions read table names lazily from :func:`newslet.config.settings`
+so importing this module does not require AWS env vars to be set.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
+
+import boto3
+from boto3.dynamodb.conditions import Key
+from pydantic import HttpUrl, ValidationError
+
+from newslet.config import settings
+from newslet.contracts import Feed, FeedbackRow, Issue, Pick, Profile
+
+log = logging.getLogger(__name__)
+
+_SEEN_TTL_SECONDS = 21 * 86400
+_FEEDBACK_GSI = "feedback-by-ts"
+
+
+def _feedback_bucket(ts: datetime) -> str:
+    """Shard key for the recent-feedback GSI — one bucket per year.
+
+    Personal-app traffic comfortably fits in a single per-year partition;
+    sharding avoids the documented hot-partition anti-pattern from a
+    constant string PK without the complexity of monthly shards.
+    """
+    return ts.strftime("%Y")
+
+
+def normalize_url(url: str) -> str:
+    """Validate + normalize a URL via pydantic HttpUrl.
+
+    Raises pydantic ValidationError on invalid input; the caller (web
+    layer) translates that to a 400.
+    """
+    return str(HttpUrl(url))
+
+
+def _resource() -> Any:
+    return boto3.resource("dynamodb", region_name=settings().aws_region)
+
+
+def _t_feeds() -> Any:
+    return _resource().Table(settings().table_feeds)
+
+
+def _t_profile() -> Any:
+    return _resource().Table(settings().table_profile)
+
+
+def _t_seen() -> Any:
+    return _resource().Table(settings().table_seen)
+
+
+def _t_issues() -> Any:
+    return _resource().Table(settings().table_issues)
+
+
+def _t_feedback() -> Any:
+    return _resource().Table(settings().table_feedback)
+
+
+def _hash_url(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Feeds
+# ---------------------------------------------------------------------------
+
+
+def list_feeds() -> list[Feed]:
+    items = _t_feeds().scan().get("Items", [])
+    feeds: list[Feed] = []
+    for item in items:
+        try:
+            feeds.append(
+                Feed(
+                    url=item["url"],
+                    title=item.get("title", ""),
+                    added_at=datetime.fromisoformat(item["added_at"]),
+                )
+            )
+        except (ValidationError, KeyError, ValueError) as exc:
+            log.warning("skipping bad feed row %r: %s", item.get("url"), exc)
+    return feeds
+
+
+def add_feed(url: str, title: str = "") -> Feed:
+    """Validate + normalize the URL before storing.
+
+    Storing the normalized form prevents a class of bugs where the
+    primary key in DynamoDB differs from what later reads expose
+    through pydantic (e.g., trailing slash, lowercased host) — which
+    would cause delete-by-url to silently miss.
+    """
+    normalized = normalize_url(url)
+    now = datetime.now(UTC)
+    _t_feeds().put_item(
+        Item={
+            "url": normalized,
+            "title": title,
+            "added_at": now.isoformat(),
+        }
+    )
+    return Feed(url=normalized, title=title, added_at=now)
+
+
+def delete_feed(url: str) -> None:
+    """Delete by the normalized URL so it matches what add_feed stored."""
+    try:
+        normalized = normalize_url(url)
+    except ValidationError:
+        # Caller passed garbage; nothing to delete.
+        return
+    _t_feeds().delete_item(Key={"url": normalized})
+
+
+# ---------------------------------------------------------------------------
+# Profile
+# ---------------------------------------------------------------------------
+
+
+def get_profile() -> Profile:
+    resp = _t_profile().get_item(Key={"id": "me"})
+    item = resp.get("Item")
+    if not item:
+        return Profile(markdown="", updated_at=datetime.now(UTC))
+    return Profile(
+        markdown=item.get("markdown", ""),
+        updated_at=datetime.fromisoformat(item["updated_at"]),
+    )
+
+
+def put_profile(markdown: str) -> Profile:
+    now = datetime.now(UTC)
+    _t_profile().put_item(
+        Item={
+            "id": "me",
+            "markdown": markdown,
+            "updated_at": now.isoformat(),
+        }
+    )
+    return Profile(markdown=markdown, updated_at=now)
+
+
+# ---------------------------------------------------------------------------
+# Seen articles
+# ---------------------------------------------------------------------------
+
+
+def mark_seen(urls: Iterable[str]) -> None:
+    expires_at = int(datetime.now(UTC).timestamp() + _SEEN_TTL_SECONDS)
+    table = _t_seen()
+    with table.batch_writer() as batch:
+        for url in urls:
+            batch.put_item(
+                Item={
+                    "url_hash": _hash_url(url),
+                    "url": url,
+                    "expires_at": expires_at,
+                }
+            )
+
+
+def is_seen(url: str) -> bool:
+    resp = _t_seen().get_item(Key={"url_hash": _hash_url(url)})
+    return "Item" in resp
+
+
+# ---------------------------------------------------------------------------
+# Issues
+# ---------------------------------------------------------------------------
+
+
+def put_issue(issue: Issue) -> None:
+    picks_json = json.dumps([json.loads(p.model_dump_json()) for p in issue.picks])
+    _t_issues().put_item(
+        Item={
+            "date": issue.date,
+            "picks_json": picks_json,
+            "created_at": issue.created_at.isoformat(),
+        }
+    )
+
+
+def get_issue(date: str) -> Issue | None:
+    resp = _t_issues().get_item(Key={"date": date})
+    item = resp.get("Item")
+    if not item:
+        return None
+    picks_raw = json.loads(item["picks_json"])
+    picks = [Pick.model_validate(p) for p in picks_raw]
+    return Issue.model_validate(
+        {
+            "date": item["date"],
+            "picks": picks,
+            "created_at": datetime.fromisoformat(item["created_at"]),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feedback
+# ---------------------------------------------------------------------------
+
+
+def put_feedback(row: FeedbackRow) -> None:
+    """Store a +/- click.
+
+    Primary key is ``(article_url, issue_date)`` so clicking the same
+    article again in the same issue overwrites the previous vote —
+    avoiding contradictory pairs of `+` and `-` rows that would confuse
+    Claude on the next run.
+    """
+    _t_feedback().put_item(
+        Item={
+            "article_url": str(row.article_url),
+            "issue_date": row.issue_date,
+            "ts": row.ts.isoformat(),
+            "title": row.title,
+            "rating": row.rating,
+            "bucket": _feedback_bucket(row.ts),
+        }
+    )
+
+
+def _query_feedback_bucket(bucket: str, limit: int) -> list[dict[str, Any]]:
+    resp = _t_feedback().query(
+        IndexName=_FEEDBACK_GSI,
+        KeyConditionExpression=Key("bucket").eq(bucket),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return resp.get("Items", [])
+
+
+def recent_feedback(limit: int = 50, *, now: datetime | None = None) -> list[FeedbackRow]:
+    """Return the ``limit`` most-recent feedback rows, newest first.
+
+    Reads from the current-year shard first; if it doesn't have enough
+    rows (e.g., early January), supplements from the previous year.
+    """
+    now = now or datetime.now(UTC)
+    items: list[dict[str, Any]] = _query_feedback_bucket(_feedback_bucket(now), limit)
+    if len(items) < limit:
+        prev = now.replace(year=now.year - 1)
+        items.extend(_query_feedback_bucket(_feedback_bucket(prev), limit - len(items)))
+
+    rows: list[FeedbackRow] = []
+    for item in items:
+        try:
+            rows.append(
+                FeedbackRow(
+                    article_url=item["article_url"],
+                    title=item.get("title", ""),
+                    rating=item["rating"],
+                    ts=datetime.fromisoformat(item["ts"]),
+                    issue_date=item.get("issue_date", ""),
+                )
+            )
+        except (ValidationError, KeyError, ValueError) as exc:
+            log.warning("skipping bad feedback row: %s", exc)
+    rows.sort(key=lambda r: r.ts, reverse=True)
+    return rows[:limit]
+
+
+def issue_exists(date: str) -> bool:
+    """True if an Issue row has been written for ``date`` (regardless of send status)."""
+    resp = _t_issues().get_item(
+        Key={"date": date},
+        ProjectionExpression="#d",
+        ExpressionAttributeNames={"#d": "date"},
+    )
+    return "Item" in resp
+
+
+def issue_sent(date: str) -> bool:
+    """True if ``date``'s issue has been successfully emailed.
+
+    This is the real idempotency marker — distinct from ``issue_exists``
+    so a partial failure (Issue stored but email send failed) doesn't
+    silently skip the retry.
+    """
+    resp = _t_issues().get_item(
+        Key={"date": date},
+        ProjectionExpression="sent_at",
+    )
+    item = resp.get("Item") or {}
+    return bool(item.get("sent_at"))
+
+
+def mark_issue_sent(date: str) -> None:
+    """Flip the ``sent_at`` flag on today's issue. Called only after a
+    successful email send."""
+    _t_issues().update_item(
+        Key={"date": date},
+        UpdateExpression="SET sent_at = :ts",
+        ExpressionAttributeValues={":ts": datetime.now(UTC).isoformat()},
+    )
+
+
+def list_issues(limit: int = 30) -> list[dict[str, Any]]:
+    """Return a recent set of issues for the admin index, newest first.
+
+    Returns lightweight dicts (date + pick count + sent status); avoids
+    pulling the full picks JSON for each row.
+    """
+    resp = _t_issues().scan(
+        ProjectionExpression="#d, sent_at, picks_json",
+        ExpressionAttributeNames={"#d": "date"},
+    )
+    rows = []
+    for item in resp.get("Items", []):
+        try:
+            picks_count = len(json.loads(item.get("picks_json", "[]")))
+        except json.JSONDecodeError:
+            picks_count = 0
+        rows.append(
+            {
+                "date": item["date"],
+                "picks_count": picks_count,
+                "sent_at": item.get("sent_at"),
+            }
+        )
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return rows[:limit]
