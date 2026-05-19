@@ -119,6 +119,20 @@ Resources:
             TableName: !Ref IssuesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref FeedbackTable
+        # Secrets (anthropic/resend keys, admin token, signing key) are
+        # SecureString params under /newslet/*. CloudFormation's ssm:
+        # dynamic ref refuses SecureString and ssm-secure: isn't
+        # supported for Lambda env vars, so the handlers fetch them at
+        # cold start. kms:Decrypt is needed for the default SSM key.
+        - SSMParameterReadPolicy:
+            ParameterName: newslet/*
+        - Statement:
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
       Environment:
         Variables:
           TABLE_FEEDS: !Ref FeedsTable
@@ -126,10 +140,6 @@ Resources:
           TABLE_SEEN: !Ref SeenArticlesTable
           TABLE_ISSUES: !Ref IssuesTable
           TABLE_FEEDBACK: !Ref FeedbackTable
-          ANTHROPIC_API_KEY: !Sub '{{resolve:ssm:/newslet/anthropic-api-key}}'
-          RESEND_API_KEY: !Sub '{{resolve:ssm:/newslet/resend-api-key}}'
-          ADMIN_TOKEN: !Sub '{{resolve:ssm:/newslet/admin-token}}'
-          SIGNING_KEY: !Sub '{{resolve:ssm:/newslet/signing-key}}'
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
           PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
@@ -156,6 +166,15 @@ Resources:
             TableName: !Ref FeedbackTable
         - DynamoDBCrudPolicy:
             TableName: !Ref IssuesTable
+        - SSMParameterReadPolicy:
+            ParameterName: newslet/*
+        - Statement:
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
       Environment:
         # PUBLIC_BASE_URL is intentionally NOT set here. If we referenced
         # !Sub '...${Api}...' on this function, CloudFormation sees a
@@ -169,10 +188,6 @@ Resources:
           TABLE_SEEN: !Ref SeenArticlesTable
           TABLE_ISSUES: !Ref IssuesTable
           TABLE_FEEDBACK: !Ref FeedbackTable
-          ANTHROPIC_API_KEY: !Sub '{{resolve:ssm:/newslet/anthropic-api-key}}'
-          RESEND_API_KEY: !Sub '{{resolve:ssm:/newslet/resend-api-key}}'
-          ADMIN_TOKEN: !Sub '{{resolve:ssm:/newslet/admin-token}}'
-          SIGNING_KEY: !Sub '{{resolve:ssm:/newslet/signing-key}}'
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
           CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'

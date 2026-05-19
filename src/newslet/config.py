@@ -1,6 +1,9 @@
-"""Environment-driven settings for newslet.
+"""Settings for newslet, read exactly once via :func:`settings`.
 
-All AWS Lambda env vars are read here exactly once via :func:`settings`.
+Secrets (Anthropic key, Resend key, admin token, signing key) come from
+SSM Parameter Store SecureString parameters under ``/newslet/*`` at cold
+start, with an env-var override (env wins if set) so tests and local
+dev don't need AWS. Non-secret config stays in plain env vars.
 """
 
 from __future__ import annotations
@@ -47,15 +50,38 @@ def _required(name: str) -> str:
 
 
 @lru_cache(maxsize=1)
+def _ssm_client():
+    import boto3
+
+    return boto3.client("ssm")
+
+
+def _secret(env_name: str, ssm_suffix: str) -> str:
+    """Return a secret value, preferring the env var if set."""
+    val = os.environ.get(env_name)
+    if val:
+        return val
+    prefix = os.environ.get("NEWSLET_SSM_PREFIX", "/newslet")
+    full = f"{prefix}/{ssm_suffix}"
+    try:
+        resp = _ssm_client().get_parameter(Name=full, WithDecryption=True)
+    except Exception as e:
+        raise RuntimeError(
+            f"Secret '{env_name}' not in env and SSM lookup for '{full}' failed: {e}"
+        ) from e
+    return resp["Parameter"]["Value"]
+
+
+@lru_cache(maxsize=1)
 def settings() -> Settings:
     return Settings(
-        anthropic_api_key=_required("ANTHROPIC_API_KEY"),
+        anthropic_api_key=_secret("ANTHROPIC_API_KEY", "anthropic-api-key"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-7"),
-        resend_api_key=_required("RESEND_API_KEY"),
+        resend_api_key=_secret("RESEND_API_KEY", "resend-api-key"),
         from_email=_required("FROM_EMAIL"),
         to_email=_required("TO_EMAIL"),
-        admin_token=_required("ADMIN_TOKEN"),
-        signing_key=_required("SIGNING_KEY"),
+        admin_token=_secret("ADMIN_TOKEN", "admin-token"),
+        signing_key=_secret("SIGNING_KEY", "signing-key"),
         # Not required on the web Lambda — see Settings.public_base_url.
         public_base_url=os.environ.get("PUBLIC_BASE_URL", ""),
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),

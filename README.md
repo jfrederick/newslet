@@ -137,7 +137,7 @@ resolve a lockfile.
 
 ## Module map
 
-- `src/newslet/config.py` — env-driven `Settings`
+- `src/newslet/config.py` — `Settings` (env vars + SSM SecureString lookups for the four secrets)
 - `src/newslet/contracts.py` — pydantic models (Article, Pick, Issue, FeedbackRow, …)
 - `src/newslet/tokens.py` — HMAC sign/verify for `/rate` links
 - `src/newslet/feeds.py` — feedparser wrapper, 24h filter, dedup via injected `is_seen`
