@@ -1,11 +1,84 @@
 # Auto-deploy on merge to main
 
-`.github/workflows/ci.yml` runs `pytest` + `ruff` on every PR and, on
+A GitHub Actions workflow runs `pytest` + `ruff` on every PR and, on
 push to `main`, runs `sam deploy` against your AWS account using OIDC
 (no long-lived access keys stored anywhere).
 
 This is a one-time AWS + GitHub setup. After this is done, every merge
 to `main` ships to AWS automatically.
+
+## 0. Add the workflow file
+
+The workflow file has to be committed by you locally — Claude Code's
+git push token in this session doesn't have GitHub's `workflow`
+scope, so it can't create or update files under `.github/workflows/`.
+
+Save the following as `.github/workflows/ci.yml`, commit, and push:
+
+```yaml
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check src tests scripts
+      - name: Pytest
+        run: pytest -q
+
+  deploy:
+    # Only deploy from main pushes (not from PRs, even those merged
+    # via "Squash and merge" — those land as a push to main, which
+    # this catches; PR events themselves never deploy).
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM build
+        working-directory: ./infra
+        run: sam build
+
+      - name: SAM deploy
+        working-directory: ./infra
+        run: |
+          sam deploy \
+            --stack-name newslet \
+            --region us-east-1 \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM
+```
 
 ## 1. Create the GitHub OIDC provider in your AWS account
 
