@@ -118,6 +118,14 @@ EventBridge fires the digest Lambda at 10:00 UTC daily. Change the
 cron in `infra/template.yaml` if you want a different time of day
 (EventBridge cron is always UTC).
 
+### Optional: auto-deploy on merge to main
+
+Once you're happy with the manual flow, follow
+[`docs/github-actions-setup.md`](docs/github-actions-setup.md) (~10
+minutes, one-time) to wire up GitHub Actions OIDC. After that, every
+push to `main` runs `pytest` + `ruff` and, on success, runs
+`sam deploy` — no static AWS keys anywhere.
+
 ## Security review
 
 Before deploying, audit dependencies:
