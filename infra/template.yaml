@@ -106,6 +106,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: newslet.handlers.digest.handler
+      # Explicit, deterministic name so WebFunction can reference it by
+      # string (not !Ref) for the "send now" invoke — a !Ref would create
+      # a circular dependency (Web -> Digest -> Api -> Web).
+      FunctionName: !Sub '${AWS::StackName}-digest'
       Timeout: 300
       MemorySize: 1024
       Policies:
@@ -168,6 +172,11 @@ Resources:
             TableName: !Ref IssuesTable
         - SSMParameterReadPolicy:
             ParameterName: newslet/*
+        # Lets the admin "send now" button async-invoke the digest Lambda.
+        # Named by string (not !Ref) to avoid a circular dependency — see
+        # DigestFunction.FunctionName.
+        - LambdaInvokePolicy:
+            FunctionName: !Sub '${AWS::StackName}-digest'
         - Statement:
             - Effect: Allow
               Action: kms:Decrypt
@@ -191,6 +200,9 @@ Resources:
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
           CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
+          # So /api/send-now knows which function to invoke. String (not
+          # !Ref) to avoid a circular dependency — see DigestFunction.
+          DIGEST_FUNCTION_NAME: !Sub '${AWS::StackName}-digest'
       Events:
         RootRoute:
           Type: HttpApi

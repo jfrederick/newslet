@@ -8,9 +8,11 @@ Two auth schemes:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import boto3
 from fastapi import Cookie, FastAPI, Form, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -95,7 +97,10 @@ def logout() -> Response:
 
 
 @app.get("/", response_class=HTMLResponse)
-def admin_index(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
+def admin_index(
+    sent: str | None = Query(default=None),
+    admin_token: str | None = Cookie(default=None),
+) -> HTMLResponse:
     _require_admin(admin_token)
     feeds_rows = [
         {
@@ -116,6 +121,7 @@ def admin_index(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
         profile_md=profile.markdown,
         recent_issues=recent_issues,
         last_sent=last_sent,
+        sent=sent,
     )
     return HTMLResponse(html)
 
@@ -164,6 +170,31 @@ def save_profile(
     _require_admin(admin_token)
     db.put_profile(markdown)
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/api/send-now")
+def send_now(admin_token: str | None = Cookie(default=None)) -> Response:
+    """Trigger an on-demand digest send.
+
+    Invokes the digest Lambda asynchronously (``Event``) with a
+    ``{"manual": true}`` payload — a real run with a live feedback loop
+    that stays out of the daily cadence (see digest._run_manual). Async
+    because a digest far exceeds this Lambda's timeout; the email lands a
+    bit later.
+    """
+    _require_admin(admin_token)
+    fn = settings().digest_function_name
+    if not fn:
+        raise HTTPException(
+            status_code=503,
+            detail="DIGEST_FUNCTION_NAME is not configured for the web app",
+        )
+    boto3.client("lambda").invoke(
+        FunctionName=fn,
+        InvocationType="Event",
+        Payload=json.dumps({"manual": True}),
+    )
+    return RedirectResponse(url="/?sent=1", status_code=303)
 
 
 # ---------------------------------------------------------------------------

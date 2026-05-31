@@ -182,23 +182,27 @@ def is_seen(url: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def put_issue(issue: Issue) -> None:
+def put_issue(issue: Issue, *, manual: bool = False) -> None:
     picks_json = json.dumps([json.loads(p.model_dump_json()) for p in issue.picks])
     discoveries_json = json.dumps(
         [json.loads(d.model_dump_json()) for d in issue.discoveries]
     )
-    _t_issues().put_item(
-        Item={
-            "date": issue.date,
-            "picks_json": picks_json,
-            "created_at": issue.created_at.isoformat(),
-            # Persist the enrichment fields so a retry that reuses the stored
-            # issue re-sends with the same subject/intro/discoveries.
-            "subject": issue.subject,
-            "intro": issue.intro,
-            "discoveries_json": discoveries_json,
-        }
-    )
+    item: dict[str, Any] = {
+        "date": issue.date,
+        "picks_json": picks_json,
+        "created_at": issue.created_at.isoformat(),
+        # Persist the enrichment fields so a retry that reuses the stored
+        # issue re-sends with the same subject/intro/discoveries.
+        "subject": issue.subject,
+        "intro": issue.intro,
+        "discoveries_json": discoveries_json,
+    }
+    if manual:
+        # Manual ("send now") issues are stored so /rate title lookup and
+        # issue viewing still work, but flagged so list_issues hides them
+        # from "recent issues" — see list_issues.
+        item["manual"] = True
+    _t_issues().put_item(Item=item)
 
 
 def get_issue(date: str) -> Issue | None:
@@ -348,11 +352,14 @@ def list_issues(limit: int = 30) -> list[dict[str, Any]]:
     pulling the full picks JSON for each row.
     """
     resp = _t_issues().scan(
-        ProjectionExpression="#d, sent_at, picks_json",
-        ExpressionAttributeNames={"#d": "date"},
+        ProjectionExpression="#d, sent_at, picks_json, #m",
+        ExpressionAttributeNames={"#d": "date", "#m": "manual"},
     )
     rows = []
     for item in resp.get("Items", []):
+        # Manual "send now" issues are kept out of "recent issues".
+        if item.get("manual"):
+            continue
         try:
             picks_count = len(json.loads(item.get("picks_json", "[]")))
         except json.JSONDecodeError:
