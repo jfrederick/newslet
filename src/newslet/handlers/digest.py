@@ -11,6 +11,7 @@ import argparse
 import logging
 import os
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -193,8 +194,12 @@ def _run_manual(s: Any) -> dict:
     issue, _candidates = _fresh_issue(now=now)
     # Re-key to a synthetic, URL-safe id: hidden from "recent issues",
     # can't collide with the daily date, yet rate links + the HMAC token
-    # (both signed over this key) still resolve back to it.
-    key = "manual-" + now.strftime("%Y%m%d-%H%M%S")
+    # (both signed over this key) still resolve back to it. The random
+    # suffix keeps two sends fired in the same instant — a double-click or
+    # an async-invoke retry on separate Lambda instances — from sharing a
+    # key and clobbering each other's stored picks/feedback. A timestamp
+    # alone (even to the microsecond) can't guarantee this across hosts.
+    key = "manual-" + now.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     issue = issue.model_copy(update={"date": key})
     db.put_issue(issue, manual=True)
 

@@ -577,3 +577,51 @@ def test_manual_run_sends_but_stays_invisible_to_cadence(aws, monkeypatch):
 
     # ...but tuning still ran, faithful to a real run.
     assert db.get_profile().markdown.endswith("<!-- tuned -->")
+
+
+def test_concurrent_manual_runs_get_distinct_issue_keys(aws, monkeypatch):
+    """Two manual sends fired in the same instant (e.g. a double-click or a
+    browser POST retry) must persist as distinct issue rows. A
+    second-precision key would collide and the later put_issue would
+    overwrite the earlier issue's picks."""
+    from datetime import datetime as real_datetime
+
+    from newslet import db, feeds, rank
+    from newslet.handlers import digest
+
+    # Freeze the clock so both runs share the same wall-clock instant —
+    # the worst case the synthetic key must survive.
+    frozen = real_datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
+
+    class _FrozenDatetime:
+        @staticmethod
+        def now(tz=None):
+            return frozen
+
+    monkeypatch.setattr(digest, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(
+        feeds,
+        "feedparser",
+        SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(frozen)),
+    )
+    monkeypatch.setattr(
+        rank.anthropic,
+        "Anthropic",
+        lambda **_: _FakeAnthropic(json.dumps({"picks": [
+            {"url": "https://example.com/fresh-1", "title": "Fresh One",
+             "blurb": "b", "source": "Test Feed", "score": 0.9},
+        ]})),
+    )
+    _stub_enrichment(monkeypatch)
+    monkeypatch.setattr(digest, "_send_email", lambda s, h: None)
+
+    db.add_feed("https://example.com/rss")
+
+    first = digest.handler({"manual": True}, None)
+    second = digest.handler({"manual": True}, None)
+
+    # Distinct keys despite the identical timestamp...
+    assert first["date"] != second["date"]
+    # ...and both issues persist independently (no overwrite).
+    assert db.get_issue(first["date"]) is not None
+    assert db.get_issue(second["date"]) is not None
