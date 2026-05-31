@@ -88,30 +88,46 @@ def _extract_json_object(text: str) -> str | None:
 
     With the web_search tool active the model often ignores the
     "ONLY a JSON object, no fences" instruction and wraps its answer in a
-    ```json fence or prefixes a sentence ("Here are the articles..."). A
-    bare ``json.loads`` on that raises and — because discovery is
-    best-effort — the section silently vanishes from the email. Strip any
-    code fence, then fall back to the first balanced ``{...}`` span so a
-    leading/trailing sentence doesn't kill an otherwise-valid payload.
+    ```json fence, prefixes a sentence ("Here are the articles..."), or
+    trails one ("...}\nHope that helps!"). A bare ``json.loads`` on any of
+    those raises and — because discovery is best-effort — the section
+    silently vanishes from the email. Prefer the first fenced block that
+    looks like an object, then return the first balanced ``{...}`` span,
+    ignoring braces inside string literals so surrounding prose (or a stray
+    brace in a title/reason) can't kill an otherwise-valid payload.
     """
     candidate = text.strip()
 
-    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL)
-    if fenced:
-        candidate = fenced.group(1).strip()
+    # If the answer is fenced, take the first fenced block that actually
+    # looks like a JSON object — the model sometimes emits an unrelated
+    # example fence before the real one.
+    for body in re.findall(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL):
+        body = body.strip()
+        if body.startswith("{"):
+            candidate = body
+            break
 
-    # Already a clean object? Use it. Otherwise scan for the first balanced
-    # brace span so surrounding prose doesn't trip json.loads.
-    if candidate.startswith("{"):
-        return candidate
-
+    # Return the first balanced {...} span. A string-literal toggle keeps
+    # braces inside values (e.g. "covers {tech} topics") from skewing the
+    # depth count, and stopping at depth 0 trims any trailing prose.
     start = candidate.find("{")
     if start == -1:
         return None
     depth = 0
+    in_string = False
+    escaped = False
     for i in range(start, len(candidate)):
         ch = candidate[i]
-        if ch == "{":
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
