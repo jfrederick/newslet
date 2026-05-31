@@ -96,6 +96,6 @@ changes:
 ## Git / PR workflow
 
 - Develop on a feature branch; push with `git push -u origin <branch>`.
-- **Do not open a PR unless explicitly asked.**
+- Opening a PR for your changes is fine.
 - CI runs `ruff` + `pytest` on every PR and, on merge to `main`, deploys via
   SAM. Don't push work that fails either gate.
