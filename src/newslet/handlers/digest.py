@@ -11,6 +11,7 @@ import argparse
 import logging
 import os
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -145,11 +146,81 @@ def _send_email(subject: str, html: str) -> None:
     )
 
 
-def handler(event: dict, context: Any) -> dict:
-    """Run the daily digest pipeline once, idempotently.
+def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
+    """Fetch + rank a brand-new issue from the current feeds/profile.
 
-    Idempotency is keyed on ``sent_at`` — *not* mere existence of the
-    Issue row — so a partial failure (e.g. ``put_issue`` succeeded but
+    Shared by the daily and manual paths. ``now`` lets the manual path
+    pass the same instant it uses for the synthetic key.
+    """
+    feeds_list = db.list_feeds()
+    profile = db.get_profile()
+    # Recency window for ranking; tuning reads its own wider window.
+    feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
+    return run_digest(
+        feed_urls=[str(f.url) for f in feeds_list],
+        profile=profile,
+        feedback=feedback,
+        is_seen=db.is_seen,
+        now=now,
+    )
+
+
+def _tune_profile_after_send() -> None:
+    """Re-tune the profile after a confirmed send, using a wider feedback
+    window than ranking so the cumulative learned-preferences block
+    reflects durable taste, not just the last few days. Best effort:
+    tuning must never break the send (which already happened)."""
+    try:
+        profile = db.get_profile()
+        tune_feedback = db.recent_feedback(limit=_TUNE_FEEDBACK_LIMIT)
+        new_markdown = tune.tune_profile(profile.markdown, tune_feedback)
+        if new_markdown != profile.markdown:
+            db.put_profile(new_markdown)
+    except Exception:  # noqa: BLE001 - tuning is best effort, never raise
+        log.exception("profile tuning failed after send")
+
+
+def _run_manual(s: Any) -> dict:
+    """On-demand "send now" run.
+
+    A faithful real run — fetch → rank → summarize → discover → send →
+    tune, with a live feedback loop — but deliberately isolated from the
+    daily cadence: it ignores the ``issue_sent`` gate, stores under a
+    synthetic key hidden from ``list_issues``, and never marks
+    ``issue_sent`` or ``mark_seen`` (so it neither counts toward timing
+    nor consumes the scheduled digest's candidate pool).
+    """
+    now = datetime.now(UTC)
+    issue, _candidates = _fresh_issue(now=now)
+    # Re-key to a synthetic, URL-safe id: hidden from "recent issues",
+    # can't collide with the daily date, yet rate links + the HMAC token
+    # (both signed over this key) still resolve back to it. The random
+    # suffix keeps two sends fired in the same instant — a double-click or
+    # an async-invoke retry on separate Lambda instances — from sharing a
+    # key and clobbering each other's stored picks/feedback. A timestamp
+    # alone (even to the microsecond) can't guarantee this across hosts.
+    key = "manual-" + now.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    issue = issue.model_copy(update={"date": key})
+    db.put_issue(issue, manual=True)
+
+    subject, html = email_render.render_email(issue, s.public_base_url)
+    _send_email(subject, html)
+    # Intentionally no mark_issue_sent / mark_seen here — see docstring.
+    _tune_profile_after_send()
+
+    log.info("manual send %s with %d picks", issue.date, len(issue.picks))
+    return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
+
+
+def handler(event: dict, context: Any) -> dict:
+    """Run the digest pipeline once.
+
+    With ``event["manual"]`` truthy, runs an on-demand send isolated from
+    the daily cadence (see :func:`_run_manual`). Otherwise runs the daily
+    pipeline idempotently.
+
+    Daily idempotency is keyed on ``sent_at`` — *not* mere existence of
+    the Issue row — so a partial failure (e.g. ``put_issue`` succeeded but
     Resend was down) on the first attempt does not cause subsequent
     EventBridge retries to silently skip the day.
 
@@ -173,6 +244,10 @@ def handler(event: dict, context: Any) -> dict:
         # Optional in config because the web Lambda doesn't need it,
         # but the digest *must* have it to render rate links.
         raise RuntimeError("PUBLIC_BASE_URL env var is required for the digest Lambda")
+
+    if event and event.get("manual"):
+        return _run_manual(s)
+
     today = datetime.now(UTC).strftime("%Y-%m-%d")
 
     if db.issue_sent(today):
@@ -185,16 +260,7 @@ def handler(event: dict, context: Any) -> dict:
         issue = existing
         candidates: list[Article] = []  # already-marked on the failed run
     else:
-        feeds_list = db.list_feeds()
-        profile = db.get_profile()
-        # Recency window for ranking; tuning reads its own wider window below.
-        feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
-        issue, candidates = run_digest(
-            feed_urls=[str(f.url) for f in feeds_list],
-            profile=profile,
-            feedback=feedback,
-            is_seen=db.is_seen,
-        )
+        issue, candidates = _fresh_issue()
         db.put_issue(issue)
 
     subject, html = email_render.render_email(issue, s.public_base_url)
@@ -210,18 +276,7 @@ def handler(event: dict, context: Any) -> dict:
     if seen_urls:
         db.mark_seen(seen_urls)
 
-    # Re-tune the profile after a confirmed send, using a wider feedback window
-    # than ranking so the cumulative learned-preferences block reflects durable
-    # taste, not just the last few days. Best effort: tuning must never break
-    # the send (which already happened above).
-    try:
-        profile = db.get_profile()
-        tune_feedback = db.recent_feedback(limit=_TUNE_FEEDBACK_LIMIT)
-        new_markdown = tune.tune_profile(profile.markdown, tune_feedback)
-        if new_markdown != profile.markdown:
-            db.put_profile(new_markdown)
-    except Exception:  # noqa: BLE001 - tuning is best effort, never raise
-        log.exception("profile tuning failed after send")
+    _tune_profile_after_send()
 
     log.info("sent issue %s with %d picks", issue.date, len(issue.picks))
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
