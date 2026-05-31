@@ -258,6 +258,62 @@ def test_list_feeds_skips_bad_rows(dynamo: None) -> None:
     assert str(feeds[0].url) == "https://good.example.com/rss"
 
 
+def test_get_issue_tolerates_legacy_discovery_without_feed_url(dynamo: None) -> None:
+    """Issues persisted before feed_url was required must still load.
+
+    A strict validate would raise ValidationError on the old discovery row
+    and make the whole issue unreadable, breaking /rate and /issues/{date}.
+    The unrenderable discovery is skipped; picks (and thus rating links)
+    survive.
+    """
+    import json
+
+    from newslet import db
+
+    # Simulate a row written by an older code version: a discovery with no
+    # feed_url, alongside a valid pick.
+    ddb = boto3.resource("dynamodb", region_name="us-east-1")
+    ddb.Table("newslet-issues").put_item(
+        Item={
+            "date": "2026-05-10",
+            "picks_json": json.dumps(
+                [
+                    {
+                        "url": "https://example.com/article",
+                        "title": "Legacy Pick",
+                        "blurb": "b",
+                        "source": "Src",
+                        "score": 0.8,
+                    }
+                ]
+            ),
+            "created_at": datetime.now(UTC).isoformat(),
+            "subject": "Legacy issue",
+            "intro": "",
+            "discoveries_json": json.dumps(
+                [
+                    {
+                        "url": "https://oldsource.example/story",
+                        "title": "Old Discovery",
+                        "source": "Old Source",
+                        "reason": "no feed_url back then",
+                    }
+                ]
+            ),
+        }
+    )
+
+    got = db.get_issue("2026-05-10")
+
+    assert got is not None
+    assert got.subject == "Legacy issue"
+    # The pick — what the rating links resolve against — is intact.
+    assert len(got.picks) == 1
+    assert str(got.picks[0].url) == "https://example.com/article"
+    # The unrenderable legacy discovery is dropped, not fatal.
+    assert got.discoveries == []
+
+
 def test_issue_exists(dynamo: None) -> None:
     from newslet import db
 
