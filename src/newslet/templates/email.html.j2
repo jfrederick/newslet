@@ -79,8 +79,13 @@
               </div>
               {% endif %}
               {% if disc.reason %}
-              <div style="font-size:14px; line-height:1.5; color:#444; margin:0;">
+              <div style="font-size:14px; line-height:1.5; color:#444; margin:0 0 10px 0;">
                 {{ disc.reason|e }}
+              </div>
+              {% endif %}
+              {% if disc.subscribe_link %}
+              <div style="margin:0;">
+                <a href="{{ disc.subscribe_link|e }}" style="display:inline-block; padding:6px 12px; font-size:13px; font-weight:600; color:#0b3d91; background:#eef2fb; border:1px solid #d4ddf0; border-radius:4px; text-decoration:none;">+ Subscribe</a>
               </div>
               {% endif %}
             </td>

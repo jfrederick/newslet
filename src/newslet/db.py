@@ -212,8 +212,23 @@ def get_issue(date: str) -> Issue | None:
         return None
     picks_raw = json.loads(item["picks_json"])
     picks = [Pick.model_validate(p) for p in picks_raw]
+    # Validate discoveries leniently: issues persisted before feed_url became
+    # required (added for one-click subscribe) have discovery rows without it,
+    # and a strict validate here would raise and make the whole issue
+    # unreadable — breaking /rate and /issues/{date} for every old issue that
+    # had discoveries. Skip the unrenderable ones instead; picks and the
+    # rating links (the load-bearing part of an archived issue) still resolve.
     discoveries_raw = json.loads(item.get("discoveries_json", "[]"))
-    discoveries = [Discovery.model_validate(d) for d in discoveries_raw]
+    discoveries = []
+    for d in discoveries_raw:
+        try:
+            discoveries.append(Discovery.model_validate(d))
+        except ValidationError as exc:
+            log.warning(
+                "skipping legacy discovery without feed_url in issue %s: %s",
+                item.get("date"),
+                exc,
+            )
     return Issue.model_validate(
         {
             "date": item["date"],

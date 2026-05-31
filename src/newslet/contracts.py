@@ -43,12 +43,18 @@ class RankResponse(BaseModel):
 
 
 class Discovery(BaseModel):
-    """A new candidate source/article surfaced outside the user's feeds."""
+    """A new candidate source/article surfaced outside the user's feeds.
+
+    ``feed_url`` is the RSS/Atom feed for the article's source, so the
+    email can offer a one-click "subscribe" that adds it to the user's
+    feeds. Discovery drops any result without one, so it is required here.
+    """
 
     url: HttpUrl
     title: str
     source: str = ""
     reason: str = Field(default="", description="One line on why it is relevant")
+    feed_url: HttpUrl = Field(description="RSS/Atom feed for the source")
 
 
 class Issue(BaseModel):
