@@ -222,7 +222,7 @@ def test_manual_key_not_surfaced(stub_sign: None) -> None:
     assert subject == "newslet — 2026-05-31"
     # The internal key is not shown as a visible label (header / <title>).
     assert f"newslet · {key}" not in html
-    assert f"<title>newslet · 2026-05-31</title>" in html
+    assert "<title>newslet · 2026-05-31</title>" in html
     assert "2026-05-31" in html
     # Real key still travels on the feedback links so rating resolves.
     assert f"d={key}" in html.replace("&amp;", "&")
