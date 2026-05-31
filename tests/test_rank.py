@@ -210,3 +210,15 @@ def test_system_prompt_mentions_json(sample_candidates, sample_feedback):
          client=fake, max_picks=10)
 
     assert "JSON" in fake.calls[0]["system"]
+
+
+def test_system_prompt_states_min_picks(sample_candidates, sample_feedback):
+    """The default soft floor of 5 picks is communicated to the model."""
+    fake = FakeClient([_picks_json([])])
+
+    rank("p", sample_feedback, sample_candidates, client=fake)
+
+    system = fake.calls[0]["system"]
+    assert "at least 5" in system
+    # The JSON schema braces must survive .format() intact.
+    assert '"picks"' in system
