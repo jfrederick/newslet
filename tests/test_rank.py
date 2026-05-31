@@ -212,6 +212,27 @@ def test_system_prompt_mentions_json(sample_candidates, sample_feedback):
     assert "JSON" in fake.calls[0]["system"]
 
 
+def test_feedback_note_renders_into_stable_block(sample_candidates):
+    feedback = [
+        FeedbackRow(
+            article_url="https://example.com/old1",
+            title="Old one",
+            rating="up",
+            ts=datetime(2026, 1, 1, tzinfo=UTC),
+            issue_date="2026-01-01",
+            note="too much crypto coverage",
+        ),
+    ]
+    fake = FakeClient([_picks_json([])])
+
+    rank("my profile", feedback, sample_candidates, client=fake, max_picks=10)
+
+    user_content = fake.calls[0]["messages"][0]["content"]
+    cached = [b for b in user_content
+              if b.get("cache_control") == {"type": "ephemeral"}][0]
+    assert "note: too much crypto coverage" in cached["text"]
+
+
 def test_system_prompt_states_min_picks(sample_candidates, sample_feedback):
     """The default soft floor of 5 picks is communicated to the model."""
     fake = FakeClient([_picks_json([])])

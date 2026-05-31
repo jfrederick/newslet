@@ -35,6 +35,7 @@ def fetch_recent(
     failing feed.
     """
     results: list[Article] = []
+    seen_in_run: set[str] = set()
 
     for feed_url in feed_urls:
         try:
@@ -92,6 +93,11 @@ def fetch_recent(
             except ValidationError as exc:
                 logger.warning("Skipping invalid entry %s: %s", link, exc)
                 continue
+
+            key = str(article.url)
+            if key in seen_in_run:
+                continue
+            seen_in_run.add(key)
 
             results.append(article)
 
