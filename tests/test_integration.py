@@ -433,7 +433,7 @@ def test_send_email_invokes_resend_correctly(aws, monkeypatch):
     payload = calls[0]
     assert payload["subject"] == "subject line"
     assert payload["html"] == "<p>hi</p>"
-    assert payload["from"] == "from@example.com"
+    assert payload["from"] == "newslet <from@example.com>"
     assert payload["to"] == ["to@example.com"]
 
 
