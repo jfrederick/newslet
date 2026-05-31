@@ -173,18 +173,38 @@ def save_profile(
 
 _THANKS_HTML_TEMPLATE = (
     '<!doctype html><html><head><meta charset="utf-8"><title>thanks</title>'
-    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}</style></head>"
+    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}"
+    "textarea{font:inherit;width:90%;max-width:32rem;height:4rem}"
+    "form{margin-top:1.5rem}</style></head>"
     '<body><h1>thanks</h1><p>recorded your __RATING__ for<br>'
-    '<a href="__URL__">__URL__</a></p></body></html>'
+    '<a href="__URL__">__URL__</a></p>'
+    '<form method="post" action="/rate/note">'
+    '<input type="hidden" name="a" value="__URL__">'
+    '<input type="hidden" name="d" value="__DATE__">'
+    '<input type="hidden" name="t" value="__TOKEN__">'
+    '<p><label>why? (optional)<br>'
+    '<textarea name="note"></textarea></label></p>'
+    '<button type="submit">save note</button>'
+    "</form></body></html>"
 )
 
 
-def _thanks_html(rating: str, url: str) -> str:
+def _thanks_html(rating: str, url: str, issue_date: str, token: str) -> str:
     from html import escape
 
-    return _THANKS_HTML_TEMPLATE.replace("__RATING__", escape(rating)).replace(
-        "__URL__", escape(url, quote=True)
+    return (
+        _THANKS_HTML_TEMPLATE.replace("__RATING__", escape(rating))
+        .replace("__URL__", escape(url, quote=True))
+        .replace("__DATE__", escape(issue_date, quote=True))
+        .replace("__TOKEN__", escape(token, quote=True))
     )
+
+
+_NOTE_SAVED_HTML_TEMPLATE = (
+    '<!doctype html><html><head><meta charset="utf-8"><title>thanks</title>'
+    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}</style></head>"
+    "<body><h1>thanks</h1><p>saved your note.</p></body></html>"
+)
 
 
 @app.get("/rate", response_class=HTMLResponse)
@@ -222,7 +242,26 @@ def rate(
             issue_date=d,
         )
     )
-    return HTMLResponse(_thanks_html(v, article_url))
+    return HTMLResponse(_thanks_html(v, article_url, d, t))
+
+
+@app.post("/rate/note", response_class=HTMLResponse)
+def rate_note(
+    a: str = Form(..., description="article url"),
+    d: str = Form(..., description="issue date YYYY-MM-DD"),
+    t: str = Form(..., description="HMAC token"),
+    note: str = Form(default=""),
+) -> HTMLResponse:
+    """Attach a free-text "why" note to an already-recorded rating.
+
+    Re-verifies the same signed token as ``/rate`` so the form works from
+    an email link with no admin cookie.
+    """
+    article_url = a
+    if not tokens.verify(article_url, d, t):
+        raise HTTPException(status_code=403, detail="bad token")
+    db.update_feedback_note(article_url, d, note)
+    return HTMLResponse(_NOTE_SAVED_HTML_TEMPLATE)
 
 
 # ---------------------------------------------------------------------------

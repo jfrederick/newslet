@@ -218,6 +218,46 @@ def test_updated_parsed_used_when_published_missing(monkeypatch):
     assert len(out) == 1
 
 
+def test_duplicate_link_across_feeds_deduped(monkeypatch):
+    """A syndicated article in two feeds yields exactly one Article."""
+    feed_one = _make_parsed(
+        title="Feed One",
+        entries=[
+            {
+                "link": "https://example.com/shared",
+                "title": "Shared (Feed One)",
+                "published_parsed": _struct(NOW - timedelta(hours=1)),
+            }
+        ],
+    )
+    feed_two = _make_parsed(
+        title="Feed Two",
+        entries=[
+            {
+                "link": "https://example.com/shared",
+                "title": "Shared (Feed Two)",
+                "published_parsed": _struct(NOW - timedelta(hours=2)),
+            }
+        ],
+    )
+
+    def fake_parse(url):
+        return feed_one if "one" in url else feed_two
+
+    monkeypatch.setattr(feeds.feedparser, "parse", fake_parse)
+
+    out = feeds.fetch_recent(
+        ["https://feed.one/rss", "https://feed.two/rss"],
+        SINCE,
+        lambda _u: False,
+    )
+
+    assert len(out) == 1
+    assert str(out[0].url) == "https://example.com/shared"
+    # First occurrence wins (Feed One came first).
+    assert out[0].title == "Shared (Feed One)"
+
+
 def test_bozo_feed_skipped(monkeypatch):
     bad = _make_parsed(
         bozo=1,

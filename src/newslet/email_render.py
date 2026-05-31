@@ -19,7 +19,7 @@ _ENV = Environment(
 
 def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     """Return ``(subject, html)`` for one issue."""
-    subject = f"newslet — {issue.date}"
+    subject = issue.subject or f"newslet — {issue.date}"
     base = public_base_url.rstrip("/")
     sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
 
@@ -40,7 +40,21 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
             }
         )
 
+    ctx_discoveries = [
+        {
+            "url": str(d.url),
+            "title": d.title,
+            "source": d.source,
+            "reason": d.reason,
+        }
+        for d in issue.discoveries
+    ]
+
     html = _ENV.get_template("email.html.j2").render(
-        date=issue.date, picks=ctx_picks
+        date=issue.date,
+        picks=ctx_picks,
+        intro=issue.intro,
+        discoveries=ctx_discoveries,
+        admin_url=f"{base}/",
     )
     return subject, html

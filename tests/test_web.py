@@ -238,6 +238,62 @@ def test_admin_index_shows_last_sent(client):
     assert "2026-05-15" in r.text
 
 
+def test_rate_thanks_page_shows_note_form(client):
+    from newslet import tokens
+
+    url = "https://example.com/article"
+    token = tokens.sign(url, "2026-05-17")
+    r = client.get(
+        "/rate",
+        params={"a": url, "d": "2026-05-17", "v": "up", "t": token},
+    )
+    assert r.status_code == 200
+    assert 'action="/rate/note"' in r.text
+    assert 'name="note"' in r.text
+    # Hidden fields carry the signed token forward.
+    assert f'value="{token}"' in r.text
+
+
+def test_rate_note_saves_with_valid_token(client, monkeypatch):
+    from newslet import db, tokens
+
+    url = "https://example.com/article"
+    token = tokens.sign(url, "2026-05-17")
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        db, "update_feedback_note",
+        lambda article_url, issue_date, note: saved.append(
+            (article_url, issue_date, note)
+        ),
+    )
+
+    r = client.post(
+        "/rate/note",
+        data={"a": url, "d": "2026-05-17", "t": token, "note": "too much crypto"},
+    )
+    assert r.status_code == 200
+    assert saved == [(url, "2026-05-17", "too much crypto")]
+
+
+def test_rate_note_rejects_bad_token(client, monkeypatch):
+    from newslet import db
+
+    called: list = []
+    monkeypatch.setattr(
+        db, "update_feedback_note",
+        lambda *a, **kw: called.append(a),
+    )
+
+    r = client.post(
+        "/rate/note",
+        data={"a": "https://example.com/article", "d": "2026-05-17",
+              "t": "garbage", "note": "nope"},
+    )
+    assert r.status_code == 403
+    assert called == []
+
+
 def test_rate_rejects_bad_rating(client):
     from newslet import tokens
 

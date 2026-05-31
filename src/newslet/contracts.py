@@ -42,12 +42,24 @@ class RankResponse(BaseModel):
     picks: list[Pick]
 
 
+class Discovery(BaseModel):
+    """A new candidate source/article surfaced outside the user's feeds."""
+
+    url: HttpUrl
+    title: str
+    source: str = ""
+    reason: str = Field(default="", description="One line on why it is relevant")
+
+
 class Issue(BaseModel):
     """A rendered daily issue persisted in DynamoDB."""
 
     date: str  # YYYY-MM-DD
     picks: list[Pick]
     created_at: datetime
+    subject: str = ""
+    intro: str = ""
+    discoveries: list[Discovery] = Field(default_factory=list)
 
 
 class FeedbackRow(BaseModel):
@@ -58,6 +70,7 @@ class FeedbackRow(BaseModel):
     rating: Rating
     ts: datetime
     issue_date: str  # YYYY-MM-DD; together with article_url, the table PK
+    note: str = ""
 
 
 class Feed(BaseModel):
