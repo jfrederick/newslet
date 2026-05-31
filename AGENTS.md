@@ -12,8 +12,8 @@ lean — it's loaded into context every session, so prefer pointers over prose.
 `newslet` is a personal daily RSS newsletter. A scheduled Lambda fetches the
 last 24h from your feeds, asks Claude to rank/summarize them against a
 profile, surfaces a few "discovery" sources you don't follow yet, and emails
-the result via Resend. `+`/`−` and subscribe links in the email are
-HMAC-signed and handled by a second (web) Lambda backed by DynamoDB.
+the result via Resend. `+`/`−` rate links in the email are HMAC-signed and
+handled by a second (web) Lambda backed by DynamoDB.
 
 - **`README.md`** — how to deploy and operate it.
 - **`DESIGN.md`** — the interface contract every module follows. Read it
@@ -53,7 +53,7 @@ changes:
 | --- | --- |
 | `config.py` | `Settings` — env vars + SSM SecureString lookups for secrets |
 | `contracts.py` | pydantic models at every JSON/DB boundary (Article, Pick, Issue, Discovery, …) |
-| `tokens.py` | HMAC sign/verify for `/rate` + `/subscribe` links |
+| `tokens.py` | HMAC sign/verify for `/rate` links |
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `db.py` | boto3 DynamoDB wrappers (5 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
@@ -61,12 +61,12 @@ changes:
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
 | `email_render.py` | Jinja → `(subject, html)` |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI |
-| `handlers/web.py` | FastAPI + Mangum (admin UI, `/rate`, `/subscribe`) |
+| `handlers/web.py` | FastAPI + Mangum (admin UI, `/rate`) |
 | `infra/template.yaml` | SAM stack |
 
 ## Conventions and invariants
 
-- **Signed email links:** `tokens.sign(value, issue_date)`. The issue date is
+- **Signed email links:** `tokens.sign(article_url, issue_date)`. The issue date is
   part of every signed message and bounds replay scope. Mirror the existing
   `/rate` pattern for any new email-clickable action.
 - **Best-effort enrichment:** summarize and discovery must never block a send
@@ -90,8 +90,8 @@ changes:
 - `test_integration.py` and `test_web.py` are integration-level (real modules
   composed, only the edges faked); the rest are unit tests.
 - When adding a real network/IO call in production code, make it **injectable**
-  (a default-None callable arg, like `discovery.find_discoveries`'s
-  `feed_validator`) so tests can substitute a fake and stay offline.
+  (a callable arg, like `feeds.fetch_recent`'s `is_seen`) so tests can
+  substitute a fake and stay offline.
 
 ## Git / PR workflow
 
