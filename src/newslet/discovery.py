@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from urllib.parse import urlsplit
 
 import anthropic
@@ -82,6 +83,59 @@ def _last_text_block(content: list) -> str | None:
     return None
 
 
+def _extract_json_object(text: str) -> str | None:
+    """Pull the discoveries JSON object out of a model reply.
+
+    With the web_search tool active the model often ignores the
+    "ONLY a JSON object, no fences" instruction and wraps its answer in a
+    ```json fence, prefixes a sentence ("Here are the articles..."), or
+    trails one ("...}\nHope that helps!"). A bare ``json.loads`` on any of
+    those raises and — because discovery is best-effort — the section
+    silently vanishes from the email. Prefer the first fenced block that
+    looks like an object, then return the first balanced ``{...}`` span,
+    ignoring braces inside string literals so surrounding prose (or a stray
+    brace in a title/reason) can't kill an otherwise-valid payload.
+    """
+    candidate = text.strip()
+
+    # If the answer is fenced, take the first fenced block that actually
+    # looks like a JSON object — the model sometimes emits an unrelated
+    # example fence before the real one.
+    for body in re.findall(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL):
+        body = body.strip()
+        if body.startswith("{"):
+            candidate = body
+            break
+
+    # Return the first balanced {...} span. A string-literal toggle keeps
+    # braces inside values (e.g. "covers {tech} topics") from skewing the
+    # depth count, and stopping at depth 0 trims any trailing prose.
+    start = candidate.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(candidate)):
+        ch = candidate[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return candidate[start : i + 1]
+    return None
+
+
 def find_discoveries(
     profile_md: str,
     feed_domains: list[str],
@@ -115,8 +169,13 @@ def find_discoveries(
         logger.warning("discovery: no text block in response")
         return []
 
+    json_str = _extract_json_object(text)
+    if json_str is None:
+        logger.warning("discovery: no JSON object found in response: %.200s", text)
+        return []
+
     try:
-        payload = json.loads(text)
+        payload = json.loads(json_str)
         raw = payload.get("discoveries", []) if isinstance(payload, dict) else []
         discoveries = _discoveries_adapter.validate_python(raw)
     except (json.JSONDecodeError, ValidationError) as err:

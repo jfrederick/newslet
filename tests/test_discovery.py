@@ -156,6 +156,116 @@ def test_malformed_json_returns_empty():
     assert result == []
 
 
+def test_parses_fenced_json():
+    """web_search replies often wrap the object in a ```json fence despite
+    the 'no fences' instruction; that must still parse, not vanish."""
+    payload = {
+        "discoveries": [
+            {"url": "https://newsite.com/a", "title": "A",
+             "source": "NewSite", "reason": "fits"}
+        ]
+    }
+    fenced = "```json\n" + json.dumps(payload) + "\n```"
+    fake = FakeClient(_text_only(fenced))
+
+    result = find_discoveries("p", ["known.com"], client=fake)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://newsite.com/a"
+
+
+def test_parses_json_with_prose_prefix():
+    """A leading sentence before the object must not kill the payload."""
+    payload = {
+        "discoveries": [
+            {"url": "https://fresh.io/y", "title": "Y",
+             "source": "Fresh", "reason": "r"}
+        ]
+    }
+    text = "Here are the articles I found:\n\n" + json.dumps(payload)
+    fake = FakeClient(_text_only(text))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://fresh.io/y"
+
+
+def test_parses_json_with_trailing_prose():
+    """A clean object followed by a sentence (no fence) must still parse;
+    json.loads on the whole string would raise 'Extra data'."""
+    payload = {
+        "discoveries": [
+            {"url": "https://fresh.io/z", "title": "Z",
+             "source": "Fresh", "reason": "r"}
+        ]
+    }
+    text = json.dumps(payload) + "\n\nHope that helps!"
+    fake = FakeClient(_text_only(text))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://fresh.io/z"
+
+
+def test_parses_json_with_braces_in_string_values():
+    """Braces inside a title/reason must not skew the balanced-brace scan
+    on the prose-wrapped path."""
+    payload = {
+        "discoveries": [
+            {"url": "https://fresh.io/g", "title": "How {} works in Go",
+             "source": "Fresh", "reason": "covers {tech} topics"}
+        ]
+    }
+    text = "Sure! Here you go:\n" + json.dumps(payload)
+    fake = FakeClient(_text_only(text))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert len(result) == 1
+    assert result[0].title == "How {} works in Go"
+
+
+def test_parses_fenced_json_with_braces_in_string_values():
+    """Lock in that fenced content with literal braces in values parses,
+    so a future refactor can't regress it."""
+    payload = {
+        "discoveries": [
+            {"url": "https://fresh.io/h", "title": "T",
+             "source": "Fresh", "reason": "covers {tech} topics"}
+        ]
+    }
+    fenced = "```json\n" + json.dumps(payload) + "\n```"
+    fake = FakeClient(_text_only(fenced))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert len(result) == 1
+    assert result[0].reason == "covers {tech} topics"
+
+
+def test_picks_json_fence_over_unrelated_fence():
+    """When an unrelated fence precedes the JSON fence, the extractor must
+    skip the decoy and use the JSON one."""
+    payload = {
+        "discoveries": [
+            {"url": "https://fresh.io/k", "title": "K",
+             "source": "Fresh", "reason": "r"}
+        ]
+    }
+    text = (
+        "First an example:\n```\nsome example text\n```\n"
+        "And the result:\n```json\n" + json.dumps(payload) + "\n```"
+    )
+    fake = FakeClient(_text_only(text))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://fresh.io/k"
+
+
 def test_max_results_trims():
     payload = {
         "discoveries": [
