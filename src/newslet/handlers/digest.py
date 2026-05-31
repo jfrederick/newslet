@@ -115,6 +115,11 @@ def run_digest(
     except Exception:  # noqa: BLE001 - best effort, never block the send
         log.exception("discovery failed; sending without discoveries")
 
+    # discovery_fn doesn't consult the seen-store, so a later day's web search
+    # can return an article we already surfaced. Filter it out here against the
+    # same is_seen the fetcher uses, so marked-seen discoveries don't recur.
+    discoveries = [d for d in discoveries if not is_seen(str(d.url))]
+
     issue = _build_issue(
         response.picks,
         date=date,
@@ -174,8 +179,6 @@ def handler(event: dict, context: Any) -> dict:
         log.info("issue %s already sent; skipping", today)
         return {"status": "already_sent", "date": today}
 
-    feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
-
     existing = db.get_issue(today)
     if existing is not None and existing.picks:
         log.info("reusing partial issue %s from previous attempt", today)
@@ -184,6 +187,8 @@ def handler(event: dict, context: Any) -> dict:
     else:
         feeds_list = db.list_feeds()
         profile = db.get_profile()
+        # Recency window for ranking; tuning reads its own wider window below.
+        feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
         issue, candidates = run_digest(
             feed_urls=[str(f.url) for f in feeds_list],
             profile=profile,

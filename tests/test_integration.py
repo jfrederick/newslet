@@ -462,3 +462,55 @@ def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
     assert result["picks"] == 0
     assert len(sent) == 1
     assert "0 picks today" in sent[0]["h"]  # the email template's footer
+
+
+def test_run_digest_drops_already_seen_discovery(env, monkeypatch):
+    """A discovery URL already in the seen-store is filtered before sending.
+
+    discovery_fn never consults is_seen itself, so run_digest must apply the
+    same seen filter the fetcher uses or web search can resurface a story we
+    marked seen on an earlier day.
+    """
+    from newslet import feeds
+    from newslet.contracts import (
+        Article,
+        Discovery,
+        Pick,
+        Profile,
+        RankResponse,
+    )
+    from newslet.handlers import digest
+
+    art = Article(
+        url="https://example.com/a",
+        title="A",
+        summary="s",
+        source="src",
+        published=datetime.now(UTC),
+    )
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [art])
+
+    seen_url = "https://offsite.example/already-seen"
+    fresh_url = "https://offsite.example/brand-new"
+
+    def fake_discovery(profile_md, feed_domains, **_):
+        return [
+            Discovery(url=seen_url, title="seen", source="S", reason="r"),
+            Discovery(url=fresh_url, title="fresh", source="S", reason="r"),
+        ]
+
+    issue, _candidates = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: u == seen_url,
+        rank_fn=lambda **k: RankResponse(
+            picks=[Pick(url=art.url, title="A", blurb="b", source="src", score=0.5)]
+        ),
+        summarize_fn=lambda picks, **k: ("subj", "intro"),
+        discovery_fn=fake_discovery,
+    )
+
+    urls = [str(d.url) for d in issue.discoveries]
+    assert fresh_url in urls
+    assert seen_url not in urls
