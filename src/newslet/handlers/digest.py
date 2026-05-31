@@ -14,17 +14,55 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from newslet import db, email_render, feeds, rank
+from newslet import db, discovery, email_render, feeds, rank, summarize, tune
 from newslet.config import settings
-from newslet.contracts import Article, FeedbackRow, Issue, Pick, Profile, RankResponse
+from newslet.contracts import (
+    Article,
+    Discovery,
+    FeedbackRow,
+    Issue,
+    Pick,
+    Profile,
+    RankResponse,
+)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
+# Ranking wants recency (what do I like *lately*?); profile tuning wants breadth
+# (what is my *durable* taste?). They read the same table with different windows.
+_RANK_FEEDBACK_LIMIT = 50
+_TUNE_FEEDBACK_LIMIT = 200
 
-def _build_issue(picks: list[Pick], date: str) -> Issue:
-    return Issue(date=date, picks=picks, created_at=datetime.now(UTC))
+
+def _build_issue(
+    picks: list[Pick],
+    date: str,
+    *,
+    subject: str = "",
+    intro: str = "",
+    discoveries: list[Discovery] | None = None,
+) -> Issue:
+    return Issue(
+        date=date,
+        picks=picks,
+        created_at=datetime.now(UTC),
+        subject=subject,
+        intro=intro,
+        discoveries=discoveries or [],
+    )
+
+
+def _feed_domains(feed_urls: list[str]) -> list[str]:
+    """Derive the netloc of each feed url, dropping any that lack one."""
+    domains = []
+    for url in feed_urls:
+        netloc = urlparse(url).netloc
+        if netloc:
+            domains.append(netloc)
+    return domains
 
 
 def run_digest(
@@ -34,14 +72,23 @@ def run_digest(
     feedback: list[FeedbackRow],
     is_seen: callable,
     rank_fn=rank.rank,
+    summarize_fn=None,
+    discovery_fn=None,
     now: datetime | None = None,
 ) -> tuple[Issue, list[Article]]:
-    """Pure pipeline: fetch → rank → assemble Issue. No I/O of its own.
+    """Pure pipeline: fetch → rank → summarize → discover → assemble Issue.
 
     Returns ``(issue, candidates)`` so callers can mark every fetched
     article seen (not just the picked ones) and avoid re-evaluating
-    rejects on subsequent days.
+    rejects on subsequent days.  Summarize and discovery are best-effort:
+    a failure in either degrades to empty subject/intro/discoveries and
+    never blocks the send.
     """
+    # Resolve at call time (not as defaults) so monkeypatching the module
+    # attributes in tests is honoured.
+    summarize_fn = summarize_fn or summarize.summarize_issue
+    discovery_fn = discovery_fn or discovery.find_discoveries
+
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
     candidates = feeds.fetch_recent(feed_urls, since=since, is_seen=is_seen)
@@ -55,7 +102,27 @@ def run_digest(
         candidates=candidates,
     )
     log.info("claude returned %d picks", len(response.picks))
-    return _build_issue(response.picks, date=date), candidates
+
+    subject, intro = "", ""
+    try:
+        subject, intro = summarize_fn(response.picks)
+    except Exception:  # noqa: BLE001 - best effort, never block the send
+        log.exception("summarize failed; sending without subject/intro")
+
+    discoveries: list[Discovery] = []
+    try:
+        discoveries = discovery_fn(profile.markdown, _feed_domains(feed_urls))
+    except Exception:  # noqa: BLE001 - best effort, never block the send
+        log.exception("discovery failed; sending without discoveries")
+
+    issue = _build_issue(
+        response.picks,
+        date=date,
+        subject=subject,
+        intro=intro,
+        discoveries=discoveries,
+    )
+    return issue, candidates
 
 
 def _send_email(subject: str, html: str) -> None:
@@ -107,6 +174,8 @@ def handler(event: dict, context: Any) -> dict:
         log.info("issue %s already sent; skipping", today)
         return {"status": "already_sent", "date": today}
 
+    feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
+
     existing = db.get_issue(today)
     if existing is not None and existing.picks:
         log.info("reusing partial issue %s from previous attempt", today)
@@ -115,7 +184,6 @@ def handler(event: dict, context: Any) -> dict:
     else:
         feeds_list = db.list_feeds()
         profile = db.get_profile()
-        feedback = db.recent_feedback(limit=50)
         issue, candidates = run_digest(
             feed_urls=[str(f.url) for f in feeds_list],
             profile=profile,
@@ -130,9 +198,25 @@ def handler(event: dict, context: Any) -> dict:
 
     # Mark every candidate as seen — but only *after* a confirmed send.
     # An article Claude rejected today shouldn't be re-evaluated when it
-    # crosses tomorrow's 24h window boundary.
-    if candidates:
-        db.mark_seen([str(a.url) for a in candidates])
+    # crosses tomorrow's 24h window boundary.  Discovery urls go too, so
+    # they are not re-surfaced on later days.
+    seen_urls = [str(a.url) for a in candidates]
+    seen_urls += [str(d.url) for d in issue.discoveries]
+    if seen_urls:
+        db.mark_seen(seen_urls)
+
+    # Re-tune the profile after a confirmed send, using a wider feedback window
+    # than ranking so the cumulative learned-preferences block reflects durable
+    # taste, not just the last few days. Best effort: tuning must never break
+    # the send (which already happened above).
+    try:
+        profile = db.get_profile()
+        tune_feedback = db.recent_feedback(limit=_TUNE_FEEDBACK_LIMIT)
+        new_markdown = tune.tune_profile(profile.markdown, tune_feedback)
+        if new_markdown != profile.markdown:
+            db.put_profile(new_markdown)
+    except Exception:  # noqa: BLE001 - tuning is best effort, never raise
+        log.exception("profile tuning failed after send")
 
     log.info("sent issue %s with %d picks", issue.date, len(issue.picks))
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
@@ -161,6 +245,26 @@ def _fake_rank(
         for i, a in enumerate(candidates[:10])
     ]
     return RankResponse(picks=picks)
+
+
+def _fake_summarize(picks: list[Pick], **_) -> tuple[str, str]:
+    """Deterministic, offline (subject, intro) for --dry-run."""
+    if not picks:
+        return ("", "")
+    intro = f"{len(picks)} stories today, led by {picks[0].title}."
+    return (f"newslet · {picks[0].title}", intro)
+
+
+def _fake_discoveries(profile_md: str, feed_domains: list[str], **_) -> list[Discovery]:
+    """Deterministic, offline discoveries for --dry-run."""
+    return [
+        Discovery(
+            url="https://example.com/discovery-sample",
+            title="A source you don't follow yet",
+            source="Example Wire",
+            reason="Sample discovery rendered in the dry-run output.",
+        )
+    ]
 
 
 def _dry_run_env() -> None:
@@ -212,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
         feedback=[],
         is_seen=lambda _u: False,
         rank_fn=_fake_rank,
+        summarize_fn=_fake_summarize,
+        discovery_fn=_fake_discoveries,
     )
 
     if not issue.picks:

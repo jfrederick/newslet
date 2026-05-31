@@ -10,7 +10,7 @@ import pytest
 
 from newslet import tokens
 from newslet.config import settings
-from newslet.contracts import Issue, Pick
+from newslet.contracts import Discovery, Issue, Pick
 from newslet.email_render import render_email
 
 BASE_URL = "https://api.example.test"
@@ -21,11 +21,20 @@ def _pick(url: str, title: str, blurb: str, score: float = 0.5) -> Pick:
     return Pick(url=url, title=title, blurb=blurb, source="src", score=score)
 
 
-def _issue(picks: list[Pick]) -> Issue:
+def _issue(
+    picks: list[Pick],
+    *,
+    subject: str = "",
+    intro: str = "",
+    discoveries: list[Discovery] | None = None,
+) -> Issue:
     return Issue(
         date=DATE,
         picks=picks,
         created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        subject=subject,
+        intro=intro,
+        discoveries=discoveries or [],
     )
 
 
@@ -130,3 +139,79 @@ def test_trailing_slash_idempotent(stub_sign: None) -> None:
     _, html_no_slash = render_email(issue, "https://api")
     assert html_slash == html_no_slash
     assert "https://api//rate" not in html_slash
+
+
+def test_subject_falls_back_when_empty(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    subject, _ = render_email(issue, BASE_URL)
+    assert subject == "newslet — 2026-05-17"
+
+
+def test_subject_override_used_when_present(stub_sign: None) -> None:
+    issue = _issue(
+        [_pick("https://a.example.com/1", "T", "B")],
+        subject="The big thing today",
+    )
+    subject, _ = render_email(issue, BASE_URL)
+    assert subject == "The big thing today"
+
+
+def test_intro_renders_above_picks(stub_sign: None) -> None:
+    issue = _issue(
+        [_pick("https://a.example.com/1", "AlphaTitle", "B")],
+        intro="Here is what is worth your time today.",
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "Here is what is worth your time today." in html
+    # Intro appears above the picks.
+    assert html.index("Here is what is worth your time today.") < html.index("AlphaTitle")
+
+
+def test_intro_omitted_when_empty(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "AlphaTitle", "B")])
+    _, html = render_email(issue, BASE_URL)
+    # No stray empty intro cell; picks still render.
+    assert "AlphaTitle" in html
+
+
+def test_discoveries_section_renders(stub_sign: None) -> None:
+    discoveries = [
+        Discovery(
+            url="https://newsource.example.org/story",
+            title="A Fresh Discovery",
+            source="New Source Weekly",
+            reason="It matches your interest in fresh things.",
+        )
+    ]
+    issue = _issue(
+        [_pick("https://a.example.com/1", "AlphaTitle", "B")],
+        discoveries=discoveries,
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "Sources you" in html and "follow yet" in html
+    assert "A Fresh Discovery" in html
+    assert "https://newsource.example.org/story" in html
+    assert "New Source Weekly" in html
+    assert "It matches your interest in fresh things." in html
+
+
+def test_discoveries_section_omitted_when_empty(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "AlphaTitle", "B")])
+    _, html = render_email(issue, BASE_URL)
+    assert "follow yet" not in html
+
+
+def test_admin_link_present(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, html = render_email(issue, BASE_URL)
+    assert "Manage newslet" in html
+    assert f'href="{BASE_URL}/"' in html
+
+
+def test_admin_link_trailing_slash_idempotent(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, html_slash = render_email(issue, "https://api/")
+    _, html_no_slash = render_email(issue, "https://api")
+    assert html_slash == html_no_slash
+    assert 'href="https://api/"' in html_no_slash
+    assert "https://api//" not in html_no_slash

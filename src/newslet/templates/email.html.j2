@@ -25,6 +25,14 @@
             </td>
           </tr>
 
+          {% if intro %}
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec; font-size:15px; line-height:1.55; color:#333;">
+              {{ intro|e }}
+            </td>
+          </tr>
+          {% endif %}
+
           {% for pick in picks %}
           <tr>
             <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec;">
@@ -51,9 +59,40 @@
           </tr>
           {% endfor %}
 
+          {% if discoveries %}
+          <tr>
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid #f1f1ec;">
+              <div style="font-family:Georgia,'Times New Roman',serif; font-size:15px; font-weight:700; color:#111; margin:0;">
+                Sources you don&rsquo;t follow yet
+              </div>
+            </td>
+          </tr>
+          {% for disc in discoveries %}
+          <tr>
+            <td style="padding:16px 24px; border-bottom:1px solid #f1f1ec;">
+              <div style="font-size:16px; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
+                <a href="{{ disc.url|e }}" target="_blank" rel="noopener noreferrer" style="color:#0b3d91; text-decoration:none;">{{ disc.title|e }}</a>
+              </div>
+              {% if disc.source %}
+              <div style="font-size:12px; color:#888; margin:0 0 8px 0;">
+                {{ disc.source|e }}
+              </div>
+              {% endif %}
+              {% if disc.reason %}
+              <div style="font-size:14px; line-height:1.5; color:#444; margin:0;">
+                {{ disc.reason|e }}
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+
           <tr>
             <td align="center" style="padding:16px 24px 24px 24px; font-size:11px; color:#aaa;">
               newslet · {{ picks|length }} picks today
+              <br>
+              <a href="{{ admin_url|e }}" style="color:#888; text-decoration:underline;">Manage newslet</a>
             </td>
           </tr>
         </table>
