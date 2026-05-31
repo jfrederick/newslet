@@ -156,6 +156,41 @@ def test_malformed_json_returns_empty():
     assert result == []
 
 
+def test_parses_fenced_json():
+    """web_search replies often wrap the object in a ```json fence despite
+    the 'no fences' instruction; that must still parse, not vanish."""
+    payload = {
+        "discoveries": [
+            {"url": "https://newsite.com/a", "title": "A",
+             "source": "NewSite", "reason": "fits"}
+        ]
+    }
+    fenced = "```json\n" + json.dumps(payload) + "\n```"
+    fake = FakeClient(_text_only(fenced))
+
+    result = find_discoveries("p", ["known.com"], client=fake)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://newsite.com/a"
+
+
+def test_parses_json_with_prose_prefix():
+    """A leading sentence before the object must not kill the payload."""
+    payload = {
+        "discoveries": [
+            {"url": "https://fresh.io/y", "title": "Y",
+             "source": "Fresh", "reason": "r"}
+        ]
+    }
+    text = "Here are the articles I found:\n\n" + json.dumps(payload)
+    fake = FakeClient(_text_only(text))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://fresh.io/y"
+
+
 def test_max_results_trims():
     payload = {
         "discoveries": [
