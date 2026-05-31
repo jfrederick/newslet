@@ -111,6 +111,23 @@
       </div>
     {% endif %}
 
+    {% if sent %}
+      <div style="font-size:13px;color:var(--accent);background:var(--panel);border:1px solid var(--accent);border-radius:6px;padding:10px 14px;margin:-8px 0 24px;">
+        Digest triggered — your email is on its way.
+      </div>
+    {% endif %}
+
+    <section>
+      <h2>Send now</h2>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px;">
+        Trigger a real digest right now. It sends with working rate links, but
+        won't appear in recent issues or affect your daily schedule.
+      </p>
+      <form method="POST" action="/api/send-now">
+        <button type="submit" class="primary">Send email now</button>
+      </form>
+    </section>
+
     <section>
       <h2>Feeds<span class="count">({{ feeds|length }})</span></h2>
 

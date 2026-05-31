@@ -328,3 +328,67 @@ def test_rate_rejects_bad_rating(client):
         params={"a": quote(url, safe=""), "d": "2026-05-17", "v": "sideways", "t": token},
     )
     assert r.status_code == 400
+
+
+def test_send_now_requires_admin(client):
+    r = client.post("/api/send-now")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_send_now_invokes_digest_lambda_async(client, monkeypatch):
+    """An authenticated send-now async-invokes the digest Lambda with a
+    {"manual": true} payload, then redirects back with a flash."""
+    import json
+
+    from newslet.config import settings
+    from newslet.handlers import web
+
+    monkeypatch.setenv("DIGEST_FUNCTION_NAME", "newslet-Digest-abc123")
+    settings.cache_clear()
+
+    calls: list[dict] = []
+
+    class _FakeLambda:
+        def invoke(self, **kwargs):
+            calls.append(kwargs)
+            return {"StatusCode": 202}
+
+    monkeypatch.setattr(web.boto3, "client", lambda svc, **_: _FakeLambda())
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/send-now")
+
+    assert r.status_code == 303
+    assert r.headers["location"] == "/?sent=1"
+    assert len(calls) == 1
+    assert calls[0]["FunctionName"] == "newslet-Digest-abc123"
+    assert calls[0]["InvocationType"] == "Event"  # async, fire-and-forget
+    assert json.loads(calls[0]["Payload"]) == {"manual": True}
+
+
+def test_send_now_503_when_not_configured(client, monkeypatch):
+    """Without DIGEST_FUNCTION_NAME the route fails loudly, not with a
+    vague boto error."""
+    from newslet.config import settings
+
+    monkeypatch.delenv("DIGEST_FUNCTION_NAME", raising=False)
+    settings.cache_clear()
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/send-now")
+    assert r.status_code == 503
+
+
+def test_admin_index_shows_send_now_button(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'action="/api/send-now"' in r.text
+
+
+def test_admin_index_flashes_after_send(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/?sent=1")
+    assert r.status_code == 200
+    assert "on its way" in r.text.lower()
