@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import anthropic
+import feedparser
 from pydantic import TypeAdapter, ValidationError
 
 from .config import settings
@@ -144,18 +146,53 @@ def _extract_json_object(text: str) -> str | None:
     return None
 
 
+def _feed_is_live(feed_url: str) -> bool:
+    """Return True if ``feed_url`` actually parses as an RSS/Atom feed.
+
+    The model asserts a ``feed_url`` but can hallucinate a plausible-looking
+    one. We fetch it and require feedparser to find at least one entry and
+    no fatal (``bozo``) parse error — the same liveness bar ``feeds.py``
+    applies on the real fetch — so we never offer a "subscribe" button for
+    a dead URL. Best-effort: any network/parse failure means "not live",
+    never an exception out of discovery.
+    """
+    try:
+        parsed = feedparser.parse(feed_url)
+    except Exception as exc:  # noqa: BLE001 - feedparser can raise anything
+        logger.info("discovery: feed %s failed to fetch: %s", feed_url, exc)
+        return False
+
+    if getattr(parsed, "bozo", 0) and getattr(parsed, "bozo_exception", None):
+        logger.info(
+            "discovery: feed %s is malformed: %s", feed_url, parsed.bozo_exception
+        )
+        return False
+
+    if not getattr(parsed, "entries", None):
+        logger.info("discovery: feed %s has no entries", feed_url)
+        return False
+
+    return True
+
+
 def find_discoveries(
     profile_md: str,
     feed_domains: list[str],
     *,
     client: anthropic.Anthropic | None = None,
     max_results: int = 2,
+    feed_validator: Callable[[str], bool] | None = None,
 ) -> list[Discovery]:
     """Find up to ``max_results`` articles outside the user's feeds.
 
-    Returns an empty list on any parse failure; discovery is best-effort
-    and must never crash the digest pipeline.
+    Each surviving discovery's ``feed_url`` is fetched and confirmed to be a
+    real, non-empty RSS/Atom feed before it is offered with a subscribe
+    link; the check is injectable via ``feed_validator`` so tests don't hit
+    the network. Returns an empty list on any parse failure; discovery is
+    best-effort and must never crash the digest pipeline.
     """
+    if feed_validator is None:
+        feed_validator = _feed_is_live
     if client is None:
         client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
 
@@ -199,10 +236,20 @@ def find_discoveries(
         except ValidationError as err:
             logger.info("discovery: dropping item without a usable feed: %s", err)
 
-    kept = [
-        d for d in discoveries if _host_key(str(d.url)) not in excluded
-    ]
-    return kept[:max_results]
+    # Exclude already-followed domains, then keep only those whose feed_url
+    # actually resolves to a live feed. Validate lazily and stop at
+    # max_results so we don't fetch feeds we'd only discard.
+    kept: list[Discovery] = []
+    for d in discoveries:
+        if _host_key(str(d.url)) in excluded:
+            continue
+        if not feed_validator(str(d.feed_url)):
+            logger.info("discovery: dropping %s — feed not live", d.url)
+            continue
+        kept.append(d)
+        if len(kept) >= max_results:
+            break
+    return kept
 
 
 def _system_prompt(max_results: int) -> str:
