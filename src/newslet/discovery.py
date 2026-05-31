@@ -37,22 +37,30 @@ reputable sources that match the user's profile.  Only surface articles
 from sources the user does NOT already follow: EXCLUDE any url whose
 registered domain appears in the user's existing feed domains.
 
+CRITICAL: only include an article if its source publishes a public
+RSS/Atom feed, and put that feed's URL in "feed_url".  The digest
+subscribes to that feed to pull future articles, so it must be a real
+feed endpoint (e.g. https://example.com/feed, .../rss, .../atom.xml) —
+NOT the article URL, the homepage, or a social profile.  If you cannot
+find a working feed for a source, DROP that article rather than guessing.
+
 After searching, reply with ONLY a JSON object (no prose, no markdown
 fences) matching this schema:
 
 {{
   "discoveries": [
     {{
-      "url":    "<article url>",
-      "title":  "<article title>",
-      "source": "<publication name>",
-      "reason": "<one short sentence on why it fits the profile>"
+      "url":      "<article url>",
+      "title":    "<article title>",
+      "source":   "<publication name>",
+      "reason":   "<one short sentence on why it fits the profile>",
+      "feed_url": "<the source's RSS/Atom feed url>"
     }}
   ]
 }}
 """
 
-_discoveries_adapter = TypeAdapter(list[Discovery])
+_discovery_adapter = TypeAdapter(Discovery)
 
 
 def _host_key(url: str) -> str:
@@ -176,11 +184,20 @@ def find_discoveries(
 
     try:
         payload = json.loads(json_str)
-        raw = payload.get("discoveries", []) if isinstance(payload, dict) else []
-        discoveries = _discoveries_adapter.validate_python(raw)
-    except (json.JSONDecodeError, ValidationError) as err:
+    except json.JSONDecodeError as err:
         logger.warning("discovery: could not parse response: %s", err)
         return []
+    raw = payload.get("discoveries", []) if isinstance(payload, dict) else []
+
+    # Validate item-by-item so one bad entry — e.g. a missing/invalid
+    # feed_url, which is now required — drops just that article instead of
+    # discarding the whole batch.
+    discoveries: list[Discovery] = []
+    for item in raw:
+        try:
+            discoveries.append(_discovery_adapter.validate_python(item))
+        except ValidationError as err:
+            logger.info("discovery: dropping item without a usable feed: %s", err)
 
     kept = [
         d for d in discoveries if _host_key(str(d.url)) not in excluded

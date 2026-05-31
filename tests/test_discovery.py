@@ -76,12 +76,14 @@ def test_happy_path_returns_two_discoveries():
                 "title": "A",
                 "source": "NewSite",
                 "reason": "Matches the user's interests.",
+                "feed_url": "https://newsite.com/feed.xml",
             },
             {
                 "url": "https://another.org/b",
                 "title": "B",
                 "source": "Another",
                 "reason": "Relevant to the profile.",
+                "feed_url": "https://another.org/rss",
             },
         ]
     }
@@ -91,6 +93,7 @@ def test_happy_path_returns_two_discoveries():
 
     assert len(result) == 2
     assert str(result[0].url) == "https://newsite.com/a"
+    assert str(result[0].feed_url) == "https://newsite.com/feed.xml"
     assert result[0].reason == "Matches the user's interests."
     # The web search tool must be enabled on the request.
     tools = fake.calls[0]["tools"]
@@ -105,12 +108,14 @@ def test_excludes_url_in_feed_domains():
                 "title": "Followed",
                 "source": "Known",
                 "reason": "User already follows this.",
+                "feed_url": "https://www.known.com/feed.xml",
             },
             {
                 "url": "https://fresh.io/new",
                 "title": "Fresh",
                 "source": "Fresh",
                 "reason": "New to the user.",
+                "feed_url": "https://fresh.io/feed.xml",
             },
         ]
     }
@@ -131,6 +136,7 @@ def test_reads_last_text_block_amid_tool_blocks():
                 "title": "X",
                 "source": "Site",
                 "reason": "Fits.",
+                "feed_url": "https://site.com/feed.xml",
             }
         ]
     }
@@ -156,13 +162,51 @@ def test_malformed_json_returns_empty():
     assert result == []
 
 
+def test_drops_item_without_feed_url():
+    """An item missing feed_url is dropped (we can't subscribe to it), but
+    sibling items with a valid feed survive — one bad entry must not nuke
+    the whole batch."""
+    payload = {
+        "discoveries": [
+            {"url": "https://nofeed.com/a", "title": "NoFeed",
+             "source": "NoFeed", "reason": "r"},
+            {"url": "https://hasfeed.com/b", "title": "HasFeed",
+             "source": "HasFeed", "reason": "r",
+             "feed_url": "https://hasfeed.com/rss"},
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    result = find_discoveries("p", [], client=fake, max_results=5)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://hasfeed.com/b"
+    assert str(result[0].feed_url) == "https://hasfeed.com/rss"
+
+
+def test_drops_item_with_non_url_feed():
+    """A feed_url that isn't a valid URL is dropped, not coerced."""
+    payload = {
+        "discoveries": [
+            {"url": "https://x.com/a", "title": "X", "source": "X",
+             "reason": "r", "feed_url": "not-a-url"},
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert result == []
+
+
 def test_parses_fenced_json():
     """web_search replies often wrap the object in a ```json fence despite
     the 'no fences' instruction; that must still parse, not vanish."""
     payload = {
         "discoveries": [
             {"url": "https://newsite.com/a", "title": "A",
-             "source": "NewSite", "reason": "fits"}
+             "source": "NewSite", "reason": "fits",
+             "feed_url": "https://newsite.com/feed.xml"}
         ]
     }
     fenced = "```json\n" + json.dumps(payload) + "\n```"
@@ -179,7 +223,8 @@ def test_parses_json_with_prose_prefix():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/y", "title": "Y",
-             "source": "Fresh", "reason": "r"}
+             "source": "Fresh", "reason": "r",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = "Here are the articles I found:\n\n" + json.dumps(payload)
@@ -197,7 +242,8 @@ def test_parses_json_with_trailing_prose():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/z", "title": "Z",
-             "source": "Fresh", "reason": "r"}
+             "source": "Fresh", "reason": "r",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = json.dumps(payload) + "\n\nHope that helps!"
@@ -215,7 +261,8 @@ def test_parses_json_with_braces_in_string_values():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/g", "title": "How {} works in Go",
-             "source": "Fresh", "reason": "covers {tech} topics"}
+             "source": "Fresh", "reason": "covers {tech} topics",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = "Sure! Here you go:\n" + json.dumps(payload)
@@ -233,7 +280,8 @@ def test_parses_fenced_json_with_braces_in_string_values():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/h", "title": "T",
-             "source": "Fresh", "reason": "covers {tech} topics"}
+             "source": "Fresh", "reason": "covers {tech} topics",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     fenced = "```json\n" + json.dumps(payload) + "\n```"
@@ -251,7 +299,8 @@ def test_picks_json_fence_over_unrelated_fence():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/k", "title": "K",
-             "source": "Fresh", "reason": "r"}
+             "source": "Fresh", "reason": "r",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = (
@@ -270,7 +319,8 @@ def test_max_results_trims():
     payload = {
         "discoveries": [
             {"url": f"https://s{i}.com/x", "title": f"T{i}",
-             "source": "S", "reason": "r"}
+             "source": "S", "reason": "r",
+             "feed_url": f"https://s{i}.com/feed.xml"}
             for i in range(5)
         ]
     }

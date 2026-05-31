@@ -300,6 +300,55 @@ def rate_note(
 
 
 # ---------------------------------------------------------------------------
+# Subscribe (public, signed) — one-click "add this discovered source"
+# ---------------------------------------------------------------------------
+
+
+_SUBSCRIBED_HTML_TEMPLATE = (
+    '<!doctype html><html><head><meta charset="utf-8"><title>subscribed</title>'
+    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}"
+    "a{color:#0b3d91}</style></head>"
+    "<body><h1>subscribed</h1><p>added <strong>__TITLE__</strong> to your feeds:<br>"
+    '<a href="__FEED__">__FEED__</a></p>'
+    '<p><a href="/">manage feeds</a></p></body></html>'
+)
+
+
+def _subscribed_html(title: str, feed_url: str) -> str:
+    from html import escape
+
+    return _SUBSCRIBED_HTML_TEMPLATE.replace(
+        "__TITLE__", escape(title or feed_url)
+    ).replace("__FEED__", escape(feed_url, quote=True))
+
+
+@app.get("/subscribe", response_class=HTMLResponse)
+def subscribe(
+    f: str = Query(..., description="RSS/Atom feed url"),
+    d: str = Query(..., description="issue date YYYY-MM-DD"),
+    t: str = Query(..., description="HMAC token"),
+    s: str = Query(default="", description="source title for display"),
+) -> HTMLResponse:
+    """Add a discovered source's feed to the user's subscriptions.
+
+    Signed exactly like ``/rate`` (HMAC over ``(feed_url, issue_date)``) so
+    a single click from any email client works with no admin cookie.
+    Idempotent: ``db.add_feed`` upserts on the normalized URL, so clicking
+    twice is harmless.
+    """
+    if not tokens.verify(f, d, t):
+        raise HTTPException(status_code=403, detail="bad token")
+    try:
+        feed = db.add_feed(f, title=s)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid feed URL: {exc.errors()[0]['msg']}",
+        ) from exc
+    return HTMLResponse(_subscribed_html(s, str(feed.url)))
+
+
+# ---------------------------------------------------------------------------
 # View past issue
 # ---------------------------------------------------------------------------
 

@@ -58,15 +58,25 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
             }
         )
 
-    ctx_discoveries = [
-        {
-            "url": str(d.url),
-            "title": d.title,
-            "source": d.source,
-            "reason": d.reason,
-        }
-        for d in issue.discoveries
-    ]
+    ctx_discoveries = []
+    for d in issue.discoveries:
+        feed_str = str(d.feed_url)
+        # Sign over (feed_url, issue.date) like the rate links, so one click
+        # from any email client adds the feed with no admin cookie, and the
+        # issue date bounds replay scope.
+        sub_token = tokens.sign(feed_str, issue.date)
+        sub_common = f"f={quote(feed_str, safe='')}&d={issue.date}"
+        if d.source:
+            sub_common += f"&s={quote(d.source, safe='')}"
+        ctx_discoveries.append(
+            {
+                "url": str(d.url),
+                "title": d.title,
+                "source": d.source,
+                "reason": d.reason,
+                "subscribe_link": f"{base}/subscribe?{sub_common}&t={sub_token}",
+            }
+        )
 
     html = _ENV.get_template("email.html.j2").render(
         date=display_date,
