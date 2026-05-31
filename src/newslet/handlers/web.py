@@ -220,9 +220,11 @@ def rate(
     # parser; calling unquote() a second time would corrupt URLs that
     # legitimately contain "%XX" sequences in their path (e.g.,
     # Wikipedia article titles encoded with %20).
-    article_url = a
-    if not tokens.verify(article_url, d, t):
+    if not tokens.verify(a, d, t):
         raise HTTPException(status_code=403, detail="bad token")
+    # Canonicalize the key the same way /rate/note does, so a note posted from
+    # the thanks page lands on this exact row regardless of HttpUrl rewrites.
+    article_url = db.normalize_url(a)
 
     # Best-effort title lookup from the stored issue
     title = ""
@@ -242,7 +244,9 @@ def rate(
             issue_date=d,
         )
     )
-    return HTMLResponse(_thanks_html(v, article_url, d, t))
+    # The note form carries the original ``a`` + token (what the HMAC signed),
+    # not the normalized key, so /rate/note's token check still passes.
+    return HTMLResponse(_thanks_html(v, a, d, t))
 
 
 @app.post("/rate/note", response_class=HTMLResponse)
@@ -257,10 +261,10 @@ def rate_note(
     Re-verifies the same signed token as ``/rate`` so the form works from
     an email link with no admin cookie.
     """
-    article_url = a
-    if not tokens.verify(article_url, d, t):
+    if not tokens.verify(a, d, t):
         raise HTTPException(status_code=403, detail="bad token")
-    db.update_feedback_note(article_url, d, note)
+    # Same canonical key as /rate so the note attaches to the existing row.
+    db.update_feedback_note(db.normalize_url(a), d, note)
     return HTMLResponse(_NOTE_SAVED_HTML_TEMPLATE)
 
 

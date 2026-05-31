@@ -54,8 +54,15 @@ fences) matching this schema:
 _discoveries_adapter = TypeAdapter(list[Discovery])
 
 
-def _registered_domain(url: str) -> str:
-    """Return the lowercased host of ``url`` without a leading ``www.``."""
+def _host_key(url: str) -> str:
+    """Return the lowercased host of ``url`` without a leading ``www.``.
+
+    This is a host-level backstop, not a true registered-domain (eTLD+1)
+    extractor: ``news.bbc.co.uk`` and ``bbc.co.uk`` produce different keys.
+    The primary "exclude sources the user already follows" rule is enforced
+    by the model via the system prompt; this filter just catches exact-host
+    repeats without pulling in a public-suffix dependency.
+    """
     host = (urlsplit(url).hostname or "").lower()
     return host[4:] if host.startswith("www.") else host
 
@@ -90,7 +97,7 @@ def find_discoveries(
     if client is None:
         client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
 
-    excluded = {_registered_domain(f"//{d}") or d.lower() for d in feed_domains}
+    excluded = {_host_key(f"//{d}") or d.lower() for d in feed_domains}
 
     system_prompt = _system_prompt(max_results)
     user_block = _build_user_block(profile_md, feed_domains)
@@ -117,7 +124,7 @@ def find_discoveries(
         return []
 
     kept = [
-        d for d in discoveries if _registered_domain(str(d.url)) not in excluded
+        d for d in discoveries if _host_key(str(d.url)) not in excluded
     ]
     return kept[:max_results]
 
