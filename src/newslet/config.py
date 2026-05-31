@@ -33,6 +33,10 @@ class Settings:
     # derives this from request.base_url at runtime and leaves it empty.
     public_base_url: str
 
+    # Name of the digest Lambda, so the web Lambda can async-invoke it for
+    # the admin "send now" button. Empty on the digest Lambda itself.
+    digest_function_name: str
+
     # AWS / Dynamo
     aws_region: str
     table_feeds: str
@@ -84,6 +88,7 @@ def settings() -> Settings:
         signing_key=_secret("SIGNING_KEY", "signing-key"),
         # Not required on the web Lambda — see Settings.public_base_url.
         public_base_url=os.environ.get("PUBLIC_BASE_URL", ""),
+        digest_function_name=os.environ.get("DIGEST_FUNCTION_NAME", ""),
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),
         table_feeds=os.environ.get("TABLE_FEEDS", "newslet-feeds"),
         table_profile=os.environ.get("TABLE_PROFILE", "newslet-profile"),
