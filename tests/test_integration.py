@@ -514,3 +514,114 @@ def test_run_digest_drops_already_seen_discovery(env, monkeypatch):
     urls = [str(d.url) for d in issue.discoveries]
     assert fresh_url in urls
     assert seen_url not in urls
+
+
+def test_manual_run_sends_but_stays_invisible_to_cadence(aws, monkeypatch):
+    """A {"manual": true} run sends a real email with a working feedback
+    loop, but does not touch the daily cadence: it ignores the
+    already-sent gate, uses a synthetic issue key hidden from
+    list_issues, and never marks candidates seen — yet still re-tunes."""
+    from newslet import db, feeds, rank
+    from newslet.contracts import Issue
+    from newslet.handlers import digest
+
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        feeds,
+        "feedparser",
+        SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(now)),
+    )
+    monkeypatch.setattr(
+        rank.anthropic,
+        "Anthropic",
+        lambda **_: _FakeAnthropic(json.dumps({"picks": [
+            {"url": "https://example.com/fresh-1", "title": "Fresh One",
+             "blurb": "b", "source": "Test Feed", "score": 0.9},
+        ]})),
+    )
+    _stub_enrichment(monkeypatch, tune=lambda md, fb, **_: md + "\n<!-- tuned -->")
+
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        digest, "_send_email", lambda s, h: sent.append({"subject": s, "html": h})
+    )
+
+    db.add_feed("https://example.com/rss")
+    db.put_profile("I like fresh things.")
+
+    # Today's real issue has already been sent — the daily gate is closed.
+    today = now.strftime("%Y-%m-%d")
+    db.put_issue(Issue(date=today, picks=[], created_at=now))
+    db.mark_issue_sent(today)
+
+    result = digest.handler({"manual": True}, None)
+
+    # It sent, despite today already being sent (no idempotency gate).
+    assert result["status"] == "sent"
+    assert len(sent) == 1
+    assert result["date"].startswith("manual-")
+    assert "Fresh One" in sent[0]["html"]
+
+    # Rate links carry the synthetic key, so the feedback loop is live.
+    assert f"d={result['date']}" in sent[0]["html"]
+
+    # Invisible to "recent issues": only today's real row is listed,
+    # but the manual issue is still directly retrievable.
+    assert [i["date"] for i in db.list_issues()] == [today]
+    assert db.get_issue(result["date"]) is not None
+
+    # Did NOT count toward timing: today's marker is untouched (still the
+    # original send), and candidates were NOT marked seen.
+    assert not db.is_seen("https://example.com/fresh-1")
+    assert not db.is_seen("https://example.com/fresh-2")
+
+    # ...but tuning still ran, faithful to a real run.
+    assert db.get_profile().markdown.endswith("<!-- tuned -->")
+
+
+def test_concurrent_manual_runs_get_distinct_issue_keys(aws, monkeypatch):
+    """Two manual sends fired in the same instant (e.g. a double-click or a
+    browser POST retry) must persist as distinct issue rows. A
+    second-precision key would collide and the later put_issue would
+    overwrite the earlier issue's picks."""
+    from datetime import datetime as real_datetime
+
+    from newslet import db, feeds, rank
+    from newslet.handlers import digest
+
+    # Freeze the clock so both runs share the same wall-clock instant —
+    # the worst case the synthetic key must survive.
+    frozen = real_datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
+
+    class _FrozenDatetime:
+        @staticmethod
+        def now(tz=None):
+            return frozen
+
+    monkeypatch.setattr(digest, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(
+        feeds,
+        "feedparser",
+        SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(frozen)),
+    )
+    monkeypatch.setattr(
+        rank.anthropic,
+        "Anthropic",
+        lambda **_: _FakeAnthropic(json.dumps({"picks": [
+            {"url": "https://example.com/fresh-1", "title": "Fresh One",
+             "blurb": "b", "source": "Test Feed", "score": 0.9},
+        ]})),
+    )
+    _stub_enrichment(monkeypatch)
+    monkeypatch.setattr(digest, "_send_email", lambda s, h: None)
+
+    db.add_feed("https://example.com/rss")
+
+    first = digest.handler({"manual": True}, None)
+    second = digest.handler({"manual": True}, None)
+
+    # Distinct keys despite the identical timestamp...
+    assert first["date"] != second["date"]
+    # ...and both issues persist independently (no overwrite).
+    assert db.get_issue(first["date"]) is not None
+    assert db.get_issue(second["date"]) is not None

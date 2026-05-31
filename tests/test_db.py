@@ -378,3 +378,21 @@ def test_list_issues_descending(dynamo: None) -> None:
         "2026-05-16": False,
         "2026-05-15": True,
     }
+
+
+def test_manual_issue_hidden_from_list_but_gettable(dynamo: None) -> None:
+    """A manual issue is retrievable by key (so /rate + viewing work) but
+    never appears in list_issues (so it stays out of "recent issues")."""
+    from newslet import db
+
+    db.put_issue(Issue(date="2026-05-17", picks=[], created_at=datetime.now(UTC)))
+    db.put_issue(
+        Issue(date="manual-20260517-120000", picks=[], created_at=datetime.now(UTC)),
+        manual=True,
+    )
+
+    listed = [i["date"] for i in db.list_issues(limit=10)]
+    assert listed == ["2026-05-17"]  # the manual one is filtered out
+
+    # ...but the manual issue is still directly retrievable.
+    assert db.get_issue("manual-20260517-120000") is not None
