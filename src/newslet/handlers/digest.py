@@ -138,7 +138,7 @@ def _send_email(subject: str, html: str) -> None:
     resend.api_key = s.resend_api_key
     resend.Emails.send(
         {
-            "from": s.from_email,
+            "from": f"newslet <{s.from_email}>",
             "to": [s.to_email],
             "subject": subject,
             "html": html,

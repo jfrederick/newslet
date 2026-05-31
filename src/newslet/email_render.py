@@ -17,9 +17,27 @@ _ENV = Environment(
 )
 
 
+def _display_date(date: str) -> str:
+    """Human-facing date label for the header/subject.
+
+    Manual "send now" runs store a synthetic key like
+    ``manual-20260531-042944-7c43c81f`` (see ``digest._run_manual``); show
+    just the calendar date (``2026-05-31``) rather than leaking that
+    internal key into the email. Daily issues already store a clean
+    ``YYYY-MM-DD`` and pass through unchanged.
+    """
+    if date.startswith("manual-"):
+        parts = date.split("-")
+        if len(parts) >= 2 and len(parts[1]) == 8 and parts[1].isdigit():
+            stamp = parts[1]
+            return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
+    return date
+
+
 def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     """Return ``(subject, html)`` for one issue."""
-    subject = issue.subject or f"newslet — {issue.date}"
+    display_date = _display_date(issue.date)
+    subject = issue.subject or f"newslet — {display_date}"
     base = public_base_url.rstrip("/")
     sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
 
@@ -51,7 +69,7 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     ]
 
     html = _ENV.get_template("email.html.j2").render(
-        date=issue.date,
+        date=display_date,
         picks=ctx_picks,
         intro=issue.intro,
         discoveries=ctx_discoveries,

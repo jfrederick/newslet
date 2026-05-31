@@ -208,6 +208,26 @@ def test_admin_link_present(stub_sign: None) -> None:
     assert f'href="{BASE_URL}/"' in html
 
 
+def test_manual_key_not_surfaced(stub_sign: None) -> None:
+    # Manual sends store a synthetic key; the email must show a clean date,
+    # not the internal key — but rate links still sign over the real date.
+    key = "manual-20260531-042944-7c43c81f"
+    issue = Issue(
+        date=key,
+        picks=[_pick("https://a.example.com/1", "AlphaTitle", "B")],
+        created_at=datetime(2026, 5, 31, tzinfo=UTC),
+    )
+    subject, html = render_email(issue, BASE_URL)
+    assert key not in subject
+    assert subject == "newslet — 2026-05-31"
+    # The internal key is not shown as a visible label (header / <title>).
+    assert f"newslet · {key}" not in html
+    assert "<title>newslet · 2026-05-31</title>" in html
+    assert "2026-05-31" in html
+    # Real key still travels on the feedback links so rating resolves.
+    assert f"d={key}" in html.replace("&amp;", "&")
+
+
 def test_admin_link_trailing_slash_idempotent(stub_sign: None) -> None:
     issue = _issue([_pick("https://a.example.com/1", "T", "B")])
     _, html_slash = render_email(issue, "https://api/")
