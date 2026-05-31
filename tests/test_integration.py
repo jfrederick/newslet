@@ -144,6 +144,27 @@ class _FakeAnthropic:
         return SimpleNamespace(content=[SimpleNamespace(text=self._reply)])
 
 
+def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None):
+    """Inject offline fakes for summarize / discovery / tune.
+
+    These three modules each call ``anthropic.Anthropic`` directly; without
+    stubbing, the pipeline would try to reach the network (and, because the
+    rank tests monkeypatch the shared ``anthropic`` module, they would even
+    consume the rank fake). Patching the bound functions keeps each test
+    focused on the behaviour it asserts.
+    """
+    from newslet import discovery as discovery_mod
+    from newslet import summarize as summarize_mod
+    from newslet import tune as tune_mod
+
+    summarize = summarize or (lambda picks, **_: ("", ""))
+    discoveries = discoveries if discoveries is not None else (lambda *_a, **_k: [])
+    tune = tune or (lambda md, fb, **_: md)
+    monkeypatch.setattr(summarize_mod, "summarize_issue", summarize)
+    monkeypatch.setattr(discovery_mod, "find_discoveries", discoveries)
+    monkeypatch.setattr(tune_mod, "tune_profile", tune)
+
+
 def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
     """Run handler() against real feeds.fetch_recent, real rank.rank, real
     email_render, real db. Only feedparser, Anthropic, and Resend are stubbed.
@@ -156,6 +177,37 @@ def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
         feeds,
         "feedparser",
         SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(now)),
+    )
+
+    # Wire offline enrichment fakes and capture that they are invoked.
+    from newslet.contracts import Discovery
+
+    enrich_calls = {"summarize": 0, "discovery": 0, "tune": 0}
+
+    def fake_summarize(picks, **_):
+        enrich_calls["summarize"] += 1
+        return ("Fresh things today", "Two fresh stories worth your time.")
+
+    def fake_discoveries(profile_md, feed_domains, **_):
+        enrich_calls["discovery"] += 1
+        return [
+            Discovery(
+                url="https://offsite.example.org/scoop",
+                title="An Off-Feed Scoop",
+                source="Offsite Wire",
+                reason="Matches your taste for fresh things.",
+            )
+        ]
+
+    def fake_tune(md, fb, **_):
+        enrich_calls["tune"] += 1
+        return md + "\n<!-- tuned -->"
+
+    _stub_enrichment(
+        monkeypatch,
+        summarize=fake_summarize,
+        discoveries=fake_discoveries,
+        tune=fake_tune,
     )
 
     fake_reply = json.dumps(
@@ -202,6 +254,14 @@ def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
     assert "Fresh Two" in sent[0]["html"]
     assert "Stale" not in sent[0]["html"]  # filtered by the 24h window
 
+    # Enrichment was wired in: summarize subject overrides the default,
+    # intro renders, and the discovery section appears.
+    assert enrich_calls == {"summarize": 1, "discovery": 1, "tune": 1}
+    assert sent[0]["subject"] == "Fresh things today"
+    assert "Two fresh stories worth your time." in sent[0]["html"]
+    assert "An Off-Feed Scoop" in sent[0]["html"]
+    assert "https://offsite.example.org/scoop" in sent[0]["html"]
+
     today = now.strftime("%Y-%m-%d")
     stored = db.get_issue(today)
     assert stored is not None and len(stored.picks) == 2
@@ -213,6 +273,12 @@ def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
     assert db.is_seen("https://example.com/fresh-1")
     assert db.is_seen("https://example.com/fresh-2")
     assert not db.is_seen("https://example.com/stale")
+
+    # The discovery url is also marked seen so it is not re-surfaced.
+    assert db.is_seen("https://offsite.example.org/scoop")
+
+    # Tuning ran after the send and persisted the new profile markdown.
+    assert db.get_profile().markdown.endswith("<!-- tuned -->")
 
 
 def test_handler_is_idempotent_within_a_day(aws, monkeypatch):
@@ -234,6 +300,7 @@ def test_handler_is_idempotent_within_a_day(aws, monkeypatch):
              "blurb": "b", "source": "s", "score": 0.9},
         ]})),
     )
+    _stub_enrichment(monkeypatch)
 
     sent: list[dict] = []
     monkeypatch.setattr(digest, "_send_email", lambda s, h: sent.append({"s": s, "h": h}))
@@ -276,6 +343,7 @@ def test_handler_recovers_from_failed_send(aws, monkeypatch):
         )
 
     monkeypatch.setattr(rank.anthropic, "Anthropic", counting_anthropic)
+    _stub_enrichment(monkeypatch)
 
     # First attempt: send fails
     send_state = {"fail": True, "calls": []}
@@ -332,6 +400,7 @@ def test_handler_does_not_mark_seen_until_after_send(aws, monkeypatch):
              "blurb": "b", "source": "s", "score": 0.9},
         ]})),
     )
+    _stub_enrichment(monkeypatch)
     def boom(_s, _h):
         raise RuntimeError("nope")
 
@@ -393,3 +462,55 @@ def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
     assert result["picks"] == 0
     assert len(sent) == 1
     assert "0 picks today" in sent[0]["h"]  # the email template's footer
+
+
+def test_run_digest_drops_already_seen_discovery(env, monkeypatch):
+    """A discovery URL already in the seen-store is filtered before sending.
+
+    discovery_fn never consults is_seen itself, so run_digest must apply the
+    same seen filter the fetcher uses or web search can resurface a story we
+    marked seen on an earlier day.
+    """
+    from newslet import feeds
+    from newslet.contracts import (
+        Article,
+        Discovery,
+        Pick,
+        Profile,
+        RankResponse,
+    )
+    from newslet.handlers import digest
+
+    art = Article(
+        url="https://example.com/a",
+        title="A",
+        summary="s",
+        source="src",
+        published=datetime.now(UTC),
+    )
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [art])
+
+    seen_url = "https://offsite.example/already-seen"
+    fresh_url = "https://offsite.example/brand-new"
+
+    def fake_discovery(profile_md, feed_domains, **_):
+        return [
+            Discovery(url=seen_url, title="seen", source="S", reason="r"),
+            Discovery(url=fresh_url, title="fresh", source="S", reason="r"),
+        ]
+
+    issue, _candidates = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: u == seen_url,
+        rank_fn=lambda **k: RankResponse(
+            picks=[Pick(url=art.url, title="A", blurb="b", source="src", score=0.5)]
+        ),
+        summarize_fn=lambda picks, **k: ("subj", "intro"),
+        discovery_fn=fake_discovery,
+    )
+
+    urls = [str(d.url) for d in issue.discoveries]
+    assert fresh_url in urls
+    assert seen_url not in urls

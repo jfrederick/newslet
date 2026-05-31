@@ -56,7 +56,10 @@ def _build_stable_block(profile_md: str, feedback: list[FeedbackRow]) -> str:
     else:
         for row in feedback:
             sign = "+" if row.rating == "up" else "-"
-            lines.append(f'{sign} {row.article_url} "{row.title}"')
+            line = f'{sign} {row.article_url} "{row.title}"'
+            if row.note:
+                line += f" — note: {row.note}"
+            lines.append(line)
     return "\n".join(lines)
 
 

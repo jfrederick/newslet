@@ -24,7 +24,7 @@ os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
 from newslet import email_render  # noqa: E402
-from newslet.contracts import Issue, Pick  # noqa: E402
+from newslet.contracts import Discovery, Issue, Pick  # noqa: E402
 
 FIXTURE_PICKS = [
     Pick(
@@ -74,11 +74,34 @@ FIXTURE_PICKS = [
 ]
 
 
+FIXTURE_DISCOVERIES = [
+    Discovery(
+        url="https://www.quantamagazine.org/example/a-new-proof-in-additive-combinatorics",
+        title="A new proof in additive combinatorics",
+        source="Quanta Magazine",
+        reason="Outside your usual feeds, but squarely in your math-curiosity lane.",
+    ),
+    Discovery(
+        url="https://www.construction-physics.com/example/why-we-stopped-building-fast",
+        title="Why we stopped building fast",
+        source="Construction Physics",
+        reason="A builder-economics angle you have engaged with before.",
+    ),
+]
+
+
 def main() -> int:
     issue = Issue(
         date=datetime.now(UTC).strftime("%Y-%m-%d"),
         picks=FIXTURE_PICKS,
         created_at=datetime.now(UTC),
+        subject="Protein design breakthrough, plus a room-temp superconductor",
+        intro=(
+            "Five picks today. The lead is a jump in protein-design hit rates; "
+            "further down, an ambient-pressure superconductor replication and "
+            "Postgres 19's async I/O."
+        ),
+        discoveries=FIXTURE_DISCOVERIES,
     )
     subject, html = email_render.render_email(issue, "https://api.example.com")
     out = Path(__file__).resolve().parent.parent / "out" / "email.html"

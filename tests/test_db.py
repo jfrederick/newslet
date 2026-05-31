@@ -10,7 +10,7 @@ import moto
 import pytest
 
 from newslet.config import settings
-from newslet.contracts import FeedbackRow, Issue, Pick
+from newslet.contracts import Discovery, FeedbackRow, Issue, Pick
 
 
 @pytest.fixture
@@ -171,6 +171,39 @@ def test_issue_put_then_get(dynamo: None) -> None:
     assert got.picks[1].score == 0.4
 
     assert db.get_issue("1999-01-01") is None
+
+
+def test_issue_round_trips_enrichment_fields(dynamo: None) -> None:
+    """subject/intro/discoveries survive a put_issue -> get_issue round trip."""
+    from newslet import db
+
+    issue = Issue(
+        date="2026-05-18",
+        picks=[
+            Pick(url="https://example.com/1", title="One", blurb="b", score=0.9),
+        ],
+        created_at=datetime.now(UTC),
+        subject="A sharp content-derived subject",
+        intro="Two stories worth your time today.",
+        discoveries=[
+            Discovery(
+                url="https://newsource.example/x",
+                title="From a source you don't follow",
+                source="New Source",
+                reason="Matches your interest in distributed systems.",
+            ),
+        ],
+    )
+
+    db.put_issue(issue)
+    got = db.get_issue("2026-05-18")
+
+    assert got is not None
+    assert got.subject == "A sharp content-derived subject"
+    assert got.intro == "Two stories worth your time today."
+    assert len(got.discoveries) == 1
+    assert str(got.discoveries[0].url) == "https://newsource.example/x"
+    assert got.discoveries[0].source == "New Source"
 
 
 def test_add_feed_normalizes_url(dynamo: None) -> None:

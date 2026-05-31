@@ -173,18 +173,38 @@ def save_profile(
 
 _THANKS_HTML_TEMPLATE = (
     '<!doctype html><html><head><meta charset="utf-8"><title>thanks</title>'
-    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}</style></head>"
+    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}"
+    "textarea{font:inherit;width:90%;max-width:32rem;height:4rem}"
+    "form{margin-top:1.5rem}</style></head>"
     '<body><h1>thanks</h1><p>recorded your __RATING__ for<br>'
-    '<a href="__URL__">__URL__</a></p></body></html>'
+    '<a href="__URL__">__URL__</a></p>'
+    '<form method="post" action="/rate/note">'
+    '<input type="hidden" name="a" value="__URL__">'
+    '<input type="hidden" name="d" value="__DATE__">'
+    '<input type="hidden" name="t" value="__TOKEN__">'
+    '<p><label>why? (optional)<br>'
+    '<textarea name="note"></textarea></label></p>'
+    '<button type="submit">save note</button>'
+    "</form></body></html>"
 )
 
 
-def _thanks_html(rating: str, url: str) -> str:
+def _thanks_html(rating: str, url: str, issue_date: str, token: str) -> str:
     from html import escape
 
-    return _THANKS_HTML_TEMPLATE.replace("__RATING__", escape(rating)).replace(
-        "__URL__", escape(url, quote=True)
+    return (
+        _THANKS_HTML_TEMPLATE.replace("__RATING__", escape(rating))
+        .replace("__URL__", escape(url, quote=True))
+        .replace("__DATE__", escape(issue_date, quote=True))
+        .replace("__TOKEN__", escape(token, quote=True))
     )
+
+
+_NOTE_SAVED_HTML_TEMPLATE = (
+    '<!doctype html><html><head><meta charset="utf-8"><title>thanks</title>'
+    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}</style></head>"
+    "<body><h1>thanks</h1><p>saved your note.</p></body></html>"
+)
 
 
 @app.get("/rate", response_class=HTMLResponse)
@@ -200,9 +220,11 @@ def rate(
     # parser; calling unquote() a second time would corrupt URLs that
     # legitimately contain "%XX" sequences in their path (e.g.,
     # Wikipedia article titles encoded with %20).
-    article_url = a
-    if not tokens.verify(article_url, d, t):
+    if not tokens.verify(a, d, t):
         raise HTTPException(status_code=403, detail="bad token")
+    # Canonicalize the key the same way /rate/note does, so a note posted from
+    # the thanks page lands on this exact row regardless of HttpUrl rewrites.
+    article_url = db.normalize_url(a)
 
     # Best-effort title lookup from the stored issue
     title = ""
@@ -222,7 +244,28 @@ def rate(
             issue_date=d,
         )
     )
-    return HTMLResponse(_thanks_html(v, article_url))
+    # The note form carries the original ``a`` + token (what the HMAC signed),
+    # not the normalized key, so /rate/note's token check still passes.
+    return HTMLResponse(_thanks_html(v, a, d, t))
+
+
+@app.post("/rate/note", response_class=HTMLResponse)
+def rate_note(
+    a: str = Form(..., description="article url"),
+    d: str = Form(..., description="issue date YYYY-MM-DD"),
+    t: str = Form(..., description="HMAC token"),
+    note: str = Form(default=""),
+) -> HTMLResponse:
+    """Attach a free-text "why" note to an already-recorded rating.
+
+    Re-verifies the same signed token as ``/rate`` so the form works from
+    an email link with no admin cookie.
+    """
+    if not tokens.verify(a, d, t):
+        raise HTTPException(status_code=403, detail="bad token")
+    # Same canonical key as /rate so the note attaches to the existing row.
+    db.update_feedback_note(db.normalize_url(a), d, note)
+    return HTMLResponse(_NOTE_SAVED_HTML_TEMPLATE)
 
 
 # ---------------------------------------------------------------------------

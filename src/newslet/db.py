@@ -18,7 +18,7 @@ from boto3.dynamodb.conditions import Key
 from pydantic import HttpUrl, ValidationError
 
 from newslet.config import settings
-from newslet.contracts import Feed, FeedbackRow, Issue, Pick, Profile
+from newslet.contracts import Discovery, Feed, FeedbackRow, Issue, Pick, Profile
 
 log = logging.getLogger(__name__)
 
@@ -184,11 +184,19 @@ def is_seen(url: str) -> bool:
 
 def put_issue(issue: Issue) -> None:
     picks_json = json.dumps([json.loads(p.model_dump_json()) for p in issue.picks])
+    discoveries_json = json.dumps(
+        [json.loads(d.model_dump_json()) for d in issue.discoveries]
+    )
     _t_issues().put_item(
         Item={
             "date": issue.date,
             "picks_json": picks_json,
             "created_at": issue.created_at.isoformat(),
+            # Persist the enrichment fields so a retry that reuses the stored
+            # issue re-sends with the same subject/intro/discoveries.
+            "subject": issue.subject,
+            "intro": issue.intro,
+            "discoveries_json": discoveries_json,
         }
     )
 
@@ -200,11 +208,16 @@ def get_issue(date: str) -> Issue | None:
         return None
     picks_raw = json.loads(item["picks_json"])
     picks = [Pick.model_validate(p) for p in picks_raw]
+    discoveries_raw = json.loads(item.get("discoveries_json", "[]"))
+    discoveries = [Discovery.model_validate(d) for d in discoveries_raw]
     return Issue.model_validate(
         {
             "date": item["date"],
             "picks": picks,
             "created_at": datetime.fromisoformat(item["created_at"]),
+            "subject": item.get("subject", ""),
+            "intro": item.get("intro", ""),
+            "discoveries": discoveries,
         }
     )
 
@@ -229,8 +242,26 @@ def put_feedback(row: FeedbackRow) -> None:
             "ts": row.ts.isoformat(),
             "title": row.title,
             "rating": row.rating,
+            "note": row.note,
             "bucket": _feedback_bucket(row.ts),
         }
+    )
+
+
+def update_feedback_note(article_url: str, issue_date: str, note: str) -> None:
+    """Update only the ``note`` attribute on an existing feedback row.
+
+    Keyed by ``(article_url, issue_date)``; leaves the rating/ts/title
+    untouched so a free-text note can be attached after the initial
+    +/- click without overwriting the vote.
+    """
+    # ``note`` is a DynamoDB reserved word, so it must be aliased via
+    # ExpressionAttributeNames inside the UpdateExpression.
+    _t_feedback().update_item(
+        Key={"article_url": article_url, "issue_date": issue_date},
+        UpdateExpression="SET #n = :n",
+        ExpressionAttributeNames={"#n": "note"},
+        ExpressionAttributeValues={":n": note},
     )
 
 
@@ -266,6 +297,7 @@ def recent_feedback(limit: int = 50, *, now: datetime | None = None) -> list[Fee
                     rating=item["rating"],
                     ts=datetime.fromisoformat(item["ts"]),
                     issue_date=item.get("issue_date", ""),
+                    note=item.get("note", ""),
                 )
             )
         except (ValidationError, KeyError, ValueError) as exc:
