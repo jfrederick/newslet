@@ -80,12 +80,14 @@ FIXTURE_DISCOVERIES = [
         title="A new proof in additive combinatorics",
         source="Quanta Magazine",
         reason="Outside your usual feeds, but squarely in your math-curiosity lane.",
+        feed_url="https://www.quantamagazine.org/feed/",
     ),
     Discovery(
         url="https://www.construction-physics.com/example/why-we-stopped-building-fast",
         title="Why we stopped building fast",
         source="Construction Physics",
         reason="A builder-economics angle you have engaged with before.",
+        feed_url="https://www.construction-physics.com/feed",
     ),
 ]
 

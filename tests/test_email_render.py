@@ -181,6 +181,7 @@ def test_discoveries_section_renders(stub_sign: None) -> None:
             title="A Fresh Discovery",
             source="New Source Weekly",
             reason="It matches your interest in fresh things.",
+            feed_url="https://newsource.example.org/feed.xml",
         )
     ]
     issue = _issue(
@@ -193,6 +194,37 @@ def test_discoveries_section_renders(stub_sign: None) -> None:
     assert "https://newsource.example.org/story" in html
     assert "New Source Weekly" in html
     assert "It matches your interest in fresh things." in html
+    # A one-click Subscribe link pointing at /subscribe with the feed url.
+    assert "Subscribe" in html
+    assert "/subscribe?f=" in html
+    assert quote("https://newsource.example.org/feed.xml", safe="") in html
+
+
+def test_discovery_subscribe_link_token_verifies(real_env: None) -> None:
+    feed = "https://newsource.example.org/feed.xml"
+    issue = _issue(
+        [_pick("https://a.example.com/1", "T", "B")],
+        discoveries=[
+            Discovery(
+                url="https://newsource.example.org/story",
+                title="A Fresh Discovery",
+                source="New Source Weekly",
+                reason="r",
+                feed_url=feed,
+            )
+        ],
+    )
+    _, html = render_email(issue, BASE_URL)
+
+    m = re.search(r'href="([^"]*/subscribe\?[^"]*)"', html)
+    assert m is not None
+    href = m.group(1).replace("&amp;", "&")
+    f_match = re.search(r"[?&]f=([^&]+)", href)
+    t_match = re.search(r"[?&]t=([^&]+)", href)
+    assert f_match and t_match
+    decoded_f = unquote(f_match.group(1))
+    assert decoded_f == feed
+    assert tokens.verify(decoded_f, issue.date, t_match.group(1)) is True
 
 
 def test_discoveries_section_omitted_when_empty(stub_sign: None) -> None:

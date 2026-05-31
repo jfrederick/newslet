@@ -330,6 +330,65 @@ def test_rate_rejects_bad_rating(client):
     assert r.status_code == 400
 
 
+def test_subscribe_rejects_unsigned_token(client):
+    feed = "https://newsource.example.org/feed.xml"
+    r = client.get(
+        "/subscribe",
+        params={"f": feed, "d": "2026-05-17", "t": "garbage", "s": "New Source"},
+    )
+    assert r.status_code == 403
+
+
+def test_subscribe_adds_feed_with_signed_token(client):
+    from newslet import db, tokens
+
+    feed = "https://newsource.example.org/feed.xml"
+    token = tokens.sign(feed, "2026-05-17")
+    r = client.get(
+        "/subscribe",
+        params={"f": feed, "d": "2026-05-17", "t": token, "s": "New Source"},
+    )
+    assert r.status_code == 200
+    assert "subscribed" in r.text.lower()
+    # The feed now appears in the user's feeds.
+    feed_urls = [str(f.url) for f in db.list_feeds()]
+    assert feed in feed_urls
+    # And it carries the source title supplied in the link.
+    titles = {str(f.url): f.title for f in db.list_feeds()}
+    assert titles[feed] == "New Source"
+
+
+def test_subscribe_is_idempotent(client):
+    """Clicking the same signed link twice is harmless (upsert)."""
+    from newslet import db, tokens
+
+    feed = "https://newsource.example.org/feed.xml"
+    token = tokens.sign(feed, "2026-05-17")
+    params = {"f": feed, "d": "2026-05-17", "t": token, "s": "New Source"}
+
+    assert client.get("/subscribe", params=params).status_code == 200
+    assert client.get("/subscribe", params=params).status_code == 200
+
+    feed_urls = [str(f.url) for f in db.list_feeds()]
+    assert feed_urls.count(feed) == 1
+
+
+def test_subscribe_400_on_garbage_feed(client):
+    """A signed-but-invalid feed URL fails validation as a 400, not a 500.
+
+    (Sign over the exact same string the endpoint validates so we exercise
+    the post-auth ValidationError path rather than the 403.)"""
+    from newslet import tokens
+
+    bad = "http://"  # passes HMAC but not HttpUrl
+    token = tokens.sign(bad, "2026-05-17")
+    r = client.get(
+        "/subscribe",
+        params={"f": bad, "d": "2026-05-17", "t": token},
+    )
+    assert r.status_code == 400
+
+
 def test_send_now_requires_admin(client):
     r = client.post("/api/send-now")
     assert r.status_code == 303

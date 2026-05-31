@@ -191,6 +191,7 @@ def test_issue_round_trips_enrichment_fields(dynamo: None) -> None:
                 title="From a source you don't follow",
                 source="New Source",
                 reason="Matches your interest in distributed systems.",
+                feed_url="https://newsource.example/feed.xml",
             ),
         ],
     )
