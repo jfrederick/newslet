@@ -13,7 +13,21 @@ from types import SimpleNamespace
 
 import pytest
 
+from newslet import discovery
 from newslet.discovery import find_discoveries
+
+# Real liveness check, captured before the autouse stub patches the module
+# global, so the tests that exercise it directly aren't affected by the stub.
+_REAL_FEED_IS_LIVE = discovery._feed_is_live
+
+
+@pytest.fixture(autouse=True)
+def _stub_feed_validator(monkeypatch):
+    """Treat every feed as live by default so the suite never hits the
+    network. Tests that care about the liveness check pass an explicit
+    ``feed_validator`` to override this.
+    """
+    monkeypatch.setattr(discovery, "_feed_is_live", lambda url: True)
 
 
 class FakeClient:
@@ -197,6 +211,89 @@ def test_drops_item_with_non_url_feed():
     result = find_discoveries("p", [], client=fake)
 
     assert result == []
+
+
+def test_drops_item_whose_feed_is_not_live():
+    """A syntactically-valid but dead/hallucinated feed_url is dropped once
+    the live check rejects it; a sibling with a live feed survives."""
+    payload = {
+        "discoveries": [
+            {"url": "https://dead.com/a", "title": "Dead", "source": "Dead",
+             "reason": "r", "feed_url": "https://dead.com/feed.xml"},
+            {"url": "https://live.com/b", "title": "Live", "source": "Live",
+             "reason": "r", "feed_url": "https://live.com/feed.xml"},
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    def validator(feed_url: str) -> bool:
+        return feed_url == "https://live.com/feed.xml"
+
+    result = find_discoveries(
+        "p", [], client=fake, max_results=5, feed_validator=validator
+    )
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://live.com/b"
+
+
+def test_stops_validating_at_max_results():
+    """Feed validation is lazy: once max_results live feeds are found, no
+    further feeds are fetched."""
+    payload = {
+        "discoveries": [
+            {"url": f"https://s{i}.com/a", "title": f"T{i}", "source": "S",
+             "reason": "r", "feed_url": f"https://s{i}.com/feed.xml"}
+            for i in range(5)
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    checked: list[str] = []
+
+    def validator(feed_url: str) -> bool:
+        checked.append(feed_url)
+        return True
+
+    result = find_discoveries(
+        "p", [], client=fake, max_results=2, feed_validator=validator
+    )
+
+    assert len(result) == 2
+    # Only the first two feeds were fetched, not all five.
+    assert checked == ["https://s0.com/feed.xml", "https://s1.com/feed.xml"]
+
+
+def test_feed_is_live_accepts_feed_with_entries(monkeypatch):
+    """_feed_is_live: a parseable feed with entries and no bozo error passes."""
+    fake_parsed = SimpleNamespace(bozo=0, bozo_exception=None, entries=[{"x": 1}])
+    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
+    assert _REAL_FEED_IS_LIVE("https://ok.com/feed.xml") is True
+
+
+def test_feed_is_live_rejects_empty_feed(monkeypatch):
+    """A well-formed but entry-less feed is not 'live' enough to subscribe."""
+    fake_parsed = SimpleNamespace(bozo=0, bozo_exception=None, entries=[])
+    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
+    assert _REAL_FEED_IS_LIVE("https://empty.com/feed.xml") is False
+
+
+def test_feed_is_live_rejects_malformed_feed(monkeypatch):
+    """A bozo (fatally malformed) feed is rejected."""
+    fake_parsed = SimpleNamespace(
+        bozo=1, bozo_exception=Exception("bad xml"), entries=[{"x": 1}]
+    )
+    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
+    assert _REAL_FEED_IS_LIVE("https://broken.com/feed.xml") is False
+
+
+def test_feed_is_live_swallows_fetch_error(monkeypatch):
+    """A network/parse exception means 'not live', never propagates."""
+    def boom(url):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(discovery.feedparser, "parse", boom)
+    assert _REAL_FEED_IS_LIVE("https://x.com/feed.xml") is False
 
 
 def test_parses_fenced_json():
