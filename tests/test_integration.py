@@ -196,6 +196,7 @@ def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
                 title="An Off-Feed Scoop",
                 source="Offsite Wire",
                 reason="Matches your taste for fresh things.",
+                feed_url="https://offsite.example.org/feed.xml",
             )
         ]
 
@@ -495,8 +496,10 @@ def test_run_digest_drops_already_seen_discovery(env, monkeypatch):
 
     def fake_discovery(profile_md, feed_domains, **_):
         return [
-            Discovery(url=seen_url, title="seen", source="S", reason="r"),
-            Discovery(url=fresh_url, title="fresh", source="S", reason="r"),
+            Discovery(url=seen_url, title="seen", source="S", reason="r",
+                      feed_url="https://offsite.example/feed.xml"),
+            Discovery(url=fresh_url, title="fresh", source="S", reason="r",
+                      feed_url="https://offsite.example/feed.xml"),
         ]
 
     issue, _candidates = digest.run_digest(

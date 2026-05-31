@@ -323,6 +323,7 @@ def _fake_discoveries(profile_md: str, feed_domains: list[str], **_) -> list[Dis
             title="A source you don't follow yet",
             source="Example Wire",
             reason="Sample discovery rendered in the dry-run output.",
+            feed_url="https://example.com/feed.xml",
         )
     ]
 

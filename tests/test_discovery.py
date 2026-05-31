@@ -13,7 +13,21 @@ from types import SimpleNamespace
 
 import pytest
 
+from newslet import discovery
 from newslet.discovery import find_discoveries
+
+# Real liveness check, captured before the autouse stub patches the module
+# global, so the tests that exercise it directly aren't affected by the stub.
+_REAL_FEED_IS_LIVE = discovery._feed_is_live
+
+
+@pytest.fixture(autouse=True)
+def _stub_feed_validator(monkeypatch):
+    """Treat every feed as live by default so the suite never hits the
+    network. Tests that care about the liveness check pass an explicit
+    ``feed_validator`` to override this.
+    """
+    monkeypatch.setattr(discovery, "_feed_is_live", lambda url: True)
 
 
 class FakeClient:
@@ -76,12 +90,14 @@ def test_happy_path_returns_two_discoveries():
                 "title": "A",
                 "source": "NewSite",
                 "reason": "Matches the user's interests.",
+                "feed_url": "https://newsite.com/feed.xml",
             },
             {
                 "url": "https://another.org/b",
                 "title": "B",
                 "source": "Another",
                 "reason": "Relevant to the profile.",
+                "feed_url": "https://another.org/rss",
             },
         ]
     }
@@ -91,6 +107,7 @@ def test_happy_path_returns_two_discoveries():
 
     assert len(result) == 2
     assert str(result[0].url) == "https://newsite.com/a"
+    assert str(result[0].feed_url) == "https://newsite.com/feed.xml"
     assert result[0].reason == "Matches the user's interests."
     # The web search tool must be enabled on the request.
     tools = fake.calls[0]["tools"]
@@ -105,12 +122,14 @@ def test_excludes_url_in_feed_domains():
                 "title": "Followed",
                 "source": "Known",
                 "reason": "User already follows this.",
+                "feed_url": "https://www.known.com/feed.xml",
             },
             {
                 "url": "https://fresh.io/new",
                 "title": "Fresh",
                 "source": "Fresh",
                 "reason": "New to the user.",
+                "feed_url": "https://fresh.io/feed.xml",
             },
         ]
     }
@@ -131,6 +150,7 @@ def test_reads_last_text_block_amid_tool_blocks():
                 "title": "X",
                 "source": "Site",
                 "reason": "Fits.",
+                "feed_url": "https://site.com/feed.xml",
             }
         ]
     }
@@ -156,13 +176,134 @@ def test_malformed_json_returns_empty():
     assert result == []
 
 
+def test_drops_item_without_feed_url():
+    """An item missing feed_url is dropped (we can't subscribe to it), but
+    sibling items with a valid feed survive — one bad entry must not nuke
+    the whole batch."""
+    payload = {
+        "discoveries": [
+            {"url": "https://nofeed.com/a", "title": "NoFeed",
+             "source": "NoFeed", "reason": "r"},
+            {"url": "https://hasfeed.com/b", "title": "HasFeed",
+             "source": "HasFeed", "reason": "r",
+             "feed_url": "https://hasfeed.com/rss"},
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    result = find_discoveries("p", [], client=fake, max_results=5)
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://hasfeed.com/b"
+    assert str(result[0].feed_url) == "https://hasfeed.com/rss"
+
+
+def test_drops_item_with_non_url_feed():
+    """A feed_url that isn't a valid URL is dropped, not coerced."""
+    payload = {
+        "discoveries": [
+            {"url": "https://x.com/a", "title": "X", "source": "X",
+             "reason": "r", "feed_url": "not-a-url"},
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    result = find_discoveries("p", [], client=fake)
+
+    assert result == []
+
+
+def test_drops_item_whose_feed_is_not_live():
+    """A syntactically-valid but dead/hallucinated feed_url is dropped once
+    the live check rejects it; a sibling with a live feed survives."""
+    payload = {
+        "discoveries": [
+            {"url": "https://dead.com/a", "title": "Dead", "source": "Dead",
+             "reason": "r", "feed_url": "https://dead.com/feed.xml"},
+            {"url": "https://live.com/b", "title": "Live", "source": "Live",
+             "reason": "r", "feed_url": "https://live.com/feed.xml"},
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    def validator(feed_url: str) -> bool:
+        return feed_url == "https://live.com/feed.xml"
+
+    result = find_discoveries(
+        "p", [], client=fake, max_results=5, feed_validator=validator
+    )
+
+    assert len(result) == 1
+    assert str(result[0].url) == "https://live.com/b"
+
+
+def test_stops_validating_at_max_results():
+    """Feed validation is lazy: once max_results live feeds are found, no
+    further feeds are fetched."""
+    payload = {
+        "discoveries": [
+            {"url": f"https://s{i}.com/a", "title": f"T{i}", "source": "S",
+             "reason": "r", "feed_url": f"https://s{i}.com/feed.xml"}
+            for i in range(5)
+        ]
+    }
+    fake = FakeClient(_text_only(json.dumps(payload)))
+
+    checked: list[str] = []
+
+    def validator(feed_url: str) -> bool:
+        checked.append(feed_url)
+        return True
+
+    result = find_discoveries(
+        "p", [], client=fake, max_results=2, feed_validator=validator
+    )
+
+    assert len(result) == 2
+    # Only the first two feeds were fetched, not all five.
+    assert checked == ["https://s0.com/feed.xml", "https://s1.com/feed.xml"]
+
+
+def test_feed_is_live_accepts_feed_with_entries(monkeypatch):
+    """_feed_is_live: a parseable feed with entries and no bozo error passes."""
+    fake_parsed = SimpleNamespace(bozo=0, bozo_exception=None, entries=[{"x": 1}])
+    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
+    assert _REAL_FEED_IS_LIVE("https://ok.com/feed.xml") is True
+
+
+def test_feed_is_live_rejects_empty_feed(monkeypatch):
+    """A well-formed but entry-less feed is not 'live' enough to subscribe."""
+    fake_parsed = SimpleNamespace(bozo=0, bozo_exception=None, entries=[])
+    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
+    assert _REAL_FEED_IS_LIVE("https://empty.com/feed.xml") is False
+
+
+def test_feed_is_live_rejects_malformed_feed(monkeypatch):
+    """A bozo (fatally malformed) feed is rejected."""
+    fake_parsed = SimpleNamespace(
+        bozo=1, bozo_exception=Exception("bad xml"), entries=[{"x": 1}]
+    )
+    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
+    assert _REAL_FEED_IS_LIVE("https://broken.com/feed.xml") is False
+
+
+def test_feed_is_live_swallows_fetch_error(monkeypatch):
+    """A network/parse exception means 'not live', never propagates."""
+    def boom(url):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(discovery.feedparser, "parse", boom)
+    assert _REAL_FEED_IS_LIVE("https://x.com/feed.xml") is False
+
+
 def test_parses_fenced_json():
     """web_search replies often wrap the object in a ```json fence despite
     the 'no fences' instruction; that must still parse, not vanish."""
     payload = {
         "discoveries": [
             {"url": "https://newsite.com/a", "title": "A",
-             "source": "NewSite", "reason": "fits"}
+             "source": "NewSite", "reason": "fits",
+             "feed_url": "https://newsite.com/feed.xml"}
         ]
     }
     fenced = "```json\n" + json.dumps(payload) + "\n```"
@@ -179,7 +320,8 @@ def test_parses_json_with_prose_prefix():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/y", "title": "Y",
-             "source": "Fresh", "reason": "r"}
+             "source": "Fresh", "reason": "r",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = "Here are the articles I found:\n\n" + json.dumps(payload)
@@ -197,7 +339,8 @@ def test_parses_json_with_trailing_prose():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/z", "title": "Z",
-             "source": "Fresh", "reason": "r"}
+             "source": "Fresh", "reason": "r",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = json.dumps(payload) + "\n\nHope that helps!"
@@ -215,7 +358,8 @@ def test_parses_json_with_braces_in_string_values():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/g", "title": "How {} works in Go",
-             "source": "Fresh", "reason": "covers {tech} topics"}
+             "source": "Fresh", "reason": "covers {tech} topics",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = "Sure! Here you go:\n" + json.dumps(payload)
@@ -233,7 +377,8 @@ def test_parses_fenced_json_with_braces_in_string_values():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/h", "title": "T",
-             "source": "Fresh", "reason": "covers {tech} topics"}
+             "source": "Fresh", "reason": "covers {tech} topics",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     fenced = "```json\n" + json.dumps(payload) + "\n```"
@@ -251,7 +396,8 @@ def test_picks_json_fence_over_unrelated_fence():
     payload = {
         "discoveries": [
             {"url": "https://fresh.io/k", "title": "K",
-             "source": "Fresh", "reason": "r"}
+             "source": "Fresh", "reason": "r",
+             "feed_url": "https://fresh.io/feed.xml"}
         ]
     }
     text = (
@@ -270,7 +416,8 @@ def test_max_results_trims():
     payload = {
         "discoveries": [
             {"url": f"https://s{i}.com/x", "title": f"T{i}",
-             "source": "S", "reason": "r"}
+             "source": "S", "reason": "r",
+             "feed_url": f"https://s{i}.com/feed.xml"}
             for i in range(5)
         ]
     }
