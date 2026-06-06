@@ -15,22 +15,24 @@ ancillary areas.
 
 The email links generically to the **newslet homepage** — a separate,
 richer web experience: a large aggregation of ranked picks plus an
-open-web block, with sticky `+`/`−` voting that feeds the same ranking
-loop, a "research a subject" box that runs a fresh web search on whatever
-topic you type, and a **Refresh** button that regenerates the whole page
-Past daily emails are archived at `/emails/<date>`. The homepage has no
-manual refresh button — it regenerates itself when the stored edition
-isn't from today (the rebuild runs asynchronously and takes ~a minute).
+open-web block, with `+`/`−` voting (upvote keeps, downvote removes) that
+feeds the same ranking loop, and a "research a subject" box that runs a
+fresh web search on whatever topic you type. The homepage has no manual
+refresh button: a scheduled job rebuilds it every morning at 09:45 UTC
+(15 minutes before the email), and it also regenerates on demand if the
+stored edition isn't from today. Past daily emails are archived at
+`/emails/<date>`.
 
 ## Architecture
 
 ```
-EventBridge cron (10:00 UTC) ──▶ digest Lambda ──▶ Resend (email)
-                                      │
-                                      ▼
-                                  DynamoDB ◀── web Lambda ◀── HTTP API
-                                                                  │
-                                                                  └─ admin UI + /rate
+EventBridge cron (09:45 UTC, home) ─┐
+EventBridge cron (10:00 UTC, email) ─┴▶ digest Lambda ──▶ Resend (email)
+                                           │
+                                           ▼
+                                       DynamoDB ◀── web Lambda ◀── HTTP API
+                                                                       │
+                                                          homepage + admin + /rate
 ```
 
 Five DynamoDB tables (`Feeds`, `Profile`, `SeenArticles` w/ 21d TTL,
@@ -115,8 +117,9 @@ Subsequent deploys are just `sam build && sam deploy`.
 Open the `ApiUrl` from step 3 in a browser and sign in with the value of
 `/newslet/admin-token`. You land on the homepage; go to **admin** (top
 nav, or `/admin`) to add RSS feeds, write a short markdown profile, and
-set the daily-email article counts and web-search variety. Hit **Refresh**
-on the homepage to generate its first aggregation.
+set the daily-email article counts and web-search variety. The homepage
+builds its first edition automatically on that first visit (it has no
+manual refresh button).
 
 ### 5. Smoke-test the digest
 
@@ -135,8 +138,9 @@ page back and the vote will appear in the `Feedback` table.
 
 ### 6. Wait for tomorrow
 
-EventBridge fires the digest Lambda at 10:00 UTC daily. Change the
-cron in `infra/template.yaml` if you want a different time of day
+EventBridge fires the digest Lambda twice daily: a homepage rebuild at
+09:45 UTC (`{"home": true}`) and the email digest at 10:00 UTC. Change
+the crons in `infra/template.yaml` if you want different times of day
 (EventBridge cron is always UTC).
 
 ### Optional: auto-deploy on merge to main
