@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>newslet · {{ issue_date|e }}</title>
+<title>newslet</title>
 <style>
   :root {
     --bg: #f6f6f4; --panel: #ffffff; --fg: #1a1a1a; --muted: #777;
@@ -30,11 +30,11 @@
   header.top {
     position: sticky; top: 0; z-index: 20; background: var(--bg);
     border-bottom: 1px solid var(--border);
-    display: flex; align-items: baseline; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 14px 0; flex-wrap: wrap;
   }
   .brand { font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  .brand .date { color: var(--muted); font-size: 15px; font-weight: 400; margin-left: 8px; }
+  .topright { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .navlinks { font-size: 13px; }
   .navlinks a { color: var(--muted); text-decoration: none; margin-left: 14px; }
   .navlinks a:hover { color: var(--fg); text-decoration: underline; }
@@ -43,6 +43,12 @@
   .lede h1 { font-family: Georgia, serif; font-size: 24px; line-height: 1.25; margin: 0 0 8px; }
   .lede p { color: var(--fg); margin: 0; font-size: 16px; }
   .count { color: var(--muted); font-size: 13px; }
+  .updated { color: var(--muted); font-size: 12px; }
+
+  .btn { font: inherit; cursor: pointer; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; }
+  .btn.secondary { background: var(--panel); color: var(--accent); }
+  .btn:disabled { opacity: .6; cursor: progress; }
 
   /* Research / "textbook" box */
   .research { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 20px 0; }
@@ -53,16 +59,6 @@
     flex: 1; min-width: 220px; padding: 10px 12px; font: inherit;
     background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
   }
-  .btn { font: inherit; cursor: pointer; padding: 10px 16px; border-radius: 8px;
-    border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; }
-  .btn.secondary { background: var(--panel); color: var(--accent); }
-  .btn:disabled { opacity: .6; cursor: progress; }
-
-  /* Filter chips */
-  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 18px 0 6px; position: sticky; top: 56px; z-index: 10; background: var(--bg); padding: 6px 0; }
-  .chip { font: inherit; font-size: 13px; cursor: pointer; padding: 5px 12px; border-radius: 999px;
-    border: 1px solid var(--border); background: var(--chip); color: var(--fg); }
-  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 
   h2.section { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
     margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
@@ -90,7 +86,8 @@
   .vote[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 1px; }
   .vote:disabled { cursor: progress; opacity: .6; }
 
-  .empty { color: var(--muted); font-style: italic; padding: 10px 0; }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .banner { background: var(--accent-bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 20px 0; }
   .spinner { display: none; color: var(--muted); font-size: 14px; padding: 8px 0; }
   .kbd-help { color: var(--muted); font-size: 12px; margin-top: 28px; text-align: center; }
   .kbd { background: var(--chip); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-family: ui-monospace, monospace; }
@@ -112,7 +109,7 @@
   <form class="actions" method="post" action="/api/vote">
     <input type="hidden" name="url" value="{{ c.url|e }}">
     <input type="hidden" name="title" value="{{ c.title|e }}">
-    <input type="hidden" name="date" value="{{ issue_key|e }}">
+    <input type="hidden" name="date" value="{{ vote_key|e }}">
     <button class="vote up" type="submit" name="rating" value="up" aria-pressed="{{ 'true' if c.rating == 'up' else 'false' }}" aria-label="Upvote">+</button>
     <button class="vote down" type="submit" name="rating" value="down" aria-pressed="{{ 'true' if c.rating == 'down' else 'false' }}" aria-label="Downvote">&minus;</button>
   </form>
@@ -120,19 +117,25 @@
 {% endmacro %}
 <div class="wrap">
   <header class="top">
-    <div class="brand">newslet<span class="date">{{ issue_date|e }}</span></div>
-    <nav class="navlinks">
-      <a href="/">admin</a>
-      <a href="/issues">issues</a>
-      <a href="{{ email_url|e }}">view as email</a>
-    </nav>
+    <div class="brand">newslet</div>
+    <div class="topright">
+      <button class="btn" id="refresh-btn" data-created="{{ created_iso|e }}">↻ Refresh</button>
+      <nav class="navlinks">
+        <a href="/admin">admin</a>
+        <a href="/issues">issues</a>
+      </nav>
+    </div>
   </header>
 
   <div class="lede">
     {% if subject %}<h1>{{ subject|e }}</h1>{% endif %}
     {% if intro %}<p>{{ intro|e }}</p>{% endif %}
-    <p class="count">{{ total }} articles · {{ picks|length }} ranked picks · {{ web_articles|length }} from around the web. Your <span style="color:var(--ok)">+</span>/<span style="color:var(--bad)">−</span> votes tune tomorrow's ranking.</p>
+    {% if has_content %}
+    <p class="count">{{ total }} articles · {{ picks|length }} ranked · {{ web_articles|length }} from around the web. Your <span style="color:var(--ok)">+</span>/<span style="color:var(--bad)">−</span> votes tune future ranking. <span class="updated">Updated {{ created_label|e }}.</span></p>
+    {% endif %}
   </div>
+
+  <div class="spinner" id="refresh-spinner">Refreshing your homepage — this takes about a minute…</div>
 
   <!-- Research desk: type a subject, the web search hones in -->
   <section class="research">
@@ -154,13 +157,12 @@
     </div>
   </section>
 
-  <!-- Source filter chips -->
-  <div class="filters" id="filters" role="group" aria-label="Filter by source">
-    <button class="chip" data-filter="__all__" aria-pressed="true">All</button>
-    {% for s in sources %}
-    <button class="chip" data-filter="{{ s|e }}" aria-pressed="false">{{ s|e }}</button>
-    {% endfor %}
+  {% if not has_content %}
+  <div class="banner">
+    <strong>Your homepage hasn't been generated yet.</strong>
+    <p style="margin:8px 0 0;color:var(--muted);">Hit <em>Refresh</em> to pull together ranked picks from your feeds and Hacker News, plus a block from around the open web. It takes about a minute.</p>
   </div>
+  {% endif %}
 
   {% if picks %}
   <h2 class="section">Ranked picks</h2>
@@ -176,11 +178,7 @@
   </div>
   {% endif %}
 
-  {% if not picks and not web_articles %}
-  <div class="empty">This issue has no articles yet.</div>
-  {% endif %}
-
-  <p class="kbd-help">Shortcuts: <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">u</span> upvote · <span class="kbd">d</span> downvote · <span class="kbd">o</span> open</p>
+  <p class="kbd-help">Shortcuts: <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">u</span> upvote · <span class="kbd">d</span> downvote · <span class="kbd">o</span> open · <span class="kbd">r</span> refresh</p>
 </div>
 
 <script>
@@ -219,35 +217,55 @@
       ups.setAttribute("aria-pressed", rating === "up" ? "true" : "false");
       downs.setAttribute("aria-pressed", rating === "down" ? "true" : "false");
     }).catch(function () {
-      // Fall back to a full form post so the vote still lands.
-      form.submit();
+      form.submit(); // fall back to a full form post so the vote still lands
     }).finally(function () {
       ups.disabled = downs.disabled = false;
     });
   }
 
-  // ---- Source filter chips ----
-  var filters = document.getElementById("filters");
-  if (filters) {
-    filters.addEventListener("click", function (ev) {
-      var chip = ev.target.closest(".chip");
-      if (!chip) return;
-      filters.querySelectorAll(".chip").forEach(function (c) { c.setAttribute("aria-pressed", "false"); });
-      chip.setAttribute("aria-pressed", "true");
-      var want = chip.getAttribute("data-filter");
-      document.querySelectorAll("#picks-grid .card, #web-grid .card").forEach(function (card) {
-        var show = want === "__all__" || card.getAttribute("data-source") === want;
-        card.style.display = show ? "" : "none";
+  // ---- Refresh: async regenerate the homepage, poll, then reload ----
+  var refreshBtn = document.getElementById("refresh-btn");
+  function startRefresh() {
+    var spinner = document.getElementById("refresh-spinner");
+    var baseline = refreshBtn.getAttribute("data-created") || "";
+    refreshBtn.disabled = true;
+    spinner.style.display = "block";
+    fetch("/api/home/refresh", { method: "POST", headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error("refresh failed"); return r.json(); })
+      .then(function () { pollStatus(baseline, 0); })
+      .catch(function () {
+        spinner.textContent = "Couldn't start a refresh — try again in a moment.";
+        refreshBtn.disabled = false;
       });
-    });
   }
+  function pollStatus(baseline, tries) {
+    if (tries > 40) { // ~3.5 min ceiling
+      document.getElementById("refresh-spinner").textContent =
+        "Still working… reload the page in a minute.";
+      refreshBtn.disabled = false;
+      return;
+    }
+    setTimeout(function () {
+      fetch("/api/home/status", { headers: { "Accept": "application/json" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ready && d.created_at && d.created_at !== baseline) {
+            window.location.reload();
+          } else {
+            pollStatus(baseline, tries + 1);
+          }
+        })
+        .catch(function () { pollStatus(baseline, tries + 1); });
+    }, 5000);
+  }
+  if (refreshBtn) refreshBtn.addEventListener("click", startRefresh);
 
   // ---- Research box: inline search via JSON, no full reload ----
   var sform = document.getElementById("search-form");
   if (sform) {
     sform.addEventListener("submit", function (ev) {
       var q = document.getElementById("q").value.trim();
-      if (!q) return; // let empty submit do nothing
+      if (!q) return;
       ev.preventDefault();
       var spinner = document.getElementById("search-spinner");
       var out = document.getElementById("search-results");
@@ -257,13 +275,8 @@
       btn.disabled = true;
       fetch("/api/search?q=" + encodeURIComponent(q), { headers: { "Accept": "application/json" } })
         .then(function (r) { return r.json(); })
-        .then(function (data) {
-          renderResults(out, data.results || [], q);
-        })
-        .catch(function () {
-          // Fall back to a server-rendered reload.
-          window.location.search = "?q=" + encodeURIComponent(q);
-        })
+        .then(function (data) { renderResults(out, data.results || [], q); })
+        .catch(function () { window.location.search = "?q=" + encodeURIComponent(q); })
         .finally(function () { spinner.style.display = "none"; btn.disabled = false; });
     });
   }
@@ -278,7 +291,7 @@
       return;
     }
     var date = document.querySelector('input[name="date"]');
-    date = date ? date.value : "";
+    date = date ? date.value : "home";
     var html = '<h2 class="section" style="margin-top:14px;">Results for "' + esc(q) + '"</h2>';
     results.forEach(function (c) {
       var badges = "";
@@ -307,10 +320,7 @@
   // ---- Keyboard navigation ----
   var cur = -1;
   function cards() {
-    return Array.prototype.filter.call(
-      document.querySelectorAll(".card"),
-      function (c) { return c.style.display !== "none"; }
-    );
+    return Array.prototype.slice.call(document.querySelectorAll(".card"));
   }
   function focusCard(i) {
     var cs = cards();
@@ -324,6 +334,7 @@
     if (tag === "input" || tag === "textarea") return;
     if (ev.key === "j") { ev.preventDefault(); focusCard(cur + 1); }
     else if (ev.key === "k") { ev.preventDefault(); focusCard(cur - 1); }
+    else if (ev.key === "r") { ev.preventDefault(); if (refreshBtn && !refreshBtn.disabled) startRefresh(); }
     else if (ev.key === "u" || ev.key === "d") {
       var card = cards()[cur];
       if (card) { var f = card.querySelector("form.actions"); if (f) castVote(f, ev.key === "u" ? "up" : "down"); }
@@ -334,6 +345,9 @@
   });
 
   wireVotes(document);
+
+  // First visit with no content yet: kick off generation automatically.
+  if (refreshBtn && !{{ 'true' if has_content else 'false' }}) startRefresh();
 })();
 </script>
 </body>

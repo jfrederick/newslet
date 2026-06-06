@@ -38,14 +38,21 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 _RANK_FEEDBACK_LIMIT = 50
 _TUNE_FEEDBACK_LIMIT = 200
 
-# The web view is the rich surface: rank up to 40 picks for it (the email
-# renders only the top handful — see email_render). The "from around the web"
-# block adds 20 more, for ~60 articles on the page.
-_RANK_MAX_PICKS = 40
-_WEB_ARTICLES_COUNT = 20
+# The standalone web homepage is the rich, browse-everything surface; it is
+# generated on demand (the "home" mode) with generous counts, independent of
+# the daily email's admin-configured counts.
+_HOME_RANK_PICKS = 40
+_HOME_WEB_ARTICLES = 20
+
+# Fallback counts when no admin config is present (run_digest defaults).
+_DEFAULT_MAX_PICKS = 10
+_DEFAULT_MAX_WEB = 5
 
 # How many HN front pages to pull into the ranking candidate pool.
 _HN_PAGES = 20
+
+# Reserved issues-table key for the standalone web homepage aggregation.
+HOME_KEY = "home"
 
 
 def _web_search_query(profile_md: str) -> str:
@@ -117,6 +124,9 @@ def run_digest(
     discovery_fn=None,
     hn_fn=None,
     websearch_fn=None,
+    max_picks: int = _DEFAULT_MAX_PICKS,
+    max_web: int = _DEFAULT_MAX_WEB,
+    web_variety: int = 30,
     now: datetime | None = None,
 ) -> tuple[Issue, list[Article]]:
     """Pure pipeline: fetch → rank → summarize → discover → web → assemble Issue.
@@ -158,7 +168,7 @@ def run_digest(
         profile_md=profile.markdown,
         feedback=feedback,
         candidates=candidates,
-        max_picks=_RANK_MAX_PICKS,
+        max_picks=max_picks,
     )
     log.info("claude returned %d picks", len(response.picks))
 
@@ -179,18 +189,21 @@ def run_digest(
     # same is_seen the fetcher uses, so marked-seen discoveries don't recur.
     discoveries = [d for d in discoveries if not is_seen(str(d.url))]
 
-    # The "from around the web" block for the rich web view: a live web search
-    # distilled from the profile, separate from the RSS/HN picks. Best-effort
-    # and seen-filtered like discoveries.
+    # The "from around the web" block: a live web search distilled from the
+    # profile, separate from the RSS/HN picks, with the admin variety dial
+    # controlling how far it roams into ancillary areas. Best-effort and
+    # seen-filtered like discoveries. ``max_web == 0`` disables it entirely.
     web_articles: list[WebArticle] = []
-    try:
-        web_articles = websearch_fn(
-            _web_search_query(profile.markdown),
-            max_results=_WEB_ARTICLES_COUNT,
-            exclude_hosts=_feed_domains(feed_urls),
-        )
-    except Exception:  # noqa: BLE001 - best effort, never block the send
-        log.exception("web search failed; sending without the web block")
+    if max_web > 0:
+        try:
+            web_articles = websearch_fn(
+                _web_search_query(profile.markdown),
+                max_results=max_web,
+                exclude_hosts=_feed_domains(feed_urls),
+                variety=web_variety,
+            )
+        except Exception:  # noqa: BLE001 - best effort, never block the send
+            log.exception("web search failed; sending without the web block")
     web_articles = [w for w in web_articles if not is_seen(str(w.url))]
 
     issue = _build_issue(
@@ -227,6 +240,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     """
     feeds_list = db.list_feeds()
     profile = db.get_profile()
+    config = db.get_config()
     # Recency window for ranking; tuning reads its own wider window.
     feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
     return run_digest(
@@ -234,6 +248,9 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         profile=profile,
         feedback=feedback,
         is_seen=db.is_seen,
+        max_picks=config.max_rss_articles,
+        max_web=config.max_web_articles,
+        web_variety=config.web_variety,
         now=now,
     )
 
@@ -285,6 +302,46 @@ def _run_manual(s: Any) -> dict:
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
 
 
+def _run_home(s: Any) -> dict:
+    """Generate the standalone rich homepage aggregation (no email).
+
+    Builds a generous browse surface — RSS + Hacker News, ranked, plus a
+    web-search block — and stores it under the reserved ``HOME_KEY`` (hidden
+    from ``list_issues``). The homepage's refresh button re-runs this. It
+    never emails, never marks seen, and stays out of the daily cadence; unlike
+    the daily digest it ignores the seen-store (it's a browse surface, not a
+    deduped feed) and skips discovery (a subscribe-link/email concern).
+    """
+    now = datetime.now(UTC)
+    feeds_list = db.list_feeds()
+    profile = db.get_profile()
+    config = db.get_config()
+    feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
+    issue, _candidates = run_digest(
+        feed_urls=[str(f.url) for f in feeds_list],
+        profile=profile,
+        feedback=feedback,
+        is_seen=lambda _u: False,
+        discovery_fn=lambda *_a, **_k: [],
+        max_picks=_HOME_RANK_PICKS,
+        max_web=_HOME_WEB_ARTICLES,
+        web_variety=config.web_variety,
+        now=now,
+    )
+    issue = issue.model_copy(update={"date": HOME_KEY, "created_at": now})
+    db.put_issue(issue, manual=True)
+    log.info(
+        "home refreshed: %d picks, %d web articles",
+        len(issue.picks),
+        len(issue.web_articles),
+    )
+    return {
+        "status": "home_refreshed",
+        "picks": len(issue.picks),
+        "web": len(issue.web_articles),
+    }
+
+
 def handler(event: dict, context: Any) -> dict:
     """Run the digest pipeline once.
 
@@ -320,6 +377,9 @@ def handler(event: dict, context: Any) -> dict:
 
     if event and event.get("manual"):
         return _run_manual(s)
+
+    if event and event.get("home"):
+        return _run_home(s)
 
     today = datetime.now(UTC).strftime("%Y-%m-%d")
 

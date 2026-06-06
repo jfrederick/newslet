@@ -68,10 +68,11 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `rank.py` | Anthropic ranking call with prompt caching |
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
-| `email_render.py` | Jinja → `(subject, html)` (email shows the top picks; links to the web view) |
-| `handlers/digest.py` | scheduled Lambda + dry-run CLI |
-| `handlers/web.py` | FastAPI + Mangum (admin UI, rich issue view, `/rate`, `/api/vote`, `/api/search`, `/api/hn`) |
-| `templates/read.html.j2` | the rich issue web view (≈60 articles, voting, filters, subject search) |
+| `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link) |
+| `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/issues/{date}` email archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/home/*`) |
+| `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search, Refresh) |
+| `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, send now) |
 | `infra/template.yaml` | SAM stack |
 
 ## Conventions and invariants
@@ -85,12 +86,21 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   enrichment steps in the same `try/except → empty` shape, and make their
   network edge injectable (HN takes a `fetch` callable; websearch a `client`;
   `run_digest` takes `hn_fn`/`websearch_fn`) so tests stay offline.
-- **Web view vs. email:** an issue stores up to 40 ranked picks plus 20
-  `web_articles`; the **email** renders only the top few picks (see
-  `email_render._EMAIL_PICK_LIMIT`) and links to the web view, while the rich
-  `read.html.j2` view renders all ~60 with `/api/vote` voting. Web votes write
-  the same `FeedbackRow` shape as the signed email `/rate` link, so both feed
-  the next ranking identically.
+- **Email vs. homepage are separate surfaces:**
+  - The **daily email** (`/issues/{date}` archive renders it as-sent) carries
+    `Config.max_rss_articles` ranked picks (RSS + Hacker News) plus
+    `Config.max_web_articles` open-web results, both votable via the signed
+    `/rate` link, plus discoveries. It links generically to the homepage.
+  - The **homepage** (`/`, `read.html.j2`) is the rich, browse-everything web
+    experience: a separate aggregation stored under the reserved issue key
+    `"home"` (see `digest.HOME_KEY`), regenerated on demand by the Refresh
+    button (`/api/home/refresh` → async digest `{"home": true}` → poll
+    `/api/home/status`). Voting uses `/api/vote` (admin cookie) writing the
+    same `FeedbackRow` shape as `/rate`, so both feed the next ranking.
+- **Admin config** lives in the profile table under `id="config"`
+  (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
+  `max_web_articles`, and `web_variety` (0–100 exploration dial for
+  `websearch.search_web`). Read leniently (defaults on a missing/bad row).
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model
