@@ -202,7 +202,7 @@ def test_add_then_delete_with_uppercase_input(client):
     assert 'value="https://example.com/Rss"' not in r.text
 
 
-def test_issues_index_lists_recent_issues(client):
+def test_emails_index_lists_recent_emails(client):
     from datetime import UTC, datetime
 
     from newslet import db
@@ -214,13 +214,16 @@ def test_issues_index_lists_recent_issues(client):
     db.put_issue(Issue(date="2026-05-16", picks=[], created_at=datetime.now(UTC)))
     db.mark_issue_sent("2026-05-16")
 
-    r = client.get("/issues")
+    r = client.get("/emails")
     assert r.status_code == 200
+    assert "Recent emails" in r.text
     assert "2026-05-17" in r.text
     assert "2026-05-16" in r.text
-    # The 2026-05-16 issue should show as sent; 2026-05-17 as unsent
+    # The 2026-05-16 email should show as sent; 2026-05-17 as unsent
     assert "sent" in r.text
     assert "unsent" in r.text
+    # Links point at the renamed archive route.
+    assert "/emails/2026-05-17" in r.text
 
 
 def test_admin_index_shows_last_sent(client):
@@ -492,6 +495,8 @@ def _seed_issue(key):
 
 
 def test_homepage_renders_all_articles(client):
+    from datetime import UTC, datetime
+
     client.cookies.set("admin_token", "supersecret")
     _seed_issue("home")
     r = client.get("/")
@@ -503,17 +508,41 @@ def test_homepage_renders_all_articles(client):
     assert "4 articles" in r.text
     assert "222" in r.text  # HN points badge
     assert 'action="/api/vote"' in r.text
-    # The refresh button and (removed) source filter.
-    assert 'id="refresh-btn"' in r.text
+    # No refresh button, no source filter, non-sticky header.
+    assert 'id="refresh-btn"' not in r.text
     assert "data-filter" not in r.text
+    assert "position: sticky" not in r.text
+    # The date header carries today's written weekday.
+    assert datetime.now(UTC).strftime("%A") in r.text
 
 
-def test_homepage_empty_state_when_not_generated(client):
+def test_homepage_downvoted_article_disappears(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import FeedbackRow
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("home")
+    db.put_feedback(
+        FeedbackRow(article_url="https://ex.com/b", title="Beta Pick",
+                    rating="down", ts=datetime.now(UTC), issue_date="home")
+    )
+    r = client.get("/")
+    assert r.status_code == 200
+    # The downvoted article is gone; the others remain.
+    assert "Beta Pick" not in r.text
+    assert "Alpha Pick" in r.text
+    assert "3 articles" in r.text
+
+
+def test_homepage_empty_state_auto_prepares(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.get("/")
     assert r.status_code == 200
-    assert "hasn't been generated yet" in r.text
-    assert 'id="refresh-btn"' in r.text
+    # No stored edition yet → the page prepares one itself (no manual button).
+    assert "Preparing today's edition" in r.text
+    assert 'id="refresh-btn"' not in r.text
 
 
 def test_homepage_shows_sticky_vote_state(client):
@@ -565,21 +594,19 @@ def test_homepage_server_rendered_search(client, monkeypatch):
     assert "neural nets" in r.text
 
 
-def test_issue_archive_renders_email(client):
-    """/issues/{date} now shows the as-sent email (separate from the homepage)."""
+def test_email_archive_renders_email(client):
+    """/emails/{date} shows the as-sent email (separate from the homepage)."""
     client.cookies.set("admin_token", "supersecret")
     _seed_issue("2026-05-21")
-    r = client.get("/issues/2026-05-21")
+    r = client.get("/emails/2026-05-21")
     assert r.status_code == 200
     assert "Alpha Pick" in r.text
     assert "picks today" in r.text  # email footer
-    # The rich homepage chrome is NOT here.
-    assert 'id="refresh-btn"' not in r.text
 
 
-def test_issue_view_404_for_missing(client):
+def test_email_view_404_for_missing(client):
     client.cookies.set("admin_token", "supersecret")
-    r = client.get("/issues/2099-01-01")
+    r = client.get("/emails/2099-01-01")
     assert r.status_code == 404
 
 

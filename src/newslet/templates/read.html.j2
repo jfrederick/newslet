@@ -28,26 +28,24 @@
   .wrap { max-width: 820px; margin: 0 auto; padding: 0 16px 80px; }
 
   header.top {
-    position: sticky; top: 0; z-index: 20; background: var(--bg);
-    border-bottom: 1px solid var(--border);
+    background: var(--bg); border-bottom: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 14px 0; flex-wrap: wrap;
   }
   .brand { font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  .topright { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .navlinks { font-size: 13px; }
   .navlinks a { color: var(--muted); text-decoration: none; margin-left: 14px; }
   .navlinks a:hover { color: var(--fg); text-decoration: underline; }
 
-  .lede { margin: 22px 0 8px; }
-  .lede h1 { font-family: Georgia, serif; font-size: 24px; line-height: 1.25; margin: 0 0 8px; }
+  .lede { margin: 26px 0 8px; }
+  .dateline { font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; }
+  .lede h1 { font-family: Georgia, serif; font-size: 26px; line-height: 1.22; margin: 0 0 8px; }
   .lede p { color: var(--fg); margin: 0; font-size: 16px; }
   .count { color: var(--muted); font-size: 13px; }
-  .updated { color: var(--muted); font-size: 12px; }
 
   .btn { font: inherit; cursor: pointer; padding: 8px 14px; border-radius: 8px;
     border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; }
-  .btn.secondary { background: var(--panel); color: var(--accent); }
   .btn:disabled { opacity: .6; cursor: progress; }
 
   /* Research / "textbook" box */
@@ -64,9 +62,12 @@
     margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 
   .grid { display: grid; gap: 12px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 16px 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 16px 12px;
+    transition: opacity .3s ease, transform .3s ease, max-height .35s ease, padding .35s ease, margin .35s ease;
+    max-height: 1200px; }
   .card.voted-up { border-color: var(--ok-border); box-shadow: inset 3px 0 0 var(--ok); }
-  .card.voted-down { opacity: .62; box-shadow: inset 3px 0 0 var(--bad); }
+  .card.removing { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0;
+    margin-top: 0; margin-bottom: 0; transform: translateX(-14px); overflow: hidden; }
   .card h3 { font-size: 17px; line-height: 1.35; margin: 0 0 6px; }
   .card h3 a { color: var(--fg); text-decoration: none; }
   .card h3 a:hover { color: var(--accent); text-decoration: underline; }
@@ -89,15 +90,13 @@
   .empty { color: var(--muted); padding: 10px 0; }
   .banner { background: var(--accent-bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 20px 0; }
   .spinner { display: none; color: var(--muted); font-size: 14px; padding: 8px 0; }
-  .kbd-help { color: var(--muted); font-size: 12px; margin-top: 28px; text-align: center; }
-  .kbd { background: var(--chip); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
 {# ---- card macro: one article, with sticky vote state (defined before use) ---- #}
 {% macro card(c) %}
-<article class="card{% if c.rating == 'up' %} voted-up{% elif c.rating == 'down' %} voted-down{% endif %}"
-         data-source="{{ c.source|e }}" data-url="{{ c.url|e }}" tabindex="0">
+<article class="card{% if c.rating == 'up' %} voted-up{% endif %}"
+         data-source="{{ c.source|e }}" data-url="{{ c.url|e }}">
   <h3><a href="{{ c.url|e }}" target="_blank" rel="noopener noreferrer">{{ c.title|e }}</a></h3>
   <div class="meta">
     {% if c.source %}<span class="src{% if c.source == 'Hacker News' %} hn{% endif %}">{{ c.source|e }}</span>{% endif %}
@@ -111,31 +110,29 @@
     <input type="hidden" name="title" value="{{ c.title|e }}">
     <input type="hidden" name="date" value="{{ vote_key|e }}">
     <button class="vote up" type="submit" name="rating" value="up" aria-pressed="{{ 'true' if c.rating == 'up' else 'false' }}" aria-label="Upvote">+</button>
-    <button class="vote down" type="submit" name="rating" value="down" aria-pressed="{{ 'true' if c.rating == 'down' else 'false' }}" aria-label="Downvote">&minus;</button>
+    <button class="vote down" type="submit" name="rating" value="down" aria-pressed="false" aria-label="Downvote (remove)">&minus;</button>
   </form>
 </article>
 {% endmacro %}
 <div class="wrap">
   <header class="top">
     <div class="brand">newslet</div>
-    <div class="topright">
-      <button class="btn" id="refresh-btn" data-created="{{ created_iso|e }}">↻ Refresh</button>
-      <nav class="navlinks">
-        <a href="/admin">admin</a>
-        <a href="/issues">issues</a>
-      </nav>
-    </div>
+    <nav class="navlinks">
+      <a href="/admin">admin</a>
+      <a href="/emails">emails</a>
+    </nav>
   </header>
 
   <div class="lede">
+    <div class="dateline">{{ date_header|e }}</div>
     {% if subject %}<h1>{{ subject|e }}</h1>{% endif %}
     {% if intro %}<p>{{ intro|e }}</p>{% endif %}
     {% if has_content %}
-    <p class="count">{{ total }} articles · {{ picks|length }} ranked · {{ web_articles|length }} from around the web. Your <span style="color:var(--ok)">+</span>/<span style="color:var(--bad)">−</span> votes tune future ranking. <span class="updated">Updated {{ created_label|e }}.</span></p>
+    <p class="count">{{ total }} articles · {{ picks|length }} ranked · {{ web_articles|length }} from around the web. <span style="color:var(--ok)">+</span> keeps · <span style="color:var(--bad)">−</span> removes — both tune future ranking.</p>
     {% endif %}
   </div>
 
-  <div class="spinner" id="refresh-spinner">Refreshing your homepage — this takes about a minute…</div>
+  <div class="spinner" id="prep-spinner">Preparing today's edition — this takes about a minute…</div>
 
   <!-- Research desk: type a subject, the web search hones in -->
   <section class="research">
@@ -157,13 +154,6 @@
     </div>
   </section>
 
-  {% if not has_content %}
-  <div class="banner">
-    <strong>Your homepage hasn't been generated yet.</strong>
-    <p style="margin:8px 0 0;color:var(--muted);">Hit <em>Refresh</em> to pull together ranked picks from your feeds and Hacker News, plus a block from around the open web. It takes about a minute.</p>
-  </div>
-  {% endif %}
-
   {% if picks %}
   <h2 class="section">Ranked picks</h2>
   <div class="grid" id="picks-grid">
@@ -177,15 +167,13 @@
     {% for c in web_articles %}{{ card(c) }}{% endfor %}
   </div>
   {% endif %}
-
-  <p class="kbd-help">Shortcuts: <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">u</span> upvote · <span class="kbd">d</span> downvote · <span class="kbd">o</span> open · <span class="kbd">r</span> refresh</p>
 </div>
 
 <script>
 (function () {
   "use strict";
 
-  // ---- Voting: intercept the form post, fetch JSON, update sticky state ----
+  // ---- Voting: intercept the form post, fetch JSON, update the page ----
   function wireVotes(root) {
     root.querySelectorAll("form.actions").forEach(function (form) {
       form.addEventListener("submit", function (ev) {
@@ -195,6 +183,15 @@
         castVote(form, rating);
       });
     });
+  }
+
+  function removeCard(card) {
+    if (!card) return;
+    card.classList.add("removing");
+    var done = false;
+    function gone() { if (done) return; done = true; card.remove(); }
+    card.addEventListener("transitionend", gone, { once: true });
+    setTimeout(gone, 600); // fallback if transitionend doesn't fire
   }
 
   function castVote(form, rating) {
@@ -212,37 +209,35 @@
       if (!r.ok) throw new Error("vote failed");
       return r.json();
     }).then(function () {
-      card.classList.toggle("voted-up", rating === "up");
-      card.classList.toggle("voted-down", rating === "down");
-      ups.setAttribute("aria-pressed", rating === "up" ? "true" : "false");
-      downs.setAttribute("aria-pressed", rating === "down" ? "true" : "false");
+      if (rating === "down") {
+        removeCard(card); // a downvote makes the article gracefully disappear
+      } else {
+        card.classList.add("voted-up");
+        ups.setAttribute("aria-pressed", "true");
+        ups.disabled = downs.disabled = false;
+      }
     }).catch(function () {
-      form.submit(); // fall back to a full form post so the vote still lands
-    }).finally(function () {
       ups.disabled = downs.disabled = false;
+      form.submit(); // fall back to a full form post so the vote still lands
     });
   }
 
-  // ---- Refresh: async regenerate the homepage, poll, then reload ----
-  var refreshBtn = document.getElementById("refresh-btn");
-  function startRefresh() {
-    var spinner = document.getElementById("refresh-spinner");
-    var baseline = refreshBtn.getAttribute("data-created") || "";
-    refreshBtn.disabled = true;
+  // ---- Auto-regenerate when the stored edition is missing or not today's ----
+  function autoRefresh() {
+    var spinner = document.getElementById("prep-spinner");
+    var baseline = {{ created_iso|tojson }};
     spinner.style.display = "block";
     fetch("/api/home/refresh", { method: "POST", headers: { "Accept": "application/json" } })
       .then(function (r) { if (!r.ok) throw new Error("refresh failed"); return r.json(); })
       .then(function () { pollStatus(baseline, 0); })
       .catch(function () {
-        spinner.textContent = "Couldn't start a refresh — try again in a moment.";
-        refreshBtn.disabled = false;
+        spinner.textContent = "Couldn't prepare today's edition — reload in a moment.";
       });
   }
   function pollStatus(baseline, tries) {
     if (tries > 40) { // ~3.5 min ceiling
-      document.getElementById("refresh-spinner").textContent =
-        "Still working… reload the page in a minute.";
-      refreshBtn.disabled = false;
+      document.getElementById("prep-spinner").textContent =
+        "Still preparing… reload the page in a minute.";
       return;
     }
     setTimeout(function () {
@@ -258,7 +253,6 @@
         .catch(function () { pollStatus(baseline, tries + 1); });
     }, 5000);
   }
-  if (refreshBtn) refreshBtn.addEventListener("click", startRefresh);
 
   // ---- Research box: inline search via JSON, no full reload ----
   var sform = document.getElementById("search-form");
@@ -300,7 +294,7 @@
       if (c.comments_url) badges += '<a href="' + esc(c.comments_url) + '" target="_blank" rel="noopener noreferrer">discussion ↗</a>';
       var srcCls = c.source === "Hacker News" ? "src hn" : "src";
       html +=
-        '<article class="card" data-source="' + esc(c.source) + '" data-url="' + esc(c.url) + '" tabindex="0">' +
+        '<article class="card" data-source="' + esc(c.source) + '" data-url="' + esc(c.url) + '">' +
           '<h3><a href="' + esc(c.url) + '" target="_blank" rel="noopener noreferrer">' + esc(c.title) + "</a></h3>" +
           '<div class="meta">' + (c.source ? '<span class="' + srcCls + '">' + esc(c.source) + "</span>" : "") + badges + "</div>" +
           (c.blurb ? '<p class="blurb">' + esc(c.blurb) + "</p>" : "") +
@@ -309,7 +303,7 @@
             '<input type="hidden" name="title" value="' + esc(c.title) + '">' +
             '<input type="hidden" name="date" value="' + esc(date) + '">' +
             '<button class="vote up" type="submit" name="rating" value="up" aria-pressed="false" aria-label="Upvote">+</button>' +
-            '<button class="vote down" type="submit" name="rating" value="down" aria-pressed="false" aria-label="Downvote">−</button>' +
+            '<button class="vote down" type="submit" name="rating" value="down" aria-pressed="false" aria-label="Downvote (remove)">−</button>' +
           "</form>" +
         "</article>";
     });
@@ -317,37 +311,10 @@
     wireVotes(out);
   }
 
-  // ---- Keyboard navigation ----
-  var cur = -1;
-  function cards() {
-    return Array.prototype.slice.call(document.querySelectorAll(".card"));
-  }
-  function focusCard(i) {
-    var cs = cards();
-    if (!cs.length) return;
-    cur = Math.max(0, Math.min(i, cs.length - 1));
-    cs[cur].focus();
-    cs[cur].scrollIntoView({ block: "center", behavior: "smooth" });
-  }
-  document.addEventListener("keydown", function (ev) {
-    var tag = (ev.target.tagName || "").toLowerCase();
-    if (tag === "input" || tag === "textarea") return;
-    if (ev.key === "j") { ev.preventDefault(); focusCard(cur + 1); }
-    else if (ev.key === "k") { ev.preventDefault(); focusCard(cur - 1); }
-    else if (ev.key === "r") { ev.preventDefault(); if (refreshBtn && !refreshBtn.disabled) startRefresh(); }
-    else if (ev.key === "u" || ev.key === "d") {
-      var card = cards()[cur];
-      if (card) { var f = card.querySelector("form.actions"); if (f) castVote(f, ev.key === "u" ? "up" : "down"); }
-    } else if (ev.key === "o") {
-      var c2 = cards()[cur];
-      if (c2) { var a = c2.querySelector("h3 a"); if (a) window.open(a.href, "_blank", "noopener"); }
-    }
-  });
-
   wireVotes(document);
 
-  // First visit with no content yet: kick off generation automatically.
-  if (refreshBtn && !{{ 'true' if has_content else 'false' }}) startRefresh();
+  // Kick off generation when the stored edition is missing or stale.
+  if ({{ 'true' if stale else 'false' }}) autoRefresh();
 })();
 </script>
 </body>
