@@ -42,6 +42,7 @@ _TUNE_FEEDBACK_LIMIT = 200
 # generated on demand (the "home" mode) with generous counts, independent of
 # the daily email's admin-configured counts.
 _HOME_RANK_PICKS = 40
+_HOME_MIN_PICKS = 25  # the homepage is a browse surface — keep it full
 _HOME_WEB_ARTICLES = 20
 
 # Fallback counts when no admin config is present (run_digest defaults).
@@ -125,6 +126,7 @@ def run_digest(
     hn_fn=None,
     websearch_fn=None,
     max_picks: int = _DEFAULT_MAX_PICKS,
+    min_picks: int = 5,
     max_web: int = _DEFAULT_MAX_WEB,
     web_variety: int = 30,
     now: datetime | None = None,
@@ -169,6 +171,7 @@ def run_digest(
         feedback=feedback,
         candidates=candidates,
         max_picks=max_picks,
+        min_picks=min_picks,
     )
     log.info("claude returned %d picks", len(response.picks))
 
@@ -193,13 +196,16 @@ def run_digest(
     # profile, separate from the RSS/HN picks, with the admin variety dial
     # controlling how far it roams into ancillary areas. Best-effort and
     # seen-filtered like discoveries. ``max_web == 0`` disables it entirely.
+    # Note: unlike discovery (whose job is to surface *new* sources), the web
+    # block does NOT exclude the user's feed domains — a profile-driven search
+    # naturally surfaces those very domains, and excluding them would empty the
+    # block. Overlap with picks is acceptable on a "from around the web" list.
     web_articles: list[WebArticle] = []
     if max_web > 0:
         try:
             web_articles = websearch_fn(
                 _web_search_query(profile.markdown),
                 max_results=max_web,
-                exclude_hosts=_feed_domains(feed_urls),
                 variety=web_variety,
             )
         except Exception:  # noqa: BLE001 - best effort, never block the send
@@ -324,6 +330,7 @@ def _run_home(s: Any) -> dict:
         is_seen=lambda _u: False,
         discovery_fn=lambda *_a, **_k: [],
         max_picks=_HOME_RANK_PICKS,
+        min_picks=_HOME_MIN_PICKS,
         max_web=_HOME_WEB_ARTICLES,
         web_variety=config.web_variety,
         now=now,
