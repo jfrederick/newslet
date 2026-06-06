@@ -447,10 +447,10 @@ def test_send_email_invokes_resend_correctly(aws, monkeypatch):
 def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
     """An empty-candidate day should still produce an email so the user
     notices the pipeline ran (vs silently going dark)."""
-    from newslet import db, feeds
+    from newslet import db, feeds, hn, websearch
     from newslet.handlers import digest
 
-    # No entries at all → empty candidate list → no rank call needed
+    # No entries at all → empty candidate list → no rank call needed.
     monkeypatch.setattr(
         feeds,
         "feedparser",
@@ -458,6 +458,10 @@ def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
             bozo=0, bozo_exception=None, feed={"title": "T"}, entries=[]
         )),
     )
+    # Stub the HN and web-search network edges so "no candidates" really means
+    # none — otherwise HN would fill the pool and force a (real) rank call.
+    monkeypatch.setattr(hn, "fetch_hn_articles", lambda *a, **k: [])
+    monkeypatch.setattr(websearch, "search_web", lambda *a, **k: [])
 
     sent: list[dict] = []
     monkeypatch.setattr(digest, "_send_email", lambda s, h: sent.append({"s": s, "h": h}))
