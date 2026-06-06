@@ -595,14 +595,18 @@ def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):
 
     seen = {}
 
-    def fake_rank(*, max_picks, **k):
+    def fake_rank(*, max_picks, min_picks, **k):
         seen["max_picks"] = max_picks
+        seen["min_picks"] = min_picks
         return RankResponse(picks=[Pick(url=art.url, title="A", blurb="b",
                                         source="F", score=0.5)])
 
     def fake_web(query, *, max_results, variety, **k):
         seen["max_web"] = max_results
         seen["variety"] = variety
+        # The web block must NOT be handed the feed-domain exclusion list
+        # (that is discovery's job); excluding it would empty the block.
+        seen["exclude_hosts"] = k.get("exclude_hosts")
         return []
 
     digest.run_digest(
@@ -616,10 +620,45 @@ def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):
         hn_fn=lambda **k: [],
         websearch_fn=fake_web,
         max_picks=7,
+        min_picks=4,
         max_web=3,
         web_variety=85,
     )
-    assert seen == {"max_picks": 7, "max_web": 3, "variety": 85}
+    assert seen == {
+        "max_picks": 7, "min_picks": 4, "max_web": 3,
+        "variety": 85, "exclude_hosts": None,
+    }
+
+
+def test_run_digest_web_block_keeps_feed_domain_results(env, monkeypatch):
+    """A web result from a domain the user already follows is still kept —
+    the web block is 'from around the web', not new-source discovery."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse, WebArticle
+    from newslet.handlers import digest
+
+    art = Article(url="https://feed.example/a", title="A", summary="s", source="F",
+                  published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [art])
+
+    issue, _ = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],  # feed domain = feed.example
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: False,
+        rank_fn=lambda **k: RankResponse(
+            picks=[Pick(url=art.url, title="A", blurb="b", source="F", score=0.5)]
+        ),
+        summarize_fn=lambda picks, **k: ("s", "i"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=lambda *a, **k: [
+            WebArticle(url="https://feed.example/web-piece", title="Same domain",
+                       source="F"),
+        ],
+        max_web=5,
+    )
+    assert [str(w.url) for w in issue.web_articles] == ["https://feed.example/web-piece"]
 
 
 def test_run_digest_skips_web_block_when_max_web_zero(env, monkeypatch):
