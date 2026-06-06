@@ -47,21 +47,31 @@ changes:
 .venv/bin/python scripts/dry_run.py && open out/email.html
 ```
 
+Render the rich issue web view locally (moto-backed, no network) to eyeball
+`read.html.j2`:
+
+```bash
+.venv/bin/python scripts/preview_read.py && open out/read.html
+```
+
 ## Architecture map
 
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | `Settings` — env vars + SSM SecureString lookups for secrets |
-| `contracts.py` | pydantic models at every JSON/DB boundary (Article, Pick, Issue, Discovery, …) |
+| `contracts.py` | pydantic models at every JSON/DB boundary (Article, Pick, Issue, Discovery, WebArticle, …) |
 | `tokens.py` | HMAC sign/verify for `/rate` links |
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
+| `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
+| `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
 | `db.py` | boto3 DynamoDB wrappers (5 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
-| `email_render.py` | Jinja → `(subject, html)` |
+| `email_render.py` | Jinja → `(subject, html)` (email shows the top picks; links to the web view) |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI |
-| `handlers/web.py` | FastAPI + Mangum (admin UI, `/rate`) |
+| `handlers/web.py` | FastAPI + Mangum (admin UI, rich issue view, `/rate`, `/api/vote`, `/api/search`, `/api/hn`) |
+| `templates/read.html.j2` | the rich issue web view (≈60 articles, voting, filters, subject search) |
 | `infra/template.yaml` | SAM stack |
 
 ## Conventions and invariants
@@ -69,9 +79,18 @@ changes:
 - **Signed email links:** `tokens.sign(article_url, issue_date)`. The issue date is
   part of every signed message and bounds replay scope. Mirror the existing
   `/rate` pattern for any new email-clickable action.
-- **Best-effort enrichment:** summarize and discovery must never block a send
-  — they degrade to empty on any failure. Keep new enrichment steps in the
-  same `try/except → empty` shape.
+- **Best-effort enrichment:** summarize, discovery, the Hacker News source
+  (`hn.fetch_hn_articles`), and the web-search block (`websearch.search_web`)
+  must never block a send — they degrade to empty on any failure. Keep new
+  enrichment steps in the same `try/except → empty` shape, and make their
+  network edge injectable (HN takes a `fetch` callable; websearch a `client`;
+  `run_digest` takes `hn_fn`/`websearch_fn`) so tests stay offline.
+- **Web view vs. email:** an issue stores up to 40 ranked picks plus 20
+  `web_articles`; the **email** renders only the top few picks (see
+  `email_render._EMAIL_PICK_LIMIT`) and links to the web view, while the rich
+  `read.html.j2` view renders all ~60 with `/api/vote` voting. Web votes write
+  the same `FeedbackRow` shape as the signed email `/rate` link, so both feed
+  the next ranking identically.
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model

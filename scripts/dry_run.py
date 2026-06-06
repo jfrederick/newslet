@@ -24,7 +24,7 @@ os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
 from newslet import email_render  # noqa: E402
-from newslet.contracts import Discovery, Issue, Pick  # noqa: E402
+from newslet.contracts import Discovery, Issue, Pick, WebArticle  # noqa: E402
 
 FIXTURE_PICKS = [
     Pick(
@@ -104,6 +104,25 @@ def main() -> int:
             "Postgres 19's async I/O."
         ),
         discoveries=FIXTURE_DISCOVERIES,
+        # Only a couple here; the web view is where these (plus the rest of the
+        # ranked picks) really live. Their presence makes the email's "Read all
+        # on the web" link render.
+        web_articles=[
+            WebArticle(
+                url="https://news.ycombinator.com/item?id=40000001",
+                title="Show HN: I built a SQLite-backed search engine",
+                source="Hacker News",
+                points=512,
+                comments=143,
+                comments_url="https://news.ycombinator.com/item?id=40000001",
+            ),
+            WebArticle(
+                url="https://example.com/web/the-state-of-async-rust",
+                title="The state of async Rust in 2026",
+                blurb="A measured look at where the ecosystem actually is.",
+                source="Open Web",
+            ),
+        ],
     )
     subject, html = email_render.render_email(issue, "https://api.example.com")
     out = Path(__file__).resolve().parent.parent / "out" / "email.html"

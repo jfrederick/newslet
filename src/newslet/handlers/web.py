@@ -14,12 +14,12 @@ from pathlib import Path
 
 import boto3
 from fastapi import Cookie, FastAPI, Form, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mangum import Mangum
 from pydantic import ValidationError
 
-from newslet import db, email_render, tokens
+from newslet import db, email_render, hn, tokens, websearch
 from newslet.config import settings
 from newslet.contracts import FeedbackRow
 
@@ -363,13 +363,113 @@ def _base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def _vote_lookup(issue) -> dict[str, str]:
+    """Map every article url in the issue to its current rating (or absent).
+
+    One batched read so the rich view can render sticky +/- state — making
+    the *effect* of a vote visible after it is cast.
+    """
+    urls = [str(p.url) for p in issue.picks] + [str(w.url) for w in issue.web_articles]
+    return db.feedback_ratings(urls, issue.date)
+
+
+def _article_card(*, url, title, blurb, source, score, rating,
+                  points=None, comments=None, comments_url="") -> dict:
+    """Normalize a pick or web article into the template's card shape."""
+    return {
+        "url": str(url),
+        "title": title,
+        "blurb": blurb,
+        "source": source or "",
+        "score": score,
+        "rating": rating,
+        "points": points,
+        "comments": comments,
+        "comments_url": comments_url or "",
+    }
+
+
 @app.get("/issues/{date}", response_class=HTMLResponse)
 def view_issue(
     date: str,
     request: Request,
+    q: str | None = Query(default=None, description="optional subject search"),
     admin_token: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    """Re-render a past issue's email HTML.
+    """Rich web view of a stored issue: up to 40 ranked picks plus a
+    "from around the web" block (≈60 articles), each with sticky +/- voting,
+    a source filter, and a subject search box that runs a live web search.
+
+    Voting here writes to the same Feedback table the email +/- links use,
+    so it feeds the next day's ranking identically.
+    """
+    _require_admin(admin_token)
+    issue = db.get_issue(date)
+    if not issue:
+        raise HTTPException(status_code=404, detail="no issue for that date")
+
+    votes = _vote_lookup(issue)
+
+    sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
+    pick_cards = [
+        _article_card(
+            url=p.url, title=p.title, blurb=p.blurb, source=p.source,
+            score=p.score, rating=votes.get(str(p.url), ""),
+        )
+        for p in sorted_picks
+    ]
+    web_cards = [
+        _article_card(
+            url=w.url, title=w.title, blurb=w.blurb, source=w.source,
+            score=None, rating=votes.get(str(w.url), ""),
+            points=w.points, comments=w.comments, comments_url=w.comments_url,
+        )
+        for w in issue.web_articles
+    ]
+
+    # Optional server-rendered subject search (progressive-enhancement
+    # fallback for when JS is off). Best-effort: empty on any failure.
+    query = (q or "").strip()
+    search_cards: list[dict] = []
+    if query:
+        for r in websearch.search_web(query, max_results=12):
+            search_cards.append(
+                _article_card(
+                    url=r.url, title=r.title, blurb=r.blurb, source=r.source,
+                    score=None, rating=votes.get(str(r.url), ""),
+                    points=r.points, comments=r.comments,
+                    comments_url=r.comments_url,
+                )
+            )
+
+    sources = sorted(
+        {c["source"] for c in pick_cards + web_cards if c["source"]},
+        key=str.lower,
+    )
+
+    html = _TEMPLATES.get_template("read.html.j2").render(
+        issue_key=issue.date,
+        issue_date=email_render._display_date(issue.date),
+        subject=issue.subject,
+        intro=issue.intro,
+        picks=pick_cards,
+        web_articles=web_cards,
+        sources=sources,
+        total=len(pick_cards) + len(web_cards),
+        query=query,
+        search_results=search_cards,
+        email_url=f"/issues/{date}/email",
+    )
+    return HTMLResponse(html)
+
+
+@app.get("/issues/{date}/email", response_class=HTMLResponse)
+def view_issue_email(
+    date: str,
+    request: Request,
+    admin_token: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    """Re-render a past issue's raw email HTML (the as-sent view).
 
     Note: rate links are regenerated with the *current* ``SIGNING_KEY``.
     If you rotate that key, every old issue's +/- links will start
@@ -382,6 +482,105 @@ def view_issue(
         raise HTTPException(status_code=404, detail="no issue for that date")
     _, html = email_render.render_email(issue, _base_url(request))
     return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
+# Web-view actions (admin-cookie authed; no HMAC needed)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/vote")
+def vote(
+    request: Request,
+    url: str = Form(...),
+    rating: str = Form(...),
+    date: str = Form(...),
+    title: str = Form(default=""),
+    admin_token: str | None = Cookie(default=None),
+) -> Response:
+    """Record a +/- vote from the rich web view.
+
+    Writes the same :class:`FeedbackRow` shape the signed email ``/rate``
+    link writes — keyed on ``(article_url, issue_date)`` so re-voting
+    overwrites — so a web vote feeds the next ranking exactly like an email
+    vote. Returns JSON for the fetch-based UI; falls back to a redirect for
+    the no-JS form post.
+    """
+    _require_admin(admin_token)
+    if rating not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="bad rating")
+    try:
+        article_url = db.normalize_url(url)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail="invalid url") from exc
+
+    db.put_feedback(
+        FeedbackRow(
+            article_url=article_url,
+            title=title,
+            rating=rating,  # type: ignore[arg-type]
+            ts=datetime.now(UTC),
+            issue_date=date,
+        )
+    )
+
+    wants_json = "application/json" in request.headers.get("accept", "")
+    if wants_json:
+        return JSONResponse({"ok": True, "rating": rating, "url": article_url})
+    return RedirectResponse(url=f"/issues/{date}", status_code=303)
+
+
+@app.get("/api/search")
+def api_search(
+    q: str = Query(..., description="subject to research"),
+    admin_token: str | None = Cookie(default=None),
+) -> JSONResponse:
+    """Live subject search ("textbook"): web-search a topic and return
+    JSON cards the page renders inline. Best-effort — an empty list on any
+    failure, never a 500."""
+    _require_admin(admin_token)
+    results = websearch.search_web(q.strip(), max_results=12)
+    return JSONResponse(
+        {
+            "query": q,
+            "results": [
+                {
+                    "url": str(r.url),
+                    "title": r.title,
+                    "blurb": r.blurb,
+                    "source": r.source,
+                    "points": r.points,
+                    "comments": r.comments,
+                    "comments_url": r.comments_url,
+                }
+                for r in results
+            ],
+        }
+    )
+
+
+@app.get("/api/hn")
+def api_hn(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
+    """Live Hacker News front page (rich): points, comments, and a thread
+    link. Best-effort — empty on any failure."""
+    _require_admin(admin_token)
+    stories = hn.fetch_hn_rich(pages=2, limit=20)
+    return JSONResponse(
+        {
+            "results": [
+                {
+                    "url": str(s.url),
+                    "title": s.title,
+                    "blurb": s.blurb,
+                    "source": s.source,
+                    "points": s.points,
+                    "comments": s.comments,
+                    "comments_url": s.comments_url,
+                }
+                for s in stories
+            ],
+        }
+    )
 
 
 # Lambda entry point

@@ -10,7 +10,7 @@ import moto
 import pytest
 
 from newslet.config import settings
-from newslet.contracts import Discovery, FeedbackRow, Issue, Pick
+from newslet.contracts import Discovery, FeedbackRow, Issue, Pick, WebArticle
 
 
 @pytest.fixture
@@ -205,6 +205,96 @@ def test_issue_round_trips_enrichment_fields(dynamo: None) -> None:
     assert len(got.discoveries) == 1
     assert str(got.discoveries[0].url) == "https://newsource.example/x"
     assert got.discoveries[0].source == "New Source"
+
+
+def test_issue_round_trips_web_articles(dynamo: None) -> None:
+    """web_articles (with engagement metadata) survive a put/get round trip."""
+    from newslet import db
+
+    issue = Issue(
+        date="2026-05-19",
+        picks=[Pick(url="https://example.com/1", title="One", blurb="b", score=0.9)],
+        created_at=datetime.now(UTC),
+        web_articles=[
+            WebArticle(
+                url="https://news.ycombinator.com/item?id=1",
+                title="HN story",
+                blurb="discussion",
+                source="Hacker News",
+                points=321,
+                comments=88,
+                comments_url="https://news.ycombinator.com/item?id=1",
+            ),
+            WebArticle(url="https://ex.com/web", title="Web pull", source="Web"),
+        ],
+    )
+    db.put_issue(issue)
+    got = db.get_issue("2026-05-19")
+
+    assert got is not None
+    assert len(got.web_articles) == 2
+    assert got.web_articles[0].points == 321
+    assert got.web_articles[0].comments == 88
+    assert got.web_articles[0].source == "Hacker News"
+    # The second has no engagement data and still round-trips.
+    assert got.web_articles[1].points is None
+
+
+def test_get_issue_tolerates_legacy_issue_without_web_articles(dynamo: None) -> None:
+    """An issue persisted before web_articles existed still loads."""
+    from newslet import db
+
+    # Write a row the old way (no web_articles_json attribute).
+    db._t_issues().put_item(
+        Item={
+            "date": "2026-05-01",
+            "picks_json": "[]",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    got = db.get_issue("2026-05-01")
+    assert got is not None
+    assert got.web_articles == []
+
+
+def test_feedback_ratings_batch_lookup(dynamo: None) -> None:
+    """feedback_ratings returns the current rating per url for one issue."""
+    from newslet import db
+
+    date = "2026-05-20"
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://a.example.com/1",
+            title="A",
+            rating="up",
+            ts=datetime.now(UTC),
+            issue_date=date,
+        )
+    )
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://b.example.com/2",
+            title="B",
+            rating="down",
+            ts=datetime.now(UTC),
+            issue_date=date,
+        )
+    )
+
+    ratings = db.feedback_ratings(
+        [
+            "https://a.example.com/1",
+            "https://b.example.com/2",
+            "https://c.example.com/3",  # never voted
+        ],
+        date,
+    )
+    assert ratings == {
+        "https://a.example.com/1": "up",
+        "https://b.example.com/2": "down",
+    }
+    # Empty input is a cheap no-op.
+    assert db.feedback_ratings([], date) == {}
 
 
 def test_add_feed_normalizes_url(dynamo: None) -> None:

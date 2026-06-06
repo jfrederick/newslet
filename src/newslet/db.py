@@ -18,7 +18,15 @@ from boto3.dynamodb.conditions import Key
 from pydantic import HttpUrl, ValidationError
 
 from newslet.config import settings
-from newslet.contracts import Discovery, Feed, FeedbackRow, Issue, Pick, Profile
+from newslet.contracts import (
+    Discovery,
+    Feed,
+    FeedbackRow,
+    Issue,
+    Pick,
+    Profile,
+    WebArticle,
+)
 
 log = logging.getLogger(__name__)
 
@@ -187,15 +195,20 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
     discoveries_json = json.dumps(
         [json.loads(d.model_dump_json()) for d in issue.discoveries]
     )
+    web_articles_json = json.dumps(
+        [json.loads(w.model_dump_json()) for w in issue.web_articles]
+    )
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
         "created_at": issue.created_at.isoformat(),
         # Persist the enrichment fields so a retry that reuses the stored
-        # issue re-sends with the same subject/intro/discoveries.
+        # issue re-sends with the same subject/intro/discoveries, and the
+        # web view re-renders the same web_articles block.
         "subject": issue.subject,
         "intro": issue.intro,
         "discoveries_json": discoveries_json,
+        "web_articles_json": web_articles_json,
     }
     if manual:
         # Manual ("send now") issues are stored so /rate title lookup and
@@ -229,6 +242,18 @@ def get_issue(date: str) -> Issue | None:
                 item.get("date"),
                 exc,
             )
+    # web_articles is optional and was added after the first issues were
+    # written; validate leniently so an old row (no field) or a single bad
+    # entry never makes the whole issue unreadable.
+    web_articles_raw = json.loads(item.get("web_articles_json", "[]"))
+    web_articles = []
+    for w in web_articles_raw:
+        try:
+            web_articles.append(WebArticle.model_validate(w))
+        except ValidationError as exc:
+            log.warning(
+                "skipping bad web_article in issue %s: %s", item.get("date"), exc
+            )
     return Issue.model_validate(
         {
             "date": item["date"],
@@ -237,6 +262,7 @@ def get_issue(date: str) -> Issue | None:
             "subject": item.get("subject", ""),
             "intro": item.get("intro", ""),
             "discoveries": discoveries,
+            "web_articles": web_articles,
         }
     )
 
@@ -282,6 +308,44 @@ def update_feedback_note(article_url: str, issue_date: str, note: str) -> None:
         ExpressionAttributeNames={"#n": "note"},
         ExpressionAttributeValues={":n": note},
     )
+
+
+def feedback_ratings(urls: list[str], issue_date: str) -> dict[str, str]:
+    """Return ``{article_url: rating}`` for the given urls in one issue.
+
+    Powers the web view's "sticky" vote state — showing which articles you
+    already voted on so the effect of a +/- is visible. Uses ``batch_get_item``
+    (≤100 keys per call) on the ``(article_url, issue_date)`` PK, so it is an
+    exact point-read per article rather than a table scan. Best-effort and
+    lenient: any read hiccup yields a partial/empty map, never an exception.
+    """
+    if not urls:
+        return {}
+    keys = [{"article_url": u, "issue_date": issue_date} for u in dict.fromkeys(urls)]
+    table_name = settings().table_feedback
+    resource = _resource()
+    ratings: dict[str, str] = {}
+    # batch_get_item caps at 100 keys; chunk to stay under it.
+    for start in range(0, len(keys), 100):
+        chunk = keys[start : start + 100]
+        try:
+            resp = resource.batch_get_item(
+                RequestItems={
+                    table_name: {
+                        "Keys": chunk,
+                        "ProjectionExpression": "article_url, rating",
+                    }
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - vote state is decorative; never fail the page
+            log.warning("feedback_ratings batch_get failed: %s", exc)
+            continue
+        for row in resp.get("Responses", {}).get(table_name, []):
+            url = row.get("article_url")
+            rating = row.get("rating")
+            if url and rating:
+                ratings[url] = rating
+    return ratings
 
 
 def _query_feedback_bucket(bucket: str, limit: int) -> list[dict[str, Any]]:

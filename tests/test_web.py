@@ -451,3 +451,233 @@ def test_admin_index_flashes_after_send(client):
     r = client.get("/?sent=1")
     assert r.status_code == 200
     assert "on its way" in r.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Rich issue web view
+# ---------------------------------------------------------------------------
+
+
+def _seed_rich_issue(date="2026-05-21"):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import Issue, Pick, WebArticle
+
+    db.put_issue(
+        Issue(
+            date=date,
+            picks=[
+                Pick(url="https://ex.com/a", title="Alpha Pick", blurb="ab",
+                     source="Test Feed", score=0.9),
+                Pick(url="https://ex.com/b", title="Beta Pick", blurb="bb",
+                     source="Hacker News", score=0.4),
+            ],
+            created_at=datetime.now(UTC),
+            subject="Sharp subject",
+            intro="An intro line.",
+            web_articles=[
+                WebArticle(url="https://ex.com/w", title="Web One", blurb="wb",
+                           source="Open Web"),
+                WebArticle(url="https://news.ycombinator.com/item?id=9",
+                           title="HN Rich", blurb="hb", source="Hacker News",
+                           points=222, comments=33,
+                           comments_url="https://news.ycombinator.com/item?id=9"),
+            ],
+        )
+    )
+    return date
+
+
+def test_rich_issue_view_renders_all_articles(client):
+    client.cookies.set("admin_token", "supersecret")
+    date = _seed_rich_issue()
+    r = client.get(f"/issues/{date}")
+    assert r.status_code == 200
+    # Picks + web articles all present.
+    for title in ["Alpha Pick", "Beta Pick", "Web One", "HN Rich"]:
+        assert title in r.text
+    # Subject + intro rendered.
+    assert "Sharp subject" in r.text
+    assert "An intro line." in r.text
+    # Source filter chips, count, and HN engagement badges.
+    assert 'data-filter="Hacker News"' in r.text
+    assert "4 articles" in r.text
+    assert "222" in r.text  # HN points badge
+    # Vote forms present for voting.
+    assert 'action="/api/vote"' in r.text
+    # Link to the raw email view.
+    assert f"/issues/{date}/email" in r.text
+
+
+def test_rich_issue_view_shows_sticky_vote_state(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import FeedbackRow
+
+    client.cookies.set("admin_token", "supersecret")
+    date = _seed_rich_issue()
+    # Pre-record an upvote on Alpha Pick.
+    db.put_feedback(
+        FeedbackRow(
+            article_url="https://ex.com/a",
+            title="Alpha Pick",
+            rating="up",
+            ts=datetime.now(UTC),
+            issue_date=date,
+        )
+    )
+    r = client.get(f"/issues/{date}")
+    assert r.status_code == 200
+    # The already-voted card carries the sticky class.
+    assert "voted-up" in r.text
+
+
+def test_rich_issue_view_requires_admin(client):
+    date = _seed_rich_issue()
+    r = client.get(f"/issues/{date}")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_issue_view_404_for_missing(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/issues/2099-01-01")
+    assert r.status_code == 404
+
+
+def test_issue_email_subview_renders_email(client):
+    client.cookies.set("admin_token", "supersecret")
+    date = _seed_rich_issue()
+    r = client.get(f"/issues/{date}/email")
+    assert r.status_code == 200
+    # The email view still shows picks and the email footer.
+    assert "Alpha Pick" in r.text
+    assert "picks today" in r.text
+
+
+def test_view_issue_server_rendered_search(client, monkeypatch):
+    from newslet.contracts import WebArticle
+    from newslet.handlers import web
+
+    client.cookies.set("admin_token", "supersecret")
+    date = _seed_rich_issue()
+
+    monkeypatch.setattr(
+        web.websearch,
+        "search_web",
+        lambda q, **k: [
+            WebArticle(url="https://ex.com/found", title="Found Article",
+                       blurb="from search", source="Search Src")
+        ],
+    )
+    r = client.get(f"/issues/{date}", params={"q": "neural nets"})
+    assert r.status_code == 200
+    assert "Found Article" in r.text
+    assert "neural nets" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Vote / search / HN endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_vote_requires_admin(client):
+    r = client.post("/api/vote", data={"url": "https://ex.com/a", "rating": "up",
+                                       "date": "2026-05-21"})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_vote_records_feedback_and_redirects(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/vote",
+        data={"url": "https://ex.com/a", "title": "Alpha", "rating": "up",
+              "date": "2026-05-21"},
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/issues/2026-05-21"
+    ratings = db.feedback_ratings(["https://ex.com/a"], "2026-05-21")
+    assert ratings == {"https://ex.com/a": "up"}
+
+
+def test_vote_returns_json_when_accept_json(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/vote",
+        data={"url": "https://ex.com/a", "title": "Alpha", "rating": "down",
+              "date": "2026-05-21"},
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["rating"] == "down"
+
+
+def test_vote_rejects_bad_rating(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/vote",
+        data={"url": "https://ex.com/a", "rating": "sideways", "date": "2026-05-21"},
+    )
+    assert r.status_code == 400
+
+
+def test_vote_rejects_bad_url(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/vote",
+        data={"url": "not-a-url", "rating": "up", "date": "2026-05-21"},
+    )
+    assert r.status_code == 400
+
+
+def test_api_search_returns_json(client, monkeypatch):
+    from newslet.contracts import WebArticle
+    from newslet.handlers import web
+
+    client.cookies.set("admin_token", "supersecret")
+    monkeypatch.setattr(
+        web.websearch,
+        "search_web",
+        lambda q, **k: [
+            WebArticle(url="https://ex.com/r1", title="Result 1", blurb="b",
+                       source="Src"),
+        ],
+    )
+    r = client.get("/api/search", params={"q": "rust async"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["query"] == "rust async"
+    assert data["results"][0]["url"] == "https://ex.com/r1"
+
+
+def test_api_search_requires_admin(client):
+    r = client.get("/api/search", params={"q": "x"})
+    assert r.status_code == 303
+
+
+def test_api_hn_returns_json(client, monkeypatch):
+    from newslet.contracts import WebArticle
+    from newslet.handlers import web
+
+    client.cookies.set("admin_token", "supersecret")
+    monkeypatch.setattr(
+        web.hn,
+        "fetch_hn_rich",
+        lambda **k: [
+            WebArticle(url="https://news.ycombinator.com/item?id=1", title="HN 1",
+                       blurb="", source="Hacker News", points=10, comments=2,
+                       comments_url="https://news.ycombinator.com/item?id=1"),
+        ],
+    )
+    r = client.get("/api/hn")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["results"][0]["points"] == 10
+    assert data["results"][0]["source"] == "Hacker News"
