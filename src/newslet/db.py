@@ -19,6 +19,7 @@ from pydantic import HttpUrl, ValidationError
 
 from newslet.config import settings
 from newslet.contracts import (
+    Article,
     Config,
     Discovery,
     Feed,
@@ -26,6 +27,7 @@ from newslet.contracts import (
     Issue,
     Pick,
     Profile,
+    Subscription,
     WebArticle,
 )
 
@@ -33,6 +35,10 @@ log = logging.getLogger(__name__)
 
 _SEEN_TTL_SECONDS = 21 * 86400
 _FEEDBACK_GSI = "feedback-by-ts"
+# Received-newsletter rows expire after 30d — comfortably past the 24h digest
+# window plus any retry/backfill, while keeping the table from growing forever.
+_INBOX_TTL_SECONDS = 30 * 86400
+_INBOX_GSI = "inbox-by-ts"
 
 
 def _feedback_bucket(ts: datetime) -> str:
@@ -42,6 +48,11 @@ def _feedback_bucket(ts: datetime) -> str:
     sharding avoids the documented hot-partition anti-pattern from a
     constant string PK without the complexity of monthly shards.
     """
+    return ts.strftime("%Y")
+
+
+def _inbox_bucket(ts: datetime) -> str:
+    """Per-year shard for the recent-inbox GSI — same rationale as feedback."""
     return ts.strftime("%Y")
 
 
@@ -76,6 +87,14 @@ def _t_issues() -> Any:
 
 def _t_feedback() -> Any:
     return _resource().Table(settings().table_feedback)
+
+
+def _t_subscriptions() -> Any:
+    return _resource().Table(settings().table_subscriptions)
+
+
+def _t_inbox() -> Any:
+    return _resource().Table(settings().table_inbox)
 
 
 def _hash_url(url: str) -> str:
@@ -494,3 +513,183 @@ def list_issues(limit: int = 30) -> list[dict[str, Any]]:
         )
     rows.sort(key=lambda r: r["date"], reverse=True)
     return rows[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Newsletter subscriptions (inbound-email data source)
+# ---------------------------------------------------------------------------
+
+
+def _subscription_from_item(item: dict[str, Any]) -> Subscription:
+    """Build a Subscription from a raw row; lenient on optional fields."""
+    return Subscription(
+        address=item["address"],
+        source=item.get("source", ""),
+        status=item.get("status", "pending"),
+        created_at=datetime.fromisoformat(item["created_at"]),
+        confirmed_at=(
+            datetime.fromisoformat(item["confirmed_at"])
+            if item.get("confirmed_at")
+            else None
+        ),
+        last_received_at=(
+            datetime.fromisoformat(item["last_received_at"])
+            if item.get("last_received_at")
+            else None
+        ),
+    )
+
+
+def add_subscription(source: str, *, address: str) -> Subscription:
+    """Create a pending subscription bound to a freshly generated address.
+
+    ``address`` is stored lowercased so the inbound router (which lowercases
+    SES recipients) always matches regardless of how the sender cased it.
+    """
+    addr = address.strip().lower()
+    now = datetime.now(UTC)
+    _t_subscriptions().put_item(
+        Item={
+            "address": addr,
+            "source": source,
+            "status": "pending",
+            "created_at": now.isoformat(),
+        }
+    )
+    return Subscription(address=addr, source=source, status="pending", created_at=now)
+
+
+def list_subscriptions() -> list[Subscription]:
+    """All subscriptions, newest first; skips-and-logs bad/legacy rows."""
+    items = _t_subscriptions().scan().get("Items", [])
+    subs: list[Subscription] = []
+    for item in items:
+        try:
+            subs.append(_subscription_from_item(item))
+        except (ValidationError, KeyError, ValueError) as exc:
+            log.warning("skipping bad subscription row %r: %s", item.get("address"), exc)
+    subs.sort(key=lambda s: s.created_at, reverse=True)
+    return subs
+
+
+def get_subscription(address: str) -> Subscription | None:
+    """Look up one subscription by address (case-insensitive)."""
+    resp = _t_subscriptions().get_item(Key={"address": address.strip().lower()})
+    item = resp.get("Item")
+    if not item:
+        return None
+    try:
+        return _subscription_from_item(item)
+    except (ValidationError, KeyError, ValueError) as exc:
+        log.warning("bad subscription row for %r: %s", address, exc)
+        return None
+
+
+def delete_subscription(address: str) -> None:
+    _t_subscriptions().delete_item(Key={"address": address.strip().lower()})
+
+
+def mark_subscription_confirmed(address: str, *, when: datetime | None = None) -> None:
+    """Flip a subscription to ``confirmed`` after a successful opt-in follow.
+
+    ``status`` is a DynamoDB reserved word, so it is aliased via
+    ExpressionAttributeNames.
+    """
+    when = when or datetime.now(UTC)
+    _t_subscriptions().update_item(
+        Key={"address": address.strip().lower()},
+        UpdateExpression="SET #s = :s, confirmed_at = :c",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":s": "confirmed", ":c": when.isoformat()},
+    )
+
+
+def touch_subscription(address: str, *, when: datetime | None = None) -> None:
+    """Record that mail was just received for this subscription."""
+    when = when or datetime.now(UTC)
+    _t_subscriptions().update_item(
+        Key={"address": address.strip().lower()},
+        UpdateExpression="SET last_received_at = :t",
+        ExpressionAttributeValues={":t": when.isoformat()},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Inbox (received newsletter emails -> extracted article candidates)
+# ---------------------------------------------------------------------------
+
+
+def put_inbox_email(
+    *,
+    message_id: str,
+    source: str,
+    address: str,
+    articles: list[Article],
+    received_at: datetime,
+) -> None:
+    """Persist one received newsletter's extracted article candidates.
+
+    Stored as a single row per email (articles as JSON) with a TTL, plus a
+    per-year ``bucket`` so :func:`recent_inbox_articles` can read a time range
+    off the GSI without scanning. A blank ``message_id`` (shouldn't happen from
+    SES) gets a synthetic key so the put never silently no-ops.
+    """
+    import uuid
+
+    mid = message_id or ("inbox-" + uuid.uuid4().hex)
+    articles_json = json.dumps([json.loads(a.model_dump_json()) for a in articles])
+    expires_at = int(received_at.timestamp() + _INBOX_TTL_SECONDS)
+    _t_inbox().put_item(
+        Item={
+            "message_id": mid,
+            "received_at": received_at.isoformat(),
+            "source": source,
+            "address": address,
+            "articles_json": articles_json,
+            "bucket": _inbox_bucket(received_at),
+            "expires_at": expires_at,
+        }
+    )
+
+
+def _query_inbox_bucket(bucket: str, since: datetime) -> list[dict[str, Any]]:
+    resp = _t_inbox().query(
+        IndexName=_INBOX_GSI,
+        KeyConditionExpression=Key("bucket").eq(bucket)
+        & Key("received_at").gte(since.isoformat()),
+    )
+    return resp.get("Items", [])
+
+
+def recent_inbox_articles(since: datetime, *, now: datetime | None = None) -> list[Article]:
+    """Article candidates from newsletters received since ``since``.
+
+    Reads the current-year shard and, when ``since`` falls in the prior year
+    (the early-January edge), the previous one too — mirroring
+    :func:`recent_feedback`. Lenient: a bad row or article is skipped, never
+    fatal, since the digest must not break on one malformed inbound email.
+    """
+    now = now or datetime.now(UTC)
+    items = _query_inbox_bucket(_inbox_bucket(now), since)
+    if _inbox_bucket(since) != _inbox_bucket(now):
+        items += _query_inbox_bucket(_inbox_bucket(since), since)
+
+    articles: list[Article] = []
+    seen: set[str] = set()
+    for item in items:
+        try:
+            raw = json.loads(item.get("articles_json", "[]"))
+        except (json.JSONDecodeError, TypeError):
+            log.warning("skipping inbox row with bad articles_json: %r", item.get("message_id"))
+            continue
+        for entry in raw:
+            try:
+                art = Article.model_validate(entry)
+            except ValidationError:
+                continue
+            key = str(art.url)
+            if key in seen:
+                continue
+            seen.add(key)
+            articles.append(art)
+    return articles

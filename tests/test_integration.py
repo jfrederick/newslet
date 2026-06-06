@@ -94,6 +94,32 @@ def aws(env):
             ],
             BillingMode="PAY_PER_REQUEST",
         )
+        ddb.create_table(
+            TableName="newslet-subscriptions",
+            KeySchema=[{"AttributeName": "address", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "address", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName="newslet-inbox",
+            KeySchema=[{"AttributeName": "message_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[
+                {"AttributeName": "message_id", "AttributeType": "S"},
+                {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "received_at", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "inbox-by-ts",
+                    "KeySchema": [
+                        {"AttributeName": "bucket", "KeyType": "HASH"},
+                        {"AttributeName": "received_at", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
         yield
 
 
@@ -581,6 +607,52 @@ def test_run_digest_merges_hn_and_adds_web_block(env, monkeypatch):
     assert "https://feed.example/rss-1" in seen_candidates[0]
     # The web block is attached to the issue.
     assert [str(w.url) for w in issue.web_articles] == ["https://web.example/1"]
+
+
+def test_run_digest_merges_subscribed_newsletters(env, monkeypatch):
+    """Newsletter-extracted articles join the ranking pool, best-effort and
+    seen-filtered like HN."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.handlers import digest
+
+    rss = Article(url="https://feed.example/rss-1", title="RSS One", summary="s",
+                  source="Feed", published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [rss])
+
+    nl_fresh = Article(url="https://news.example/story", title="Newsletter Story",
+                       summary="", source="The Daily", published=datetime.now(UTC))
+    nl_seen = Article(url="https://news.example/old", title="Old Story", summary="",
+                      source="The Daily", published=datetime.now(UTC))
+
+    seen_candidates: list[list[str]] = []
+
+    def fake_rank(*, candidates, **k):
+        seen_candidates.append([str(c.url) for c in candidates])
+        return RankResponse(picks=[
+            Pick(url=c.url, title=c.title, blurb="b", source=c.source, score=0.5)
+            for c in candidates
+        ])
+
+    issue, _ = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: u == "https://news.example/old",
+        rank_fn=fake_rank,
+        summarize_fn=lambda picks, **k: ("subj", "intro"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=lambda *a, **k: [],
+        newsletters_fn=lambda since, **k: [nl_fresh, nl_seen],
+    )
+
+    pool = seen_candidates[0]
+    # The fresh newsletter article reached the ranker; the already-seen one
+    # was filtered out before ranking.
+    assert "https://news.example/story" in pool
+    assert "https://news.example/old" not in pool
+    assert "https://feed.example/rss-1" in pool
 
 
 def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):

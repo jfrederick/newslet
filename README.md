@@ -13,6 +13,14 @@ RSS/HN picks and max open-web results), along with a **variety dial** that
 lets the web search roam from strictly on-topic to exploratory, related
 ancillary areas.
 
+You can also **subscribe to existing email newsletters** as a source: the
+admin UI mints a working inbound address you paste into any newsletter's
+signup form. SES receives the mail 24/7, an inbound Lambda extracts the
+article links, and they join the daily ranking pool. Double opt-in
+"please confirm your subscription" emails are detected and confirmed
+automatically. (This is the one feature that needs a domain — see
+[Optional: subscribing to newsletters](#optional-subscribing-to-newsletters).)
+
 The email links generically to the **newslet homepage** — a separate,
 richer web experience: a large aggregation of ranked picks plus an
 open-web block, with `+`/`−` voting (upvote keeps, downvote removes) that
@@ -31,12 +39,15 @@ EventBridge cron (10:00 UTC, email) ─┴▶ digest Lambda ──▶ Resend (em
                                            │
                                            ▼
                                        DynamoDB ◀── web Lambda ◀── HTTP API
-                                                                       │
-                                                          homepage + admin + /rate
+                                       ▲                               │
+                                       │                  homepage + admin + /rate
+   newsletter email ──▶ SES ──▶ S3 ──▶ inbound Lambda
 ```
 
-Five DynamoDB tables (`Feeds`, `Profile`, `SeenArticles` w/ 21d TTL,
-`Issues`, `Feedback`), two Lambdas, one HTTP API. SAM-deployed.
+Seven DynamoDB tables (`Feeds`, `Profile`, `SeenArticles` w/ 21d TTL,
+`Issues`, `Feedback`, `Subscriptions`, `Inbox` w/ 30d TTL), three Lambdas
+(digest, web, inbound), one HTTP API, and — for the newsletter source —
+SES inbound + an S3 bucket. SAM-deployed.
 
 ## Local development
 
@@ -143,6 +154,60 @@ EventBridge fires the digest Lambda twice daily: a homepage rebuild at
 the crons in `infra/template.yaml` if you want different times of day
 (EventBridge cron is always UTC).
 
+### Optional: subscribing to newsletters
+
+newslet can subscribe to existing email newsletters and fold their links
+into the daily ranking. This needs a domain (or subdomain) you control so
+SES can receive mail — everything else is already deployed.
+
+SES inbound is only available in some regions (`us-east-1`, `us-west-2`,
+`eu-west-1`); deploy the stack in one of them for this feature.
+
+1. **Pick a mail domain** — a dedicated subdomain is cleanest, e.g.
+   `inbox.yourdomain.com`, so newsletter mail can't interfere with your
+   normal email.
+
+2. **Redeploy with the domain set** so the SES receipt rule is created:
+
+   ```bash
+   cd infra
+   sam build && sam deploy --parameter-overrides MailDomain=inbox.yourdomain.com
+   ```
+
+3. **Verify the domain in SES** and **point its MX record at SES**:
+
+   ```
+   inbox.yourdomain.com.  MX  10  inbound-smtp.us-east-1.amazonaws.com.
+   ```
+
+   (Use your stack's region.) Add the domain-verification TXT record SES
+   gives you, too.
+
+4. **Activate the receipt rule set** (CloudFormation creates it but cannot
+   mark it active):
+
+   ```bash
+   aws ses set-active-receipt-rule-set --region $REGION \
+     --rule-set-name "$(aws cloudformation describe-stacks \
+       --stack-name newslet --region $REGION \
+       --query 'Stacks[0].Outputs[?OutputKey==`MailDomain`].OutputValue' \
+       --output text >/dev/null; echo newslet-inbound)"
+   ```
+
+   (The rule set is named `<stack-name>-inbound`.)
+
+5. **Add subscriptions in the admin UI.** Under **Newsletter
+   subscriptions**, type a label and click **Generate address**. Paste the
+   shown address (e.g. `n-a8f3c2d1@inbox.yourdomain.com`) into the
+   newsletter's signup form. If it sends a "confirm your subscription"
+   email, newslet follows the link automatically and the subscription flips
+   to **confirmed**; otherwise it stays **pending** until the first mail
+   arrives. From then on, that newsletter's links compete in the daily
+   ranking like any other source.
+
+Raw inbound mail lands in the `InboundEmailBucket` S3 bucket (auto-expired
+after 30 days) and extracted links live in the `Inbox` table (30-day TTL).
+
 ### Optional: auto-deploy on merge to main
 
 Once you're happy with the manual flow, follow
@@ -176,10 +241,12 @@ resolve a lockfile.
 - `src/newslet/feeds.py` — feedparser wrapper, 24h filter, dedup via injected `is_seen`
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
 - `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
+- `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers
 - `src/newslet/rank.py` — Anthropic call with prompt caching
 - `src/newslet/email_render.py` — Jinja → `(subject, html)`
 - `src/newslet/handlers/digest.py` — scheduled Lambda + dry-run CLI
+- `src/newslet/handlers/inbound.py` — SES inbound newsletter Lambda
 - `src/newslet/handlers/web.py` — FastAPI + Mangum (admin UI, `/rate`)
 - `infra/template.yaml` — SAM stack
 - `DESIGN.md` — interface contract every module follows
