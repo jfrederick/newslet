@@ -52,6 +52,13 @@ _DEFAULT_MAX_WEB = 5
 # How many HN front pages to pull into the ranking candidate pool.
 _HN_PAGES = 20
 
+# The web block uses a fast model with few search rounds: Opus with 3 rounds
+# spends its token budget on tool calls and never emits the final JSON, so the
+# block came back empty in production. Haiku + 2 rounds is what the live
+# /api/search path proved reliable.
+_WEB_SEARCH_MODEL = "claude-haiku-4-5-20251001"
+_WEB_SEARCHES = 2
+
 # Reserved issues-table key for the standalone web homepage aggregation.
 HOME_KEY = "home"
 
@@ -129,6 +136,7 @@ def run_digest(
     min_picks: int = 5,
     max_web: int = _DEFAULT_MAX_WEB,
     web_variety: int = 30,
+    web_model: str | None = None,
     now: datetime | None = None,
 ) -> tuple[Issue, list[Article]]:
     """Pure pipeline: fetch → rank → summarize → discover → web → assemble Issue.
@@ -207,6 +215,8 @@ def run_digest(
                 _web_search_query(profile.markdown),
                 max_results=max_web,
                 variety=web_variety,
+                model=web_model or _WEB_SEARCH_MODEL,
+                max_searches=_WEB_SEARCHES,
             )
         except Exception:  # noqa: BLE001 - best effort, never block the send
             log.exception("web search failed; sending without the web block")

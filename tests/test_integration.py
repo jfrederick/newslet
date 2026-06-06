@@ -601,11 +601,12 @@ def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):
         return RankResponse(picks=[Pick(url=art.url, title="A", blurb="b",
                                         source="F", score=0.5)])
 
-    def fake_web(query, *, max_results, variety, **k):
+    def fake_web(query, *, max_results, variety, model, max_searches, **k):
         seen["max_web"] = max_results
         seen["variety"] = variety
-        # The web block must NOT be handed the feed-domain exclusion list
-        # (that is discovery's job); excluding it would empty the block.
+        # A fast model + few rounds (the reliable web_search config), and NO
+        # feed-domain exclusion (that is discovery's job).
+        seen["model"] = model
         seen["exclude_hosts"] = k.get("exclude_hosts")
         return []
 
@@ -625,8 +626,8 @@ def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):
         web_variety=85,
     )
     assert seen == {
-        "max_picks": 7, "min_picks": 4, "max_web": 3,
-        "variety": 85, "exclude_hosts": None,
+        "max_picks": 7, "min_picks": 4, "max_web": 3, "variety": 85,
+        "model": "claude-haiku-4-5-20251001", "exclude_hosts": None,
     }
 
 
