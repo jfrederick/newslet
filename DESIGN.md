@@ -92,6 +92,39 @@ def rank(
   failure with a stricter instruction.
 - `client` is injectable for tests.
 
+### `newslet.hn`
+
+Hacker News as a content-rich source via the Algolia HN Search API. The
+network edge is an injected `fetch(url) -> dict`.
+
+```python
+def fetch_hn_articles(
+    pages: int = 20, *, fetch=None, rank_cap: int = 120,
+) -> list[Article]: ...   # ranking candidates, richest summaries, points-sorted
+def fetch_hn_rich(
+    pages: int = 2, *, fetch=None, limit: int = 20,
+) -> list[WebArticle]: ...  # web-view panel: points/comments/thread link
+```
+
+Best-effort: a failing page is skipped, total failure returns `[]`. Text/Ask
+posts (no `url`) fall back to their HN thread link.
+
+### `newslet.websearch`
+
+On-demand web search via Claude's `web_search` tool. Powers the digest's
+"from around the web" block and the web view's subject search box. The
+Anthropic `client` is injectable.
+
+```python
+def search_web(
+    query: str, *, max_results: int = 20, recent: bool = True,
+    client=None, exclude_hosts: list[str] | None = None,
+) -> list[WebArticle]: ...
+```
+
+Returns `[]` on any failure (best-effort). Reuses `discovery`'s JSON
+extraction helpers.
+
 ### `newslet.email_render`
 
 ```python
@@ -137,7 +170,14 @@ Routes:
 - `DELETE /api/feeds` — `?url=…` → 204
 - `PUT /api/profile` — `{markdown}` → 200
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
-- `GET /issues/{date}` — renders the stored issue using `email_render`
+- `GET /issues/{date}` — rich web view (`read.html.j2`): ≈60 articles, source
+  filter, sticky +/- voting, subject search. Optional `?q=` server-renders a
+  web search.
+- `GET /issues/{date}/email` — the as-sent email HTML (via `email_render`)
+- `POST /api/vote` — `{url, title?, rating, date}`, admin-cookie authed; writes
+  a `FeedbackRow` (same shape as `/rate`). JSON for fetch UI, 303 for no-JS.
+- `GET /api/search` — `?q=` admin-authed live web search → JSON cards
+- `GET /api/hn` — admin-authed live Hacker News front page → JSON cards
 
 ## DynamoDB tables
 
@@ -146,7 +186,7 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S, always `"me"`) | — | `markdown`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `discoveries_json`, `web_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 
 ## Claude prompt JSON shape

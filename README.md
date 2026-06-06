@@ -1,11 +1,18 @@
 # newslet
 
 A personal daily RSS newsletter. Every morning at 10:00 UTC, a Lambda
-fetches the last 24h from your RSS feeds, asks Claude to rank and
-summarize them against a profile you maintain, and emails you the top
-~10 picks via Resend. Each pick has a `+` / `−` button you can tap
-from your inbox; clicks land in DynamoDB and become examples in
-tomorrow's prompt.
+fetches the last 24h from your RSS feeds **and the Hacker News front
+pages** (via the Algolia API, so stories arrive with real engagement
+data, not just a title), asks Claude to rank and summarize them against
+a profile you maintain, and emails you the top picks via Resend. Each
+pick has a `+` / `−` button you can tap from your inbox; clicks land in
+DynamoDB and become examples in tomorrow's prompt.
+
+The email links to a **rich web view** of each issue — up to 40 ranked
+picks plus 20 articles pulled live from the open web (≈60 total), with
+source filters, sticky `+`/`−` voting that feeds the same ranking loop,
+and a "research a subject" box that runs a fresh web search on whatever
+topic you type.
 
 ## Architecture
 
@@ -36,6 +43,10 @@ python3.12 -m venv .venv
 # Render a sample email to out/email.html (no network, no AWS)
 .venv/bin/python scripts/dry_run.py
 open out/email.html
+
+# Render the rich issue web view to out/read.html (moto-backed, no network)
+.venv/bin/python scripts/preview_read.py
+open out/read.html
 ```
 
 ## Deploying
@@ -149,6 +160,8 @@ resolve a lockfile.
 - `src/newslet/contracts.py` — pydantic models (Article, Pick, Issue, FeedbackRow, …)
 - `src/newslet/tokens.py` — HMAC sign/verify for `/rate` links
 - `src/newslet/feeds.py` — feedparser wrapper, 24h filter, dedup via injected `is_seen`
+- `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
+- `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
 - `src/newslet/db.py` — boto3 DynamoDB wrappers
 - `src/newslet/rank.py` — Anthropic call with prompt caching
 - `src/newslet/email_render.py` — Jinja → `(subject, html)`

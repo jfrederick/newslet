@@ -154,8 +154,10 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     focused on the behaviour it asserts.
     """
     from newslet import discovery as discovery_mod
+    from newslet import hn as hn_mod
     from newslet import summarize as summarize_mod
     from newslet import tune as tune_mod
+    from newslet import websearch as websearch_mod
 
     summarize = summarize or (lambda picks, **_: ("", ""))
     discoveries = discoveries if discoveries is not None else (lambda *_a, **_k: [])
@@ -163,6 +165,10 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     monkeypatch.setattr(summarize_mod, "summarize_issue", summarize)
     monkeypatch.setattr(discovery_mod, "find_discoveries", discoveries)
     monkeypatch.setattr(tune_mod, "tune_profile", tune)
+    # The HN source and the web-search block both hit the network in
+    # production; stub them to offline empties so the pipeline stays offline.
+    monkeypatch.setattr(hn_mod, "fetch_hn_articles", lambda *a, **k: [])
+    monkeypatch.setattr(websearch_mod, "search_web", lambda *a, **k: [])
 
 
 def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
@@ -512,11 +518,100 @@ def test_run_digest_drops_already_seen_discovery(env, monkeypatch):
         ),
         summarize_fn=lambda picks, **k: ("subj", "intro"),
         discovery_fn=fake_discovery,
+        hn_fn=lambda *a, **k: [],
+        websearch_fn=lambda *a, **k: [],
     )
 
     urls = [str(d.url) for d in issue.discoveries]
     assert fresh_url in urls
     assert seen_url not in urls
+
+
+def test_run_digest_merges_hn_and_adds_web_block(env, monkeypatch):
+    """HN candidates join the ranking pool and the web-search block lands on
+    the issue; both are seen-filtered and best-effort."""
+    from newslet import feeds
+    from newslet.contracts import (
+        Article,
+        Pick,
+        Profile,
+        RankResponse,
+        WebArticle,
+    )
+    from newslet.handlers import digest
+
+    rss = Article(url="https://feed.example/rss-1", title="RSS One", summary="s",
+                  source="Feed", published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [rss])
+
+    hn_art = Article(url="https://news.ycombinator.com/item?id=1", title="HN One",
+                     summary="500 points", source="Hacker News",
+                     published=datetime.now(UTC))
+
+    seen_candidates: list[list[str]] = []
+
+    def fake_rank(*, candidates, **k):
+        seen_candidates.append([str(c.url) for c in candidates])
+        # Pick one from each source to prove HN reached the ranker.
+        return RankResponse(picks=[
+            Pick(url=c.url, title=c.title, blurb="b", source=c.source, score=0.5)
+            for c in candidates
+        ])
+
+    issue, _ = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="I like systems.", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: False,
+        rank_fn=fake_rank,
+        summarize_fn=lambda picks, **k: ("subj", "intro"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [hn_art],
+        websearch_fn=lambda *a, **k: [
+            WebArticle(url="https://web.example/1", title="Web One", source="Web"),
+        ],
+    )
+
+    # HN candidate was merged into the pool the ranker saw.
+    assert "https://news.ycombinator.com/item?id=1" in seen_candidates[0]
+    assert "https://feed.example/rss-1" in seen_candidates[0]
+    # The web block is attached to the issue.
+    assert [str(w.url) for w in issue.web_articles] == ["https://web.example/1"]
+
+
+def test_run_digest_drops_seen_web_article(env, monkeypatch):
+    """A web-search result already in the seen-store is filtered, like
+    discoveries."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse, WebArticle
+    from newslet.handlers import digest
+
+    art = Article(url="https://feed.example/a", title="A", summary="s", source="F",
+                  published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [art])
+
+    seen = "https://web.example/seen"
+    fresh = "https://web.example/fresh"
+
+    issue, _ = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: u == seen,
+        rank_fn=lambda **k: RankResponse(
+            picks=[Pick(url=art.url, title="A", blurb="b", source="F", score=0.5)]
+        ),
+        summarize_fn=lambda picks, **k: ("s", "i"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=lambda *a, **k: [
+            WebArticle(url=seen, title="seen", source="W"),
+            WebArticle(url=fresh, title="fresh", source="W"),
+        ],
+    )
+    urls = [str(w.url) for w in issue.web_articles]
+    assert fresh in urls
+    assert seen not in urls
 
 
 def test_manual_run_sends_but_stays_invisible_to_cadence(aws, monkeypatch):
