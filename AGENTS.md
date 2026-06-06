@@ -95,10 +95,12 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
     links generically to the homepage.
   - The **homepage** (`/`, `read.html.j2`) is the rich, browse-everything web
     experience: a separate aggregation stored under the reserved issue key
-    `"home"` (see `digest.HOME_KEY`). There is **no refresh button** — the
-    page auto-regenerates when the stored edition is missing or not from today
-    (client kicks `/api/home/refresh` → async digest `{"home": true}`, polls
-    `/api/home/status`, reloads). Voting uses `/api/vote` (admin cookie),
+    `"home"` (see `digest.HOME_KEY`). There is **no refresh button** — a
+    scheduled EventBridge rule rebuilds it daily at 09:45 UTC (a
+    `{"home": true}` digest run, 15 min before the email), and the page also
+    auto-regenerates on demand when the stored edition is missing or not from
+    today (client kicks `/api/home/refresh` → async digest `{"home": true}`,
+    polls `/api/home/status`, reloads). Voting uses `/api/vote` (admin cookie),
     same `FeedbackRow` shape as `/rate`; an **upvote** is sticky and a
     **downvote removes** the article from the page (and it stays gone — the
     home view drops already-downvoted articles).

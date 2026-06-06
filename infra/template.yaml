@@ -149,6 +149,16 @@ Resources:
           PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
           CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
       Events:
+        # Rebuild the standalone web homepage (the "home" aggregation) 15
+        # minutes before the email goes out, so it is fresh and waiting when
+        # the email's "Open newslet" link is clicked. Input is delivered as
+        # the Lambda event, routing to digest._run_home.
+        HomeRefreshSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(45 9 * * ? *)
+            Description: Rebuild the web homepage daily at 09:45 UTC (before the email)
+            Input: '{"home": true}'
         DailySchedule:
           Type: Schedule
           Properties:
