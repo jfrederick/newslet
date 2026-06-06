@@ -1,6 +1,22 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Newslet - daily RSS newsletter app (two Lambdas + HttpApi + DynamoDB)
+Description: Newslet - daily RSS newsletter app (Lambdas + HttpApi + DynamoDB + SES inbound)
+
+Parameters:
+  MailDomain:
+    Type: String
+    Default: ''
+    Description: >-
+      Domain (or subdomain) SES receives newsletter mail on, e.g.
+      inbox.example.com. Leave empty to deploy the inbound infrastructure
+      without activating SES reception — wire up the domain (verify it in SES,
+      point its MX at SES) and redeploy with this set to start receiving.
+
+Conditions:
+  # The SES receipt-rule resources are only created once a mail domain is
+  # supplied; everything else (bucket, tables, inbound Lambda) deploys either
+  # way so the code path is in place and just needs DNS to go live.
+  HasMailDomain: !Not [!Equals [!Ref MailDomain, '']]
 
 Globals:
   Function:
@@ -101,6 +117,79 @@ Resources:
           Projection:
             ProjectionType: ALL
 
+  SubscriptionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: address
+          AttributeType: S
+      KeySchema:
+        - AttributeName: address
+          KeyType: HASH
+
+  InboxTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: message_id
+          AttributeType: S
+        - AttributeName: bucket
+          AttributeType: S
+        - AttributeName: received_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: message_id
+          KeyType: HASH
+      # GSI gives a "last 24h of received newsletters" range read without a
+      # scan; bucket is the year (mirrors FeedbackTable) to avoid a hot
+      # partition. Rows carry a 30d TTL on expires_at.
+      GlobalSecondaryIndexes:
+        - IndexName: inbox-by-ts
+          KeySchema:
+            - AttributeName: bucket
+              KeyType: HASH
+            - AttributeName: received_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  # ---------- Inbound email (SES -> S3 -> Lambda) ----------
+  InboundEmailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Raw inbound MIME is transient: SES writes it, the inbound Lambda reads
+      # it once. Expire objects after 30d so the bucket can't grow forever.
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-raw-email
+            Status: Enabled
+            ExpirationInDays: 30
+            Prefix: inbound/
+
+  InboundEmailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref InboundEmailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # SES's receipt-rule S3 action needs PutObject; scope it to this
+          # account so another account's SES can't write into the bucket.
+          - Sid: AllowSESPuts
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub 'arn:aws:s3:::${InboundEmailBucket}/*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
   # ---------- Lambda Functions ----------
   DigestFunction:
     Type: AWS::Serverless::Function
@@ -123,6 +212,10 @@ Resources:
             TableName: !Ref IssuesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref FeedbackTable
+        # The digest folds subscribed-newsletter links (stored by the inbound
+        # Lambda) into its ranking pool, so it reads the inbox table.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InboxTable
         # Secrets (anthropic/resend keys, admin token, signing key) are
         # SecureString params under /newslet/*. CloudFormation's ssm:
         # dynamic ref refuses SecureString and ssm-secure: isn't
@@ -144,6 +237,7 @@ Resources:
           TABLE_SEEN: !Ref SeenArticlesTable
           TABLE_ISSUES: !Ref IssuesTable
           TABLE_FEEDBACK: !Ref FeedbackTable
+          TABLE_INBOX: !Ref InboxTable
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
           PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
@@ -180,6 +274,9 @@ Resources:
             TableName: !Ref FeedbackTable
         - DynamoDBCrudPolicy:
             TableName: !Ref IssuesTable
+        # The admin UI creates/lists/deletes newsletter subscriptions.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SubscriptionsTable
         - SSMParameterReadPolicy:
             ParameterName: newslet/*
         # Lets the admin "send now" button async-invoke the digest Lambda.
@@ -207,6 +304,10 @@ Resources:
           TABLE_SEEN: !Ref SeenArticlesTable
           TABLE_ISSUES: !Ref IssuesTable
           TABLE_FEEDBACK: !Ref FeedbackTable
+          TABLE_SUBSCRIPTIONS: !Ref SubscriptionsTable
+          # Lets the admin UI mint addresses under the right domain (and grey
+          # out the form when no domain is configured yet).
+          MAIL_DOMAIN: !Ref MailDomain
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
           CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
@@ -227,6 +328,94 @@ Resources:
             Method: ANY
             Path: /{proxy+}
 
+  # Receives newsletter emails: SES drops raw MIME in S3 and invokes this
+  # function, which parses the mail, matches it to a subscription, auto-confirms
+  # double opt-ins, and stores extracted links for the digest's ranking pool.
+  InboundFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: newslet.handlers.inbound.handler
+      FunctionName: !Sub '${AWS::StackName}-inbound'
+      Timeout: 60
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SubscriptionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InboxTable
+        - S3ReadPolicy:
+            BucketName: !Ref InboundEmailBucket
+        - SSMParameterReadPolicy:
+            ParameterName: newslet/*
+        - Statement:
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
+      Environment:
+        Variables:
+          TABLE_SUBSCRIPTIONS: !Ref SubscriptionsTable
+          TABLE_INBOX: !Ref InboxTable
+          INBOX_BUCKET: !Ref InboundEmailBucket
+          MAIL_DOMAIN: !Ref MailDomain
+          # settings() eagerly resolves all config (incl. the SSM secrets) at
+          # cold start, so the inbound function needs the same from/to/model
+          # values even though it never sends mail.
+          FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
+          TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
+          CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
+
+  # Allows SES to invoke the inbound function (the receipt rule's Lambda action).
+  InboundFunctionSesPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InboundFunction
+      Action: lambda:InvokeFunction
+      Principal: ses.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ---------- SES inbound receipt rules (only when a domain is configured) ----------
+  # NOTE: CloudFormation can create a receipt rule set but cannot mark it the
+  # *active* one. After deploy, run:
+  #   aws ses set-active-receipt-rule-set --rule-set-name <StackName>-inbound
+  # (and verify the domain + point its MX at inbound-smtp.<region>.amazonaws.com).
+  InboundRuleSet:
+    Type: AWS::SES::ReceiptRuleSet
+    Condition: HasMailDomain
+    Properties:
+      RuleSetName: !Sub '${AWS::StackName}-inbound'
+
+  InboundReceiptRule:
+    Type: AWS::SES::ReceiptRule
+    Condition: HasMailDomain
+    # The S3 action fails unless the bucket policy and the SES invoke
+    # permission already exist.
+    DependsOn:
+      - InboundEmailBucketPolicy
+      - InboundFunctionSesPermission
+    Properties:
+      RuleSetName: !Ref InboundRuleSet
+      Rule:
+        Name: store-and-process
+        Enabled: true
+        ScanEnabled: true
+        TlsPolicy: Optional
+        # Catch-all on the domain: every generated address (n-xxxx@domain)
+        # routes here, and the Lambda matches the recipient to a subscription.
+        Recipients:
+          - !Ref MailDomain
+        Actions:
+          # Order matters: store the raw message first, then invoke the Lambda
+          # (which reads it back from S3 by messageId).
+          - S3Action:
+              BucketName: !Ref InboundEmailBucket
+              ObjectKeyPrefix: inbound/
+          - LambdaAction:
+              FunctionArn: !GetAtt InboundFunction.Arn
+              InvocationType: Event
+
 Outputs:
   ApiUrl:
     Description: HTTP API invoke URL
@@ -237,3 +426,12 @@ Outputs:
   WebFunctionName:
     Description: Name of the web Lambda function
     Value: !Ref WebFunction
+  InboundFunctionName:
+    Description: Name of the inbound newsletter Lambda function
+    Value: !Ref InboundFunction
+  InboundEmailBucketName:
+    Description: S3 bucket SES writes raw inbound newsletter mail to
+    Value: !Ref InboundEmailBucket
+  MailDomain:
+    Description: Domain newsletter addresses are generated under (empty if unset)
+    Value: !Ref MailDomain

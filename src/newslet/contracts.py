@@ -112,6 +112,25 @@ class Feed(BaseModel):
     added_at: datetime
 
 
+class Subscription(BaseModel):
+    """A newsletter subscription: a generated inbound address bound to a label.
+
+    Each subscription owns a unique, ugly-but-working email address (e.g.
+    ``n-a8f3c2d1@inbox.example.com``) the user pastes into a newsletter's
+    signup form. Mail SES receives at that address is attributed to this
+    subscription's ``source``. ``status`` tracks the double opt-in handshake:
+    newly created subscriptions are ``pending`` until a confirmation email
+    arrives (and is auto-confirmed), at which point they flip to ``confirmed``.
+    """
+
+    address: str  # full generated email address; the table PK
+    source: str = Field(default="", description="User-facing label for the newsletter")
+    status: Literal["pending", "confirmed"] = "pending"
+    created_at: datetime
+    confirmed_at: datetime | None = None
+    last_received_at: datetime | None = None
+
+
 class Profile(BaseModel):
     """The user's free-text profile (markdown) used in the rank prompt."""
 
