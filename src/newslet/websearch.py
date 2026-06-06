@@ -66,13 +66,48 @@ fences) matching this schema:
 _articles_adapter = TypeAdapter(list[WebArticle])
 
 
-def _build_user_block(query: str, *, recent: bool) -> str:
+def _variety_directive(variety: int) -> str:
+    """Turn the 0–100 variety dial into an exploration instruction.
+
+    Low values keep results tight to the user's stated interests; high values
+    deliberately wander into *related, ancillary* areas — adjacent fields,
+    second-order implications, neighbouring disciplines — that a curious
+    reader would find enriching. It is exploratory, never random: every
+    result must still connect back to the user's interests by a clear thread.
+    """
+    variety = max(0, min(100, variety))
+    if variety <= 15:
+        return (
+            "Stay tightly on the user's stated interests; prefer the most "
+            "directly relevant, on-topic results."
+        )
+    if variety <= 45:
+        return (
+            "Mostly match the user's stated interests, but include a few "
+            "results from closely adjacent areas that connect clearly to them."
+        )
+    if variety <= 75:
+        return (
+            "Balance on-topic results with exploratory ones from related, "
+            "ancillary areas — adjacent fields and second-order angles that "
+            "broaden the user's interests without leaving their orbit."
+        )
+    return (
+        "Emphasize exploratory results: venture into ancillary and adjacent "
+        "areas — neighbouring disciplines, surprising connections, and "
+        "second-order implications of the user's interests. Stay related and "
+        "thematically connected; never random or off-topic."
+    )
+
+
+def _build_user_block(query: str, *, recent: bool, variety: int) -> str:
     recency = (
         "Focus on material published in roughly the last week.\n\n"
         if recent
         else ""
     )
-    return f"{recency}# Request\n{query.strip()}"
+    exploration = f"# Exploration\n{_variety_directive(variety)}\n\n"
+    return f"{recency}{exploration}# Request\n{query.strip()}"
 
 
 def search_web(
@@ -84,6 +119,7 @@ def search_web(
     exclude_hosts: list[str] | None = None,
     max_searches: int = 3,
     model: str | None = None,
+    variety: int = 0,
 ) -> list[WebArticle]:
     """Search the open web for ``query`` and return up to ``max_results``.
 
@@ -92,7 +128,9 @@ def search_web(
     same way :mod:`discovery` does. ``max_searches`` caps the tool rounds and
     ``model`` overrides the configured model — the interactive subject box
     passes a low cap and a fast model so it returns within the HTTP API's
-    ~30s limit. Returns ``[]`` on any failure.
+    ~30s limit. ``variety`` (0–100) controls how far results may roam into
+    related, ancillary areas (see :func:`_variety_directive`). Returns ``[]``
+    on any failure.
     """
     if not query.strip():
         return []
@@ -108,7 +146,12 @@ def search_web(
             system=_SYSTEM_PROMPT.format(max_results=max_results),
             tools=[_web_search_tool(max_searches)],
             messages=[
-                {"role": "user", "content": _build_user_block(query, recent=recent)}
+                {
+                    "role": "user",
+                    "content": _build_user_block(
+                        query, recent=recent, variety=variety
+                    ),
+                }
             ],
         )
     except Exception as exc:  # noqa: BLE001 - best effort; never raise

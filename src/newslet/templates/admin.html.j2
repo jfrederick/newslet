@@ -92,6 +92,8 @@
     <header class="top">
       <div class="brand">newslet · admin</div>
       <div>
+        <a class="logout" href="/">home</a>
+        &nbsp;·&nbsp;
         <a class="logout" href="/issues">issues</a>
         &nbsp;·&nbsp;
         <a class="logout" href="/logout">log out</a>
@@ -125,6 +127,48 @@
       </p>
       <form method="POST" action="/api/send-now">
         <button type="submit" class="primary">Send email now</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Daily email settings</h2>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
+        Controls the daily email only. The homepage stays a full, rich feed.
+      </p>
+      <form method="POST" action="/api/config">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;">
+          <label style="flex:1;min-width:160px;">
+            Max RSS / HN articles
+            <input type="number" name="max_rss_articles" min="1" max="40"
+                   value="{{ config.max_rss_articles }}"
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;">
+          </label>
+          <label style="flex:1;min-width:160px;">
+            Max web-search articles
+            <input type="number" name="max_web_articles" min="0" max="30"
+                   value="{{ config.max_web_articles }}"
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;">
+          </label>
+        </div>
+        <div style="margin-top:18px;">
+          <label>
+            Web search variety
+            <span style="color:var(--muted);font-size:13px;">
+              — <span id="variety-val">{{ config.web_variety }}</span>/100:
+              low stays on your interests, high explores related, ancillary areas
+            </span>
+            <input type="range" name="web_variety" min="0" max="100" step="5"
+                   value="{{ config.web_variety }}"
+                   oninput="document.getElementById('variety-val').textContent=this.value"
+                   style="display:block;width:100%;margin-top:8px;">
+          </label>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);">
+            <span>on-topic</span><span>exploratory</span>
+          </div>
+        </div>
+        <div class="save-row">
+          <button type="submit" class="primary">Save settings</button>
+        </div>
       </form>
     </section>
 

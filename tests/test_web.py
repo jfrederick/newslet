@@ -117,15 +117,16 @@ def test_add_and_delete_feed_roundtrip(client):
         data={"url": "https://example.com/rss", "title": "Example"},
     )
     assert r.status_code == 303
+    assert r.headers["location"] == "/admin"
 
-    r = client.get("/")
+    r = client.get("/admin")
     assert r.status_code == 200
     # Look for the delete form which only renders for actual feed rows
     assert 'value="https://example.com/rss"' in r.text
 
     r = client.post("/api/feeds/delete", data={"url": "https://example.com/rss"})
     assert r.status_code == 303
-    r = client.get("/")
+    r = client.get("/admin")
     assert 'value="https://example.com/rss"' not in r.text
 
 
@@ -133,7 +134,7 @@ def test_profile_save(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.post("/api/profile", data={"markdown": "I like LLMs and Postgres."})
     assert r.status_code == 303
-    r = client.get("/")
+    r = client.get("/admin")
     assert "I like LLMs and Postgres." in r.text
 
 
@@ -191,13 +192,13 @@ def test_add_then_delete_with_uppercase_input(client):
     r = client.post("/api/feeds", data={"url": "HTTPS://Example.COM/Rss"})
     assert r.status_code == 303
 
-    r = client.get("/")
+    r = client.get("/admin")
     assert 'value="https://example.com/Rss"' in r.text
 
     r = client.post("/api/feeds/delete", data={"url": "https://EXAMPLE.com/Rss"})
     assert r.status_code == 303
 
-    r = client.get("/")
+    r = client.get("/admin")
     assert 'value="https://example.com/Rss"' not in r.text
 
 
@@ -232,7 +233,7 @@ def test_admin_index_shows_last_sent(client):
     db.put_issue(Issue(date="2026-05-15", picks=[], created_at=datetime.now(UTC)))
     db.mark_issue_sent("2026-05-15")
 
-    r = client.get("/")
+    r = client.get("/admin")
     assert r.status_code == 200
     assert "Last sent" in r.text
     assert "2026-05-15" in r.text
@@ -419,7 +420,7 @@ def test_send_now_invokes_digest_lambda_async(client, monkeypatch):
     r = client.post("/api/send-now")
 
     assert r.status_code == 303
-    assert r.headers["location"] == "/?sent=1"
+    assert r.headers["location"] == "/admin?sent=1"
     assert len(calls) == 1
     assert calls[0]["FunctionName"] == "newslet-Digest-abc123"
     assert calls[0]["InvocationType"] == "Event"  # async, fire-and-forget
@@ -441,24 +442,25 @@ def test_send_now_503_when_not_configured(client, monkeypatch):
 
 def test_admin_index_shows_send_now_button(client):
     client.cookies.set("admin_token", "supersecret")
-    r = client.get("/")
+    r = client.get("/admin")
     assert r.status_code == 200
     assert 'action="/api/send-now"' in r.text
 
 
 def test_admin_index_flashes_after_send(client):
     client.cookies.set("admin_token", "supersecret")
-    r = client.get("/?sent=1")
+    r = client.get("/admin?sent=1")
     assert r.status_code == 200
     assert "on its way" in r.text.lower()
 
 
 # ---------------------------------------------------------------------------
-# Rich issue web view
+# Rich homepage + issue archive (now separate surfaces)
 # ---------------------------------------------------------------------------
 
 
-def _seed_rich_issue(date="2026-05-21"):
+def _seed_issue(key):
+    """Seed an issue (picks + web articles) under ``key`` (a date or 'home')."""
     from datetime import UTC, datetime
 
     from newslet import db
@@ -466,7 +468,7 @@ def _seed_rich_issue(date="2026-05-21"):
 
     db.put_issue(
         Issue(
-            date=date,
+            date=key,
             picks=[
                 Pick(url="https://ex.com/a", title="Alpha Pick", blurb="ab",
                      source="Test Feed", score=0.9),
@@ -486,83 +488,68 @@ def _seed_rich_issue(date="2026-05-21"):
             ],
         )
     )
-    return date
+    return key
 
 
-def test_rich_issue_view_renders_all_articles(client):
+def test_homepage_renders_all_articles(client):
     client.cookies.set("admin_token", "supersecret")
-    date = _seed_rich_issue()
-    r = client.get(f"/issues/{date}")
+    _seed_issue("home")
+    r = client.get("/")
     assert r.status_code == 200
-    # Picks + web articles all present.
     for title in ["Alpha Pick", "Beta Pick", "Web One", "HN Rich"]:
         assert title in r.text
-    # Subject + intro rendered.
     assert "Sharp subject" in r.text
     assert "An intro line." in r.text
-    # Source filter chips, count, and HN engagement badges.
-    assert 'data-filter="Hacker News"' in r.text
     assert "4 articles" in r.text
     assert "222" in r.text  # HN points badge
-    # Vote forms present for voting.
     assert 'action="/api/vote"' in r.text
-    # Link to the raw email view.
-    assert f"/issues/{date}/email" in r.text
+    # The refresh button and (removed) source filter.
+    assert 'id="refresh-btn"' in r.text
+    assert "data-filter" not in r.text
 
 
-def test_rich_issue_view_shows_sticky_vote_state(client):
+def test_homepage_empty_state_when_not_generated(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "hasn't been generated yet" in r.text
+    assert 'id="refresh-btn"' in r.text
+
+
+def test_homepage_shows_sticky_vote_state(client):
     from datetime import UTC, datetime
 
     from newslet import db
     from newslet.contracts import FeedbackRow
 
     client.cookies.set("admin_token", "supersecret")
-    date = _seed_rich_issue()
-    # Pre-record an upvote on Alpha Pick.
+    _seed_issue("home")
     db.put_feedback(
         FeedbackRow(
             article_url="https://ex.com/a",
             title="Alpha Pick",
             rating="up",
             ts=datetime.now(UTC),
-            issue_date=date,
+            issue_date="home",
         )
     )
-    r = client.get(f"/issues/{date}")
+    r = client.get("/")
     assert r.status_code == 200
-    # The already-voted card carries the sticky class.
     assert "voted-up" in r.text
 
 
-def test_rich_issue_view_requires_admin(client):
-    date = _seed_rich_issue()
-    r = client.get(f"/issues/{date}")
+def test_homepage_requires_admin(client):
+    r = client.get("/")
     assert r.status_code == 303
     assert r.headers["location"] == "/login"
 
 
-def test_issue_view_404_for_missing(client):
-    client.cookies.set("admin_token", "supersecret")
-    r = client.get("/issues/2099-01-01")
-    assert r.status_code == 404
-
-
-def test_issue_email_subview_renders_email(client):
-    client.cookies.set("admin_token", "supersecret")
-    date = _seed_rich_issue()
-    r = client.get(f"/issues/{date}/email")
-    assert r.status_code == 200
-    # The email view still shows picks and the email footer.
-    assert "Alpha Pick" in r.text
-    assert "picks today" in r.text
-
-
-def test_view_issue_server_rendered_search(client, monkeypatch):
+def test_homepage_server_rendered_search(client, monkeypatch):
     from newslet.contracts import WebArticle
     from newslet.handlers import web
 
     client.cookies.set("admin_token", "supersecret")
-    date = _seed_rich_issue()
+    _seed_issue("home")
 
     monkeypatch.setattr(
         web.websearch,
@@ -572,10 +559,28 @@ def test_view_issue_server_rendered_search(client, monkeypatch):
                        blurb="from search", source="Search Src")
         ],
     )
-    r = client.get(f"/issues/{date}", params={"q": "neural nets"})
+    r = client.get("/", params={"q": "neural nets"})
     assert r.status_code == 200
     assert "Found Article" in r.text
     assert "neural nets" in r.text
+
+
+def test_issue_archive_renders_email(client):
+    """/issues/{date} now shows the as-sent email (separate from the homepage)."""
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("2026-05-21")
+    r = client.get("/issues/2026-05-21")
+    assert r.status_code == 200
+    assert "Alpha Pick" in r.text
+    assert "picks today" in r.text  # email footer
+    # The rich homepage chrome is NOT here.
+    assert 'id="refresh-btn"' not in r.text
+
+
+def test_issue_view_404_for_missing(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/issues/2099-01-01")
+    assert r.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +605,7 @@ def test_vote_records_feedback_and_redirects(client):
               "date": "2026-05-21"},
     )
     assert r.status_code == 303
-    assert r.headers["location"] == "/issues/2026-05-21"
+    assert r.headers["location"] == "/"
     ratings = db.feedback_ratings(["https://ex.com/a"], "2026-05-21")
     assert ratings == {"https://ex.com/a": "up"}
 
@@ -681,3 +686,106 @@ def test_api_hn_returns_json(client, monkeypatch):
     data = r.json()
     assert data["results"][0]["points"] == 10
     assert data["results"][0]["source"] == "Hacker News"
+
+
+# ---------------------------------------------------------------------------
+# Admin config
+# ---------------------------------------------------------------------------
+
+
+def test_config_save_and_render(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "15", "max_web_articles": "8", "web_variety": "70"},
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin"
+
+    cfg = db.get_config()
+    assert cfg.max_rss_articles == 15
+    assert cfg.max_web_articles == 8
+    assert cfg.web_variety == 70
+
+    # The admin page shows the saved values.
+    r = client.get("/admin")
+    assert 'name="max_rss_articles"' in r.text
+    assert 'value="15"' in r.text
+    assert 'name="web_variety"' in r.text
+
+
+def test_config_rejects_out_of_range(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "999", "max_web_articles": "1", "web_variety": "10"},
+    )
+    assert r.status_code == 400
+
+
+def test_config_requires_admin(client):
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+# ---------------------------------------------------------------------------
+# Homepage refresh
+# ---------------------------------------------------------------------------
+
+
+def test_home_refresh_invokes_digest_home_mode(client, monkeypatch):
+    import json
+
+    from newslet.config import settings
+    from newslet.handlers import web
+
+    monkeypatch.setenv("DIGEST_FUNCTION_NAME", "newslet-Digest-abc123")
+    settings.cache_clear()
+
+    calls: list[dict] = []
+
+    class _FakeLambda:
+        def invoke(self, **kwargs):
+            calls.append(kwargs)
+            return {"StatusCode": 202}
+
+    monkeypatch.setattr(web.boto3, "client", lambda svc, **_: _FakeLambda())
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/home/refresh", headers={"accept": "application/json"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert len(calls) == 1
+    assert calls[0]["InvocationType"] == "Event"
+    assert json.loads(calls[0]["Payload"]) == {"home": True}
+
+
+def test_home_refresh_requires_admin(client):
+    r = client.post("/api/home/refresh")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_home_status_reports_freshness(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import Issue
+
+    client.cookies.set("admin_token", "supersecret")
+
+    # No home doc yet.
+    r = client.get("/api/home/status")
+    assert r.status_code == 200
+    assert r.json()["ready"] is False
+
+    db.put_issue(Issue(date="home", picks=[], created_at=datetime.now(UTC)), manual=True)
+    r = client.get("/api/home/status")
+    assert r.json()["ready"] is True
+    assert r.json()["created_at"]

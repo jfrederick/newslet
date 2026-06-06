@@ -10,7 +10,7 @@ import pytest
 
 from newslet import tokens
 from newslet.config import settings
-from newslet.contracts import Discovery, Issue, Pick
+from newslet.contracts import Discovery, Issue, Pick, WebArticle
 from newslet.email_render import render_email
 
 BASE_URL = "https://api.example.test"
@@ -233,10 +233,42 @@ def test_discoveries_section_omitted_when_empty(stub_sign: None) -> None:
     assert "follow yet" not in html
 
 
-def test_admin_link_present(stub_sign: None) -> None:
+def test_web_articles_section_renders_with_vote_links(stub_sign: None) -> None:
+    issue = Issue(
+        date=DATE,
+        picks=[_pick("https://a.example.com/1", "AlphaTitle", "B")],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        web_articles=[
+            WebArticle(
+                url="https://web.example.com/story",
+                title="A Web Find",
+                blurb="Why it's worth reading.",
+                source="Open Web",
+            ),
+        ],
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "From around the web" in html
+    assert "A Web Find" in html
+    assert "https://web.example.com/story" in html
+    # Web articles are votable from the email via the same signed /rate links.
+    encoded = quote("https://web.example.com/story", safe="")
+    assert (f"a={encoded}".replace("&", "&amp;") in html) or (f"a={encoded}" in html)
+    assert html.count("v=up") == 2  # one for the pick, one for the web article
+    assert html.count("v=down") == 2
+
+
+def test_web_articles_section_omitted_when_empty(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "AlphaTitle", "B")])
+    _, html = render_email(issue, BASE_URL)
+    assert "From around the web" not in html
+
+
+def test_homepage_link_present(stub_sign: None) -> None:
     issue = _issue([_pick("https://a.example.com/1", "T", "B")])
     _, html = render_email(issue, BASE_URL)
-    assert "Manage newslet" in html
+    # The email links generically to the newslet homepage (rich web UX).
+    assert "Open newslet" in html
     assert f'href="{BASE_URL}/"' in html
 
 

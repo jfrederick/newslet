@@ -123,19 +123,19 @@ def main() -> int:
         from newslet import db
         from newslet.handlers.web import app
 
-        date = datetime.now(UTC).strftime("%Y-%m-%d")
-        db.put_issue(_make_issue(date))
+        # The rich UX is the homepage, backed by the reserved "home" issue key.
+        db.put_issue(_make_issue("home"), manual=True)
         # Seed a couple of votes so the sticky state is visible in the preview.
         db.put_feedback(FeedbackRow(article_url="https://example.com/pick/0",
                                     title="x", rating="up", ts=datetime.now(UTC),
-                                    issue_date=date))
+                                    issue_date="home"))
         db.put_feedback(FeedbackRow(article_url="https://example.com/pick/3",
                                     title="x", rating="down", ts=datetime.now(UTC),
-                                    issue_date=date))
+                                    issue_date="home"))
 
         client = TestClient(app)
         client.cookies.set("admin_token", "preview-token")
-        resp = client.get(f"/issues/{date}")
+        resp = client.get("/")
         resp.raise_for_status()
 
         out = Path(__file__).resolve().parent.parent / "out" / "read.html"

@@ -8,11 +8,17 @@ a profile you maintain, and emails you the top picks via Resend. Each
 pick has a `+` / `−` button you can tap from your inbox; clicks land in
 DynamoDB and become examples in tomorrow's prompt.
 
-The email links to a **rich web view** of each issue — up to 40 ranked
-picks plus 20 articles pulled live from the open web (≈60 total), with
-source filters, sticky `+`/`−` voting that feeds the same ranking loop,
-and a "research a subject" box that runs a fresh web search on whatever
-topic you type.
+How many articles the email carries is configurable in the admin UI (max
+RSS/HN picks and max open-web results), along with a **variety dial** that
+lets the web search roam from strictly on-topic to exploratory, related
+ancillary areas.
+
+The email links generically to the **newslet homepage** — a separate,
+richer web experience: a large aggregation of ranked picks plus an
+open-web block, with sticky `+`/`−` voting that feeds the same ranking
+loop, a "research a subject" box that runs a fresh web search on whatever
+topic you type, and a **Refresh** button that regenerates the whole page
+(it takes ~a minute). Past daily emails are archived at `/issues/<date>`.
 
 ## Architecture
 
@@ -104,9 +110,11 @@ Subsequent deploys are just `sam build && sam deploy`.
 
 ### 4. Configure your feeds and profile
 
-Open the `ApiUrl` from step 3 in a browser, sign in with the value of
-`/newslet/admin-token`, then add RSS feeds and write a short markdown
-profile of what you care about.
+Open the `ApiUrl` from step 3 in a browser and sign in with the value of
+`/newslet/admin-token`. You land on the homepage; go to **admin** (top
+nav, or `/admin`) to add RSS feeds, write a short markdown profile, and
+set the daily-email article counts and web-search variety. Hit **Refresh**
+on the homepage to generate its first aggregation.
 
 ### 5. Smoke-test the digest
 

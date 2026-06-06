@@ -59,6 +59,43 @@
           </tr>
           {% endfor %}
 
+          {% if web_articles %}
+          <tr>
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid #f1f1ec;">
+              <div style="font-family:Georgia,'Times New Roman',serif; font-size:15px; font-weight:700; color:#111; margin:0;">
+                From around the web
+              </div>
+            </td>
+          </tr>
+          {% for w in web_articles %}
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px;">
+                    <div style="font-size:17px; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
+                      <a href="{{ w.url|e }}" target="_blank" rel="noopener noreferrer" style="color:#0b3d91; text-decoration:none;">{{ w.title|e }}</a>
+                    </div>
+                    <div style="font-size:12px; color:#888; margin:0 0 8px 0;">
+                      {% if w.source %}{{ w.source|e }}{% endif %}{% if w.points is not none %} &middot; &#9650; {{ w.points }}{% endif %}{% if w.comments is not none %} &middot; {{ w.comments }} comments{% endif %}{% if w.comments_url %} &middot; <a href="{{ w.comments_url|e }}" target="_blank" rel="noopener noreferrer" style="color:#888;">discussion</a>{% endif %}
+                    </div>
+                    {% if w.blurb %}
+                    <div style="font-size:15px; line-height:1.5; color:#222; margin:0;">
+                      {{ w.blurb|e }}
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
+                    <a href="{{ w.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#1a7a3a; background:#eef7ef; border:1px solid #d4e8d8; border-radius:4px; text-decoration:none;">+</a>
+                    <a href="{{ w.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#9a2a2a; background:#fbeeee; border:1px solid #e8d4d4; border-radius:4px; text-decoration:none;">&#8722;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+
           {% if discoveries %}
           <tr>
             <td style="padding:20px 24px 8px 24px; border-bottom:1px solid #f1f1ec;">
@@ -93,19 +130,18 @@
           {% endfor %}
           {% endif %}
 
-          {% if more_on_web and more_on_web > 0 %}
           <tr>
-            <td align="center" style="padding:18px 24px; border-bottom:1px solid #f1f1ec;">
-              <a href="{{ web_view_url|e }}" style="display:inline-block; padding:10px 18px; font-size:14px; font-weight:600; color:#0b3d91; background:#eef2fb; border:1px solid #d4ddf0; border-radius:6px; text-decoration:none;">Read all on the web — {{ more_on_web }} more →</a>
+            <td align="center" style="padding:22px 24px; border-bottom:1px solid #f1f1ec;">
+              <a href="{{ home_url|e }}" style="display:inline-block; padding:11px 20px; font-size:15px; font-weight:600; color:#ffffff; background:#0b3d91; border-radius:6px; text-decoration:none;">Open newslet &rarr;</a>
+              <div style="font-size:12px; color:#999; margin-top:8px;">More stories, a live Hacker News feed, and subject search on the web.</div>
             </td>
           </tr>
-          {% endif %}
 
           <tr>
             <td align="center" style="padding:16px 24px 24px 24px; font-size:11px; color:#aaa;">
               newslet · {{ picks|length }} picks today
               <br>
-              <a href="{{ admin_url|e }}" style="color:#888; text-decoration:underline;">Manage newslet</a>
+              <a href="{{ home_url|e }}" style="color:#888; text-decoration:underline;">newslet</a>
             </td>
           </tr>
         </table>

@@ -583,6 +583,118 @@ def test_run_digest_merges_hn_and_adds_web_block(env, monkeypatch):
     assert [str(w.url) for w in issue.web_articles] == ["https://web.example/1"]
 
 
+def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):
+    """The configured max_picks / max_web / web_variety reach rank + websearch."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.handlers import digest
+
+    art = Article(url="https://feed.example/a", title="A", summary="s", source="F",
+                  published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [art])
+
+    seen = {}
+
+    def fake_rank(*, max_picks, **k):
+        seen["max_picks"] = max_picks
+        return RankResponse(picks=[Pick(url=art.url, title="A", blurb="b",
+                                        source="F", score=0.5)])
+
+    def fake_web(query, *, max_results, variety, **k):
+        seen["max_web"] = max_results
+        seen["variety"] = variety
+        return []
+
+    digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: False,
+        rank_fn=fake_rank,
+        summarize_fn=lambda picks, **k: ("s", "i"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=fake_web,
+        max_picks=7,
+        max_web=3,
+        web_variety=85,
+    )
+    assert seen == {"max_picks": 7, "max_web": 3, "variety": 85}
+
+
+def test_run_digest_skips_web_block_when_max_web_zero(env, monkeypatch):
+    """max_web == 0 disables the web block without calling the search."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.handlers import digest
+
+    art = Article(url="https://feed.example/a", title="A", summary="s", source="F",
+                  published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [art])
+
+    called = {"web": 0}
+
+    def fake_web(*a, **k):
+        called["web"] += 1
+        return []
+
+    issue, _ = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: False,
+        rank_fn=lambda **k: RankResponse(
+            picks=[Pick(url=art.url, title="A", blurb="b", source="F", score=0.5)]
+        ),
+        summarize_fn=lambda picks, **k: ("s", "i"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=fake_web,
+        max_web=0,
+    )
+    assert called["web"] == 0
+    assert issue.web_articles == []
+
+
+def test_home_mode_stores_home_issue_without_emailing(aws, monkeypatch):
+    """handler({"home": True}) builds the homepage aggregation under the
+    reserved 'home' key, hidden from list_issues, and sends no email."""
+    from newslet import db, feeds, rank
+    from newslet.handlers import digest
+
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        feeds,
+        "feedparser",
+        SimpleNamespace(parse=lambda _u: _build_feedparser_fixture(now)),
+    )
+    monkeypatch.setattr(
+        rank.anthropic,
+        "Anthropic",
+        lambda **_: _FakeAnthropic(json.dumps({"picks": [
+            {"url": "https://example.com/fresh-1", "title": "Fresh One",
+             "blurb": "b", "source": "Test Feed", "score": 0.9},
+        ]})),
+    )
+    _stub_enrichment(monkeypatch)
+
+    sent: list = []
+    monkeypatch.setattr(digest, "_send_email", lambda s, h: sent.append((s, h)))
+
+    db.add_feed("https://example.com/rss")
+    db.put_profile("I like fresh things.")
+
+    result = digest.handler({"home": True}, None)
+
+    assert result["status"] == "home_refreshed"
+    assert sent == []  # the homepage never emails
+    home = db.get_issue("home")
+    assert home is not None
+    assert len(home.picks) == 1
+    # Hidden from the daily "recent issues" list.
+    assert "home" not in [i["date"] for i in db.list_issues()]
+
+
 def test_run_digest_drops_seen_web_article(env, monkeypatch):
     """A web-search result already in the seen-store is filtered, like
     discoveries."""

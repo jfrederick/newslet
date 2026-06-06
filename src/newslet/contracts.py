@@ -117,3 +117,20 @@ class Profile(BaseModel):
 
     markdown: str
     updated_at: datetime
+
+
+class Config(BaseModel):
+    """Admin-tunable knobs for the daily email and web search.
+
+    - ``max_rss_articles`` — how many ranked picks (RSS + Hacker News) the
+      daily email carries.
+    - ``max_web_articles`` — how many open-web search results the daily email
+      carries (0 disables the web block in the email).
+    - ``web_variety`` — 0–100 exploration dial for web search: 0 stays tightly
+      on the user's stated interests, 100 ventures into related, ancillary
+      areas (exploratory but never random/off-topic).
+    """
+
+    max_rss_articles: int = Field(default=10, ge=1, le=40)
+    max_web_articles: int = Field(default=5, ge=0, le=30)
+    web_variety: int = Field(default=30, ge=0, le=100)
