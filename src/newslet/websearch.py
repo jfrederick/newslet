@@ -29,14 +29,18 @@ from .discovery import _extract_json_object, _host_key, _last_text_block
 
 logger = logging.getLogger(__name__)
 
-# Keep ``max_uses`` low: the web Lambda serves the subject search behind an
-# HTTP API whose integration timeout is a hard 30s, so the call must return
-# well under that. Three searches is plenty to "hone in" on a subject.
-_WEB_SEARCH_TOOL = {
-    "type": "web_search_20250305",
-    "name": "web_search",
-    "max_uses": 3,
-}
+def _web_search_tool(max_searches: int) -> dict:
+    """The server-side web_search tool, capped at ``max_searches`` rounds.
+
+    The interactive subject box runs behind an HTTP API with a hard ~30s
+    integration timeout, so it passes a low cap (and a fast model) to stay
+    well under it; the digest, with a 300s Lambda budget, can search more.
+    """
+    return {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": max(1, max_searches),
+    }
 
 _SYSTEM_PROMPT = """\
 You are a research librarian. Use the web_search tool to find up to \
@@ -78,12 +82,17 @@ def search_web(
     recent: bool = True,
     client: anthropic.Anthropic | None = None,
     exclude_hosts: list[str] | None = None,
+    max_searches: int = 3,
+    model: str | None = None,
 ) -> list[WebArticle]:
     """Search the open web for ``query`` and return up to ``max_results``.
 
     ``exclude_hosts`` drops results from hosts already covered elsewhere
     (e.g. the user's own feeds), de-duplicated by registered-ish host the
-    same way :mod:`discovery` does. Returns ``[]`` on any failure.
+    same way :mod:`discovery` does. ``max_searches`` caps the tool rounds and
+    ``model`` overrides the configured model — the interactive subject box
+    passes a low cap and a fast model so it returns within the HTTP API's
+    ~30s limit. Returns ``[]`` on any failure.
     """
     if not query.strip():
         return []
@@ -94,10 +103,10 @@ def search_web(
 
     try:
         response = client.messages.create(
-            model=settings().claude_model,
+            model=model or settings().claude_model,
             max_tokens=2048,
             system=_SYSTEM_PROMPT.format(max_results=max_results),
-            tools=[_WEB_SEARCH_TOOL],
+            tools=[_web_search_tool(max_searches)],
             messages=[
                 {"role": "user", "content": _build_user_block(query, recent=recent)}
             ],

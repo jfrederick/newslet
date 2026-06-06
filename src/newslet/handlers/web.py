@@ -30,6 +30,24 @@ _TEMPLATES = Environment(
 
 app = FastAPI(title="newslet")
 
+# The interactive subject search runs synchronously behind the HTTP API's
+# hard ~30s integration timeout, so it uses a fast model and few search
+# rounds. The digest's web block (300s Lambda budget) keeps the thorough
+# defaults in websearch.search_web.
+_FAST_SEARCH_MODEL = "claude-haiku-4-5-20251001"
+_FAST_SEARCH_ROUNDS = 2
+_FAST_SEARCH_RESULTS = 12
+
+
+def _interactive_search(query: str) -> list:
+    """Run the snappy, timeout-safe variant of the subject search."""
+    return websearch.search_web(
+        query.strip(),
+        max_results=_FAST_SEARCH_RESULTS,
+        max_searches=_FAST_SEARCH_ROUNDS,
+        model=_FAST_SEARCH_MODEL,
+    )
+
 
 def _is_https(request: Request) -> bool:
     """Detect whether the original client connection was HTTPS.
@@ -432,7 +450,7 @@ def view_issue(
     query = (q or "").strip()
     search_cards: list[dict] = []
     if query:
-        for r in websearch.search_web(query, max_results=12):
+        for r in _interactive_search(query):
             search_cards.append(
                 _article_card(
                     url=r.url, title=r.title, blurb=r.blurb, source=r.source,
@@ -539,7 +557,7 @@ def api_search(
     JSON cards the page renders inline. Best-effort — an empty list on any
     failure, never a 500."""
     _require_admin(admin_token)
-    results = websearch.search_web(q.strip(), max_results=12)
+    results = _interactive_search(q)
     return JSONResponse(
         {
             "query": q,

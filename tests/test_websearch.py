@@ -29,12 +29,14 @@ class _FakeClient:
 
     def __init__(self, reply: str):
         self._reply = reply
+        self.calls: list[dict] = []
 
     @property
     def messages(self):
         return self
 
-    def create(self, **_):
+    def create(self, **kw):
+        self.calls.append(kw)
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=self._reply)])
 
 
@@ -93,6 +95,17 @@ def test_empty_query_short_circuits(env):
 def test_bad_json_returns_empty_not_raises(env):
     out = websearch.search_web("topic", client=_FakeClient("not json at all"))
     assert out == []
+
+
+def test_model_and_search_cap_reach_the_api(env):
+    """The fast interactive path can override the model and cap tool rounds."""
+    client = _FakeClient(_reply("https://a.example.com/1"))
+    websearch.search_web(
+        "topic", client=client, model="claude-haiku-4-5-20251001", max_searches=2
+    )
+    call = client.calls[0]
+    assert call["model"] == "claude-haiku-4-5-20251001"
+    assert call["tools"][0]["max_uses"] == 2
 
 
 def test_api_exception_returns_empty(env):
