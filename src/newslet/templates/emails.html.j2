@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>newslet · issues</title>
+<title>newslet · emails</title>
 <style>
   :root {
     --bg: #f6f6f4; --panel: #ffffff; --fg: #1a1a1a; --muted: #888;
@@ -26,12 +26,12 @@
   .home:hover { color: var(--fg); text-decoration: underline; }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 20px; }
   h2 { margin: 0 0 16px 0; font-size: 18px; }
-  ul.issues { list-style: none; padding: 0; margin: 0; }
-  ul.issues li { display: flex; align-items: center; justify-content: space-between;
+  ul.emails { list-style: none; padding: 0; margin: 0; }
+  ul.emails li { display: flex; align-items: center; justify-content: space-between;
     padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px; }
-  ul.issues li:last-child { border-bottom: none; }
-  ul.issues a { color: var(--accent); text-decoration: none; font-weight: 600; }
-  ul.issues a:hover { text-decoration: underline; }
+  ul.emails li:last-child { border-bottom: none; }
+  ul.emails a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  ul.emails a:hover { text-decoration: underline; }
   .meta { font-size: 13px; color: var(--muted); }
   .ok { color: var(--ok); }
   .warn { color: var(--warn); }
@@ -41,16 +41,16 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand">newslet · issues</div>
-    <a class="home" href="/">← admin</a>
+    <div class="brand">newslet · emails</div>
+    <a class="home" href="/admin">← admin</a>
   </header>
   <section>
-    <h2>Recent issues</h2>
+    <h2>Recent emails</h2>
     {% if issues %}
-    <ul class="issues">
+    <ul class="emails">
       {% for issue in issues %}
       <li>
-        <a href="/issues/{{ issue.date|e }}">{{ issue.date|e }}</a>
+        <a href="/emails/{{ issue.date|e }}">{{ issue.date|e }}</a>
         <span class="meta">
           {{ issue.picks_count }} picks ·
           {% if issue.sent_at %}<span class="ok">sent</span>{% else %}<span class="warn">unsent</span>{% endif %}
@@ -59,7 +59,7 @@
       {% endfor %}
     </ul>
     {% else %}
-    <div class="empty">No issues yet — the first one ships tomorrow at 10:00 UTC.</div>
+    <div class="empty">No emails yet — the first one ships tomorrow at 10:00 UTC.</div>
     {% endif %}
   </section>
 </div>

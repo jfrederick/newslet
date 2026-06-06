@@ -352,7 +352,7 @@ def test_get_issue_tolerates_legacy_discovery_without_feed_url(dynamo: None) -> 
     """Issues persisted before feed_url was required must still load.
 
     A strict validate would raise ValidationError on the old discovery row
-    and make the whole issue unreadable, breaking /rate and /issues/{date}.
+    and make the whole issue unreadable, breaking /rate and /emails/{date}.
     The unrenderable discovery is skipped; picks (and thus rating links)
     survive.
     """
