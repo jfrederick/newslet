@@ -19,6 +19,7 @@ from pydantic import HttpUrl, ValidationError
 
 from newslet.config import settings
 from newslet.contracts import (
+    Config,
     Discovery,
     Feed,
     FeedbackRow,
@@ -159,6 +160,47 @@ def put_profile(markdown: str) -> Profile:
         }
     )
     return Profile(markdown=markdown, updated_at=now)
+
+
+# ---------------------------------------------------------------------------
+# Config (admin knobs) — shares the profile table under a distinct id
+# ---------------------------------------------------------------------------
+
+
+def get_config() -> Config:
+    """Return the admin config, or sensible defaults if unset/legacy.
+
+    Lenient on read: a missing row or an out-of-range/garbled value falls
+    back to defaults rather than raising, so the daily send is never blocked
+    by a bad config row.
+    """
+    resp = _t_profile().get_item(Key={"id": "config"})
+    item = resp.get("Item")
+    if not item:
+        return Config()
+    try:
+        return Config(
+            max_rss_articles=int(item.get("max_rss_articles", 10)),
+            max_web_articles=int(item.get("max_web_articles", 5)),
+            web_variety=int(item.get("web_variety", 30)),
+        )
+    except (ValidationError, ValueError, TypeError) as exc:
+        log.warning("bad config row, using defaults: %s", exc)
+        return Config()
+
+
+def put_config(config: Config) -> Config:
+    """Persist the admin config (validated by the Config model first)."""
+    _t_profile().put_item(
+        Item={
+            "id": "config",
+            "max_rss_articles": config.max_rss_articles,
+            "max_web_articles": config.max_web_articles,
+            "web_variety": config.web_variety,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    return config
 
 
 # ---------------------------------------------------------------------------

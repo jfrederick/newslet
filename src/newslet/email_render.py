@@ -10,11 +10,6 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from newslet import tokens
 from newslet.contracts import Issue
 
-# The email stays a tight digest even though an issue now stores up to 40
-# ranked picks for the web view: render only the strongest few and point at
-# the web view for the rest.
-_EMAIL_PICK_LIMIT = 12
-
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _ENV = Environment(
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
@@ -45,25 +40,48 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     subject = issue.subject or f"newslet — {display_date}"
     base = public_base_url.rstrip("/")
     sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
-    total_picks = len(sorted_picks)
-    email_picks = sorted_picks[:_EMAIL_PICK_LIMIT]
-    # How many more articles wait on the web view (extra picks + the web block).
-    more_on_web = (total_picks - len(email_picks)) + len(issue.web_articles)
+
+    def _rate_links(url_str: str) -> tuple[str, str]:
+        """Signed +/- /rate links for an article (works from any inbox)."""
+        token = tokens.sign(url_str, issue.date)
+        common = f"a={quote(url_str, safe='')}&d={issue.date}"
+        return (
+            f"{base}/rate?{common}&v=up&t={token}",
+            f"{base}/rate?{common}&v=down&t={token}",
+        )
 
     ctx_picks: list[dict[str, str]] = []
-    for pick in email_picks:
+    for pick in sorted_picks:
         url_str = str(pick.url)
-        token = tokens.sign(url_str, issue.date)
-        encoded = quote(url_str, safe="")
-        common = f"a={encoded}&d={issue.date}"
+        up_link, down_link = _rate_links(url_str)
         ctx_picks.append(
             {
                 "url": url_str,
                 "title": pick.title,
                 "blurb": pick.blurb,
                 "source": pick.source,
-                "up_link": f"{base}/rate?{common}&v=up&t={token}",
-                "down_link": f"{base}/rate?{common}&v=down&t={token}",
+                "up_link": up_link,
+                "down_link": down_link,
+            }
+        )
+
+    # The "from around the web" block: votable just like picks (same signed
+    # /rate mechanism) so feedback from the email still tunes ranking.
+    ctx_web = []
+    for w in issue.web_articles:
+        url_str = str(w.url)
+        up_link, down_link = _rate_links(url_str)
+        ctx_web.append(
+            {
+                "url": url_str,
+                "title": w.title,
+                "blurb": w.blurb,
+                "source": w.source,
+                "points": w.points,
+                "comments": w.comments,
+                "comments_url": w.comments_url,
+                "up_link": up_link,
+                "down_link": down_link,
             }
         )
 
@@ -90,10 +108,11 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     html = _ENV.get_template("email.html.j2").render(
         date=display_date,
         picks=ctx_picks,
+        web_articles=ctx_web,
         intro=issue.intro,
         discoveries=ctx_discoveries,
-        admin_url=f"{base}/",
-        web_view_url=f"{base}/issues/{quote(issue.date, safe='')}",
-        more_on_web=more_on_web,
+        # Generic link to the newslet homepage (the rich, browse-everything
+        # web experience) — not this issue's page.
+        home_url=f"{base}/",
     )
     return subject, html

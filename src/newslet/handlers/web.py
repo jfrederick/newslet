@@ -21,7 +21,7 @@ from pydantic import ValidationError
 
 from newslet import db, email_render, hn, tokens, websearch
 from newslet.config import settings
-from newslet.contracts import FeedbackRow
+from newslet.contracts import Config, FeedbackRow
 
 _TEMPLATES = Environment(
     loader=FileSystemLoader(str(Path(__file__).resolve().parent.parent / "templates")),
@@ -29,6 +29,11 @@ _TEMPLATES = Environment(
 )
 
 app = FastAPI(title="newslet")
+
+# Reserved issues-table key for the standalone homepage aggregation (mirrors
+# digest.HOME_KEY; defined here too so the web Lambda need not import the
+# heavier digest module just for a constant).
+_HOME_KEY = "home"
 
 # The interactive subject search runs synchronously behind the HTTP API's
 # hard ~30s integration timeout, so it uses a fast model and few search
@@ -40,12 +45,17 @@ _FAST_SEARCH_RESULTS = 12
 
 
 def _interactive_search(query: str) -> list:
-    """Run the snappy, timeout-safe variant of the subject search."""
+    """Run the snappy, timeout-safe variant of the subject search.
+
+    Uses the admin variety dial so the subject box explores ancillary areas
+    to the same degree the daily email's web block does.
+    """
     return websearch.search_web(
         query.strip(),
         max_results=_FAST_SEARCH_RESULTS,
         max_searches=_FAST_SEARCH_ROUNDS,
         model=_FAST_SEARCH_MODEL,
+        variety=db.get_config().web_variety,
     )
 
 
@@ -110,11 +120,90 @@ def logout() -> Response:
 
 
 # ---------------------------------------------------------------------------
+# Homepage — the rich, browse-everything web experience
+# ---------------------------------------------------------------------------
+
+
+def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
+    """Build (pick_cards, web_cards, total) with sticky vote state."""
+    votes = _vote_lookup(issue)
+    sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
+    pick_cards = [
+        _article_card(
+            url=p.url, title=p.title, blurb=p.blurb, source=p.source,
+            score=p.score, rating=votes.get(str(p.url), ""),
+        )
+        for p in sorted_picks
+    ]
+    web_cards = [
+        _article_card(
+            url=w.url, title=w.title, blurb=w.blurb, source=w.source,
+            score=None, rating=votes.get(str(w.url), ""),
+            points=w.points, comments=w.comments, comments_url=w.comments_url,
+        )
+        for w in issue.web_articles
+    ]
+    return pick_cards, web_cards, len(pick_cards) + len(web_cards)
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(
+    q: str | None = Query(default=None, description="optional subject search"),
+    admin_token: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    """The newslet homepage: a standalone rich reading surface (separate from
+    the daily email) aggregating lots of ranked picks plus an open-web block,
+    with +/- voting, a subject-search box, and a Refresh button that
+    regenerates the content (takes ~a minute, run asynchronously)."""
+    _require_admin(admin_token)
+    issue = db.get_issue(_HOME_KEY)
+
+    pick_cards: list[dict] = []
+    web_cards: list[dict] = []
+    total = 0
+    subject = intro = ""
+    created_iso = created_label = ""
+    if issue is not None:
+        pick_cards, web_cards, total = _home_cards(issue)
+        subject, intro = issue.subject, issue.intro
+        created_iso = issue.created_at.isoformat()
+        created_label = issue.created_at.strftime("%b %d, %H:%M UTC")
+
+    # Optional inline subject search (progressive-enhancement fallback).
+    query = (q or "").strip()
+    search_cards: list[dict] = []
+    if query:
+        for r in _interactive_search(query):
+            search_cards.append(
+                _article_card(
+                    url=r.url, title=r.title, blurb=r.blurb, source=r.source,
+                    score=None, rating="", points=r.points,
+                    comments=r.comments, comments_url=r.comments_url,
+                )
+            )
+
+    html = _TEMPLATES.get_template("read.html.j2").render(
+        vote_key=_HOME_KEY,
+        subject=subject,
+        intro=intro,
+        picks=pick_cards,
+        web_articles=web_cards,
+        total=total,
+        has_content=issue is not None,
+        created_iso=created_iso,
+        created_label=created_label,
+        query=query,
+        search_results=search_cards,
+    )
+    return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
 # Admin UI
 # ---------------------------------------------------------------------------
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/admin", response_class=HTMLResponse)
 def admin_index(
     sent: str | None = Query(default=None),
     admin_token: str | None = Cookie(default=None),
@@ -129,6 +218,7 @@ def admin_index(
         for f in db.list_feeds()
     ]
     profile = db.get_profile()
+    config = db.get_config()
     recent_issues = db.list_issues(limit=5)
     last_sent = next(
         (i["date"] for i in recent_issues if i.get("sent_at")),
@@ -137,6 +227,7 @@ def admin_index(
     html = _TEMPLATES.get_template("admin.html.j2").render(
         feeds=feeds_rows,
         profile_md=profile.markdown,
+        config=config,
         recent_issues=recent_issues,
         last_sent=last_sent,
         sent=sent,
@@ -167,7 +258,7 @@ def add_feed(
             status_code=400,
             detail=f"invalid feed URL: {exc.errors()[0]['msg']}",
         ) from exc
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/admin", status_code=303)
 
 
 @app.post("/api/feeds/delete")
@@ -177,7 +268,7 @@ def delete_feed(
 ) -> Response:
     _require_admin(admin_token)
     db.delete_feed(url)  # no-op on invalid input
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/admin", status_code=303)
 
 
 @app.post("/api/profile")
@@ -187,7 +278,31 @@ def save_profile(
 ) -> Response:
     _require_admin(admin_token)
     db.put_profile(markdown)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/api/config")
+def save_config(
+    max_rss_articles: int = Form(...),
+    max_web_articles: int = Form(...),
+    web_variety: int = Form(...),
+    admin_token: str | None = Cookie(default=None),
+) -> Response:
+    """Persist the daily-email article counts and the web-search variety dial."""
+    _require_admin(admin_token)
+    try:
+        cfg = Config(
+            max_rss_articles=max_rss_articles,
+            max_web_articles=max_web_articles,
+            web_variety=web_variety,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid config: {exc.errors()[0]['msg']}",
+        ) from exc
+    db.put_config(cfg)
+    return RedirectResponse(url="/admin", status_code=303)
 
 
 @app.post("/api/send-now")
@@ -212,7 +327,7 @@ def send_now(admin_token: str | None = Cookie(default=None)) -> Response:
         InvocationType="Event",
         Payload=json.dumps({"manual": True}),
     )
-    return RedirectResponse(url="/?sent=1", status_code=303)
+    return RedirectResponse(url="/admin?sent=1", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +443,7 @@ _SUBSCRIBED_HTML_TEMPLATE = (
     "a{color:#0b3d91}</style></head>"
     "<body><h1>subscribed</h1><p>added <strong>__TITLE__</strong> to your feeds:<br>"
     '<a href="__FEED__">__FEED__</a></p>'
-    '<p><a href="/">manage feeds</a></p></body></html>'
+    '<p><a href="/admin">manage feeds</a></p></body></html>'
 )
 
 
@@ -411,88 +526,17 @@ def _article_card(*, url, title, blurb, source, score, rating,
 def view_issue(
     date: str,
     request: Request,
-    q: str | None = Query(default=None, description="optional subject search"),
     admin_token: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    """Rich web view of a stored issue: up to 40 ranked picks plus a
-    "from around the web" block (≈60 articles), each with sticky +/- voting,
-    a source filter, and a subject search box that runs a live web search.
+    """Re-render a past daily issue's email HTML (the as-sent archive view).
 
-    Voting here writes to the same Feedback table the email +/- links use,
-    so it feeds the next day's ranking identically.
-    """
-    _require_admin(admin_token)
-    issue = db.get_issue(date)
-    if not issue:
-        raise HTTPException(status_code=404, detail="no issue for that date")
-
-    votes = _vote_lookup(issue)
-
-    sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
-    pick_cards = [
-        _article_card(
-            url=p.url, title=p.title, blurb=p.blurb, source=p.source,
-            score=p.score, rating=votes.get(str(p.url), ""),
-        )
-        for p in sorted_picks
-    ]
-    web_cards = [
-        _article_card(
-            url=w.url, title=w.title, blurb=w.blurb, source=w.source,
-            score=None, rating=votes.get(str(w.url), ""),
-            points=w.points, comments=w.comments, comments_url=w.comments_url,
-        )
-        for w in issue.web_articles
-    ]
-
-    # Optional server-rendered subject search (progressive-enhancement
-    # fallback for when JS is off). Best-effort: empty on any failure.
-    query = (q or "").strip()
-    search_cards: list[dict] = []
-    if query:
-        for r in _interactive_search(query):
-            search_cards.append(
-                _article_card(
-                    url=r.url, title=r.title, blurb=r.blurb, source=r.source,
-                    score=None, rating=votes.get(str(r.url), ""),
-                    points=r.points, comments=r.comments,
-                    comments_url=r.comments_url,
-                )
-            )
-
-    sources = sorted(
-        {c["source"] for c in pick_cards + web_cards if c["source"]},
-        key=str.lower,
-    )
-
-    html = _TEMPLATES.get_template("read.html.j2").render(
-        issue_key=issue.date,
-        issue_date=email_render._display_date(issue.date),
-        subject=issue.subject,
-        intro=issue.intro,
-        picks=pick_cards,
-        web_articles=web_cards,
-        sources=sources,
-        total=len(pick_cards) + len(web_cards),
-        query=query,
-        search_results=search_cards,
-        email_url=f"/issues/{date}/email",
-    )
-    return HTMLResponse(html)
-
-
-@app.get("/issues/{date}/email", response_class=HTMLResponse)
-def view_issue_email(
-    date: str,
-    request: Request,
-    admin_token: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    """Re-render a past issue's raw email HTML (the as-sent view).
+    The rich, browse-everything experience lives on the homepage (``/``); the
+    issue archive deliberately shows the email exactly as it was sent, so the
+    two surfaces stay separate.
 
     Note: rate links are regenerated with the *current* ``SIGNING_KEY``.
     If you rotate that key, every old issue's +/- links will start
-    returning 403 — there is no migration path. Either store the
-    rendered HTML at send time, or treat the signing key as permanent.
+    returning 403 — there is no migration path.
     """
     _require_admin(admin_token)
     issue = db.get_issue(date)
@@ -545,7 +589,45 @@ def vote(
     wants_json = "application/json" in request.headers.get("accept", "")
     if wants_json:
         return JSONResponse({"ok": True, "rating": rating, "url": article_url})
-    return RedirectResponse(url=f"/issues/{date}", status_code=303)
+    # The rich voting surface is the homepage; no-JS posts return there.
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/api/home/refresh")
+def home_refresh(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
+    """Kick off a homepage regeneration (async; takes ~a minute).
+
+    Async-invokes the digest Lambda with ``{"home": true}`` — the same
+    fire-and-forget pattern as "send now" — because a full rebuild far
+    exceeds this Lambda's (and the HTTP API's) timeout. The page then polls
+    ``/api/home/status`` and reloads when the content is newer.
+    """
+    _require_admin(admin_token)
+    fn = settings().digest_function_name
+    if not fn:
+        raise HTTPException(
+            status_code=503,
+            detail="DIGEST_FUNCTION_NAME is not configured for the web app",
+        )
+    boto3.client("lambda").invoke(
+        FunctionName=fn,
+        InvocationType="Event",
+        Payload=json.dumps({"home": True}),
+    )
+    return JSONResponse({"ok": True, "status": "refreshing"})
+
+
+@app.get("/api/home/status")
+def home_status(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
+    """Return the homepage content's current freshness timestamp.
+
+    The client captures this before a refresh and polls until it changes,
+    then reloads — a simple way to await the async regeneration.
+    """
+    _require_admin(admin_token)
+    issue = db.get_issue(_HOME_KEY)
+    created_iso = issue.created_at.isoformat() if issue is not None else ""
+    return JSONResponse({"created_at": created_iso, "ready": bool(created_iso)})
 
 
 @app.get("/api/search")
