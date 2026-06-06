@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from newslet import db, discovery, email_render, feeds, rank, summarize, tune
+from newslet import db, discovery, email_render, feeds, hn, rank, summarize, tune, websearch
 from newslet.config import settings
 from newslet.contracts import (
     Article,
@@ -27,6 +27,7 @@ from newslet.contracts import (
     Pick,
     Profile,
     RankResponse,
+    WebArticle,
 )
 
 log = logging.getLogger(__name__)
@@ -37,6 +38,25 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 _RANK_FEEDBACK_LIMIT = 50
 _TUNE_FEEDBACK_LIMIT = 200
 
+# The web view is the rich surface: rank up to 40 picks for it (the email
+# renders only the top handful — see email_render). The "from around the web"
+# block adds 20 more, for ~60 articles on the page.
+_RANK_MAX_PICKS = 40
+_WEB_ARTICLES_COUNT = 20
+
+# How many HN front pages to pull into the ranking candidate pool.
+_HN_PAGES = 20
+
+
+def _web_search_query(profile_md: str) -> str:
+    """Distill the profile into a single web-search request string."""
+    profile_md = (profile_md or "").strip()
+    base = (
+        "Fresh, high-quality articles a reader with the following interests "
+        "would want today, from across the open web:\n\n"
+    )
+    return base + (profile_md or "technology, science, and society")
+
 
 def _build_issue(
     picks: list[Pick],
@@ -45,6 +65,7 @@ def _build_issue(
     subject: str = "",
     intro: str = "",
     discoveries: list[Discovery] | None = None,
+    web_articles: list[WebArticle] | None = None,
 ) -> Issue:
     return Issue(
         date=date,
@@ -53,7 +74,26 @@ def _build_issue(
         subject=subject,
         intro=intro,
         discoveries=discoveries or [],
+        web_articles=web_articles or [],
     )
+
+
+def _dedupe_candidates(candidates: list[Article]) -> list[Article]:
+    """Drop duplicate candidate urls, keeping first-seen order.
+
+    RSS and HN can surface the same link (HN often points at an article a
+    feed also carries); ranking it twice wastes tokens and risks a doubled
+    pick.
+    """
+    seen: set[str] = set()
+    out: list[Article] = []
+    for art in candidates:
+        key = str(art.url)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(art)
+    return out
 
 
 def _feed_domains(feed_urls: list[str]) -> list[str]:
@@ -75,25 +115,42 @@ def run_digest(
     rank_fn=rank.rank,
     summarize_fn=None,
     discovery_fn=None,
+    hn_fn=None,
+    websearch_fn=None,
     now: datetime | None = None,
 ) -> tuple[Issue, list[Article]]:
-    """Pure pipeline: fetch → rank → summarize → discover → assemble Issue.
+    """Pure pipeline: fetch → rank → summarize → discover → web → assemble Issue.
 
     Returns ``(issue, candidates)`` so callers can mark every fetched
     article seen (not just the picked ones) and avoid re-evaluating
-    rejects on subsequent days.  Summarize and discovery are best-effort:
-    a failure in either degrades to empty subject/intro/discoveries and
-    never blocks the send.
+    rejects on subsequent days.  Summarize, discovery, the Hacker News
+    source, and the web-search block are all best-effort: a failure in any
+    of them degrades to empty and never blocks the send.
     """
     # Resolve at call time (not as defaults) so monkeypatching the module
     # attributes in tests is honoured.
     summarize_fn = summarize_fn or summarize.summarize_issue
     discovery_fn = discovery_fn or discovery.find_discoveries
+    hn_fn = hn_fn or hn.fetch_hn_articles
+    websearch_fn = websearch_fn or websearch.search_web
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
     candidates = feeds.fetch_recent(feed_urls, since=since, is_seen=is_seen)
     log.info("fetched %d candidate articles from %d feeds", len(candidates), len(feed_urls))
+
+    # Hacker News, via its rich API, joins the ranking pool so HN stories
+    # compete with RSS for the day's picks. Best-effort and seen-filtered so
+    # it neither breaks the digest nor resurfaces yesterday's stories.
+    try:
+        hn_candidates = [
+            a for a in hn_fn(pages=_HN_PAGES) if not is_seen(str(a.url))
+        ]
+        log.info("fetched %d Hacker News candidates", len(hn_candidates))
+        candidates = _dedupe_candidates(candidates + hn_candidates)
+    except Exception:  # noqa: BLE001 - HN is best effort, never block the send
+        log.exception("Hacker News fetch failed; ranking without it")
+
     date = now.strftime("%Y-%m-%d")
     if not candidates:
         return _build_issue([], date=date), []
@@ -101,6 +158,7 @@ def run_digest(
         profile_md=profile.markdown,
         feedback=feedback,
         candidates=candidates,
+        max_picks=_RANK_MAX_PICKS,
     )
     log.info("claude returned %d picks", len(response.picks))
 
@@ -121,12 +179,27 @@ def run_digest(
     # same is_seen the fetcher uses, so marked-seen discoveries don't recur.
     discoveries = [d for d in discoveries if not is_seen(str(d.url))]
 
+    # The "from around the web" block for the rich web view: a live web search
+    # distilled from the profile, separate from the RSS/HN picks. Best-effort
+    # and seen-filtered like discoveries.
+    web_articles: list[WebArticle] = []
+    try:
+        web_articles = websearch_fn(
+            _web_search_query(profile.markdown),
+            max_results=_WEB_ARTICLES_COUNT,
+            exclude_hosts=_feed_domains(feed_urls),
+        )
+    except Exception:  # noqa: BLE001 - best effort, never block the send
+        log.exception("web search failed; sending without the web block")
+    web_articles = [w for w in web_articles if not is_seen(str(w.url))]
+
     issue = _build_issue(
         response.picks,
         date=date,
         subject=subject,
         intro=intro,
         discoveries=discoveries,
+        web_articles=web_articles,
     )
     return issue, candidates
 
@@ -273,6 +346,7 @@ def handler(event: dict, context: Any) -> dict:
     # they are not re-surfaced on later days.
     seen_urls = [str(a.url) for a in candidates]
     seen_urls += [str(d.url) for d in issue.discoveries]
+    seen_urls += [str(w.url) for w in issue.web_articles]
     if seen_urls:
         db.mark_seen(seen_urls)
 
@@ -328,6 +402,31 @@ def _fake_discoveries(profile_md: str, feed_domains: list[str], **_) -> list[Dis
     ]
 
 
+def _fake_hn(pages: int = 0, **_) -> list[Article]:
+    """Deterministic, offline Hacker News candidates for --dry-run."""
+    return [
+        Article(
+            url="https://news.ycombinator.com/item?id=40000000",
+            title="Show HN: A tiny offline-first note app",
+            summary="312 points, 145 comments on Hacker News (by pg).",
+            source="Hacker News",
+            published=datetime.now(UTC),
+        )
+    ]
+
+
+def _fake_websearch(query: str, **_) -> list[WebArticle]:
+    """Deterministic, offline web-search results for --dry-run."""
+    return [
+        WebArticle(
+            url="https://example.com/web-1",
+            title="An article pulled from the open web",
+            blurb="Sample web-search result rendered in the dry-run output.",
+            source="Example Web",
+        )
+    ]
+
+
 def _dry_run_env() -> None:
     """Force dry-run env values.
 
@@ -379,6 +478,8 @@ def main(argv: list[str] | None = None) -> int:
         rank_fn=_fake_rank,
         summarize_fn=_fake_summarize,
         discovery_fn=_fake_discoveries,
+        hn_fn=_fake_hn,
+        websearch_fn=_fake_websearch,
     )
 
     if not issue.picks:

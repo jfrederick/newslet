@@ -10,6 +10,11 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from newslet import tokens
 from newslet.contracts import Issue
 
+# The email stays a tight digest even though an issue now stores up to 40
+# ranked picks for the web view: render only the strongest few and point at
+# the web view for the rest.
+_EMAIL_PICK_LIMIT = 12
+
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _ENV = Environment(
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
@@ -40,9 +45,13 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     subject = issue.subject or f"newslet — {display_date}"
     base = public_base_url.rstrip("/")
     sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
+    total_picks = len(sorted_picks)
+    email_picks = sorted_picks[:_EMAIL_PICK_LIMIT]
+    # How many more articles wait on the web view (extra picks + the web block).
+    more_on_web = (total_picks - len(email_picks)) + len(issue.web_articles)
 
     ctx_picks: list[dict[str, str]] = []
-    for pick in sorted_picks:
+    for pick in email_picks:
         url_str = str(pick.url)
         token = tokens.sign(url_str, issue.date)
         encoded = quote(url_str, safe="")
@@ -84,5 +93,7 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
         intro=issue.intro,
         discoveries=ctx_discoveries,
         admin_url=f"{base}/",
+        web_view_url=f"{base}/issues/{quote(issue.date, safe='')}",
+        more_on_web=more_on_web,
     )
     return subject, html

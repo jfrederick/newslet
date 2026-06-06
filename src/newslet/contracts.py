@@ -42,6 +42,27 @@ class RankResponse(BaseModel):
     picks: list[Pick]
 
 
+class WebArticle(BaseModel):
+    """An article surfaced for the rich web view, not the email.
+
+    Used for the "from around the web" block (Claude web-search results)
+    and the on-demand subject search ("textbook"). Unlike :class:`Pick`,
+    it carries optional engagement signal (``points``/``comments``) and a
+    separate ``comments_url`` so Hacker News items can link to their
+    discussion thread alongside the article itself. Lenient by design: the
+    extra fields default to empty so a web-search result with no engagement
+    data still validates.
+    """
+
+    url: HttpUrl
+    title: str
+    blurb: str = ""
+    source: str = ""
+    points: int | None = None
+    comments: int | None = None
+    comments_url: str = ""
+
+
 class Discovery(BaseModel):
     """A new candidate source/article surfaced outside the user's feeds.
 
@@ -66,6 +87,10 @@ class Issue(BaseModel):
     subject: str = ""
     intro: str = ""
     discoveries: list[Discovery] = Field(default_factory=list)
+    # The richer web view shows these in a "from around the web" block in
+    # addition to ``picks``; the email never renders them. Optional with a
+    # default so issues persisted before this field existed still load.
+    web_articles: list[WebArticle] = Field(default_factory=list)
 
 
 class FeedbackRow(BaseModel):
