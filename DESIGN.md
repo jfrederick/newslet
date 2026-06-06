@@ -157,9 +157,10 @@ Lambda entry point + CLI dry-run.
 
 `handler` runs the daily pipeline by default; `event={"manual": true}` does an
 isolated send-now and `event={"home": true}` rebuilds the homepage aggregation
-(stored under `HOME_KEY="home"`, no email). `run_digest` takes `max_picks`,
-`max_web`, and `web_variety` (daily reads them from `Config`; the homepage uses
-generous fixed counts).
+(stored under `HOME_KEY="home"`, no email). Two EventBridge schedules drive it:
+the home rebuild at 09:45 UTC (`{"home": true}`) and the email digest at 10:00
+UTC. `run_digest` takes `max_picks`, `max_web`, and `web_variety` (daily reads
+them from `Config`; the homepage uses generous fixed counts).
 
 ```python
 def handler(event: dict, context: object) -> dict: ...
