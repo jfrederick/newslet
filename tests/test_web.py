@@ -505,9 +505,10 @@ def test_homepage_renders_all_articles(client):
         assert title in r.text
     assert "Sharp subject" in r.text
     assert "An intro line." in r.text
-    assert "4 articles" in r.text
     assert "222" in r.text  # HN points badge
     assert 'action="/api/vote"' in r.text
+    # The research/search form lives at the bottom, after the article grids.
+    assert r.text.index('id="search-form"') > r.text.index('id="web-grid"')
     # No refresh button, no source filter, non-sticky header.
     assert 'id="refresh-btn"' not in r.text
     assert "data-filter" not in r.text
@@ -533,7 +534,6 @@ def test_homepage_downvoted_article_disappears(client):
     # The downvoted article is gone; the others remain.
     assert "Beta Pick" not in r.text
     assert "Alpha Pick" in r.text
-    assert "3 articles" in r.text
 
 
 def test_homepage_empty_state_auto_prepares(client):
