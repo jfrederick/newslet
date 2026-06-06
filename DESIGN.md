@@ -182,9 +182,10 @@ handler = Mangum(app)
 
 Routes:
 - `GET /` — the homepage: rich reading UX (`read.html.j2`) over the stored
-  `"home"` aggregation, with sticky +/- voting, a subject-search box, and a
-  Refresh button. Optional `?q=` server-renders a web search. Requires the
-  `admin_token` cookie.
+  `"home"` aggregation, with a today's-date header, +/- voting (upvote sticky,
+  downvote removes the article), and a subject-search box. No refresh button —
+  it auto-regenerates when the stored edition is missing or not from today.
+  Optional `?q=` server-renders a web search. Requires the `admin_token` cookie.
 - `GET /admin` — admin UI (feeds, profile, daily-email settings, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
@@ -192,7 +193,8 @@ Routes:
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
 - `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
-- `GET /issues/{date}` — the as-sent daily email HTML (archive view)
+- `GET /emails` — the sent-email archive index
+- `GET /emails/{date}` — the as-sent daily email HTML (archive view)
 - `POST /api/vote` — `{url, title?, rating, date}`, admin-cookie authed; writes
   a `FeedbackRow` (same shape as `/rate`). JSON for fetch UI, 303 `/` for no-JS.
 - `GET /api/search` — `?q=` admin-authed live web search → JSON cards

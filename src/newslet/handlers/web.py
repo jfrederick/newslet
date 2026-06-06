@@ -125,7 +125,11 @@ def logout() -> Response:
 
 
 def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
-    """Build (pick_cards, web_cards, total) with sticky vote state."""
+    """Build (pick_cards, web_cards, total) with sticky vote state.
+
+    Articles already downvoted are dropped entirely — a downvote makes an
+    article disappear from the page (and stay gone on reload).
+    """
     votes = _vote_lookup(issue)
     sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
     pick_cards = [
@@ -134,6 +138,7 @@ def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
             score=p.score, rating=votes.get(str(p.url), ""),
         )
         for p in sorted_picks
+        if votes.get(str(p.url)) != "down"
     ]
     web_cards = [
         _article_card(
@@ -142,6 +147,7 @@ def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
             points=w.points, comments=w.comments, comments_url=w.comments_url,
         )
         for w in issue.web_articles
+        if votes.get(str(w.url)) != "down"
     ]
     return pick_cards, web_cards, len(pick_cards) + len(web_cards)
 
@@ -153,21 +159,28 @@ def home(
 ) -> HTMLResponse:
     """The newslet homepage: a standalone rich reading surface (separate from
     the daily email) aggregating lots of ranked picks plus an open-web block,
-    with +/- voting, a subject-search box, and a Refresh button that
-    regenerates the content (takes ~a minute, run asynchronously)."""
+    with +/- voting and a subject-search box.
+
+    There is no manual refresh button: the page regenerates itself when the
+    stored edition is missing or not from today (the client auto-kicks the
+    async rebuild and reloads when it lands)."""
     _require_admin(admin_token)
+    now = datetime.now(UTC)
     issue = db.get_issue(_HOME_KEY)
 
     pick_cards: list[dict] = []
     web_cards: list[dict] = []
     total = 0
     subject = intro = ""
-    created_iso = created_label = ""
+    created_iso = ""
     if issue is not None:
         pick_cards, web_cards, total = _home_cards(issue)
         subject, intro = issue.subject, issue.intro
         created_iso = issue.created_at.isoformat()
-        created_label = issue.created_at.strftime("%b %d, %H:%M UTC")
+
+    # Regenerate when there is no edition yet, or the stored one is from an
+    # earlier day — so the homepage is always "today's edition".
+    stale = issue is None or issue.created_at.date() != now.date()
 
     # Optional inline subject search (progressive-enhancement fallback).
     query = (q or "").strip()
@@ -184,14 +197,15 @@ def home(
 
     html = _TEMPLATES.get_template("read.html.j2").render(
         vote_key=_HOME_KEY,
+        date_header=now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y"),
         subject=subject,
         intro=intro,
         picks=pick_cards,
         web_articles=web_cards,
         total=total,
         has_content=issue is not None,
+        stale=stale,
         created_iso=created_iso,
-        created_label=created_label,
         query=query,
         search_results=search_cards,
     )
@@ -235,10 +249,10 @@ def admin_index(
     return HTMLResponse(html)
 
 
-@app.get("/issues", response_class=HTMLResponse)
-def issues_index(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
+@app.get("/emails", response_class=HTMLResponse)
+def emails_index(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
     _require_admin(admin_token)
-    html = _TEMPLATES.get_template("issues.html.j2").render(
+    html = _TEMPLATES.get_template("emails.html.j2").render(
         issues=db.list_issues(limit=60),
     )
     return HTMLResponse(html)
@@ -522,13 +536,13 @@ def _article_card(*, url, title, blurb, source, score, rating,
     }
 
 
-@app.get("/issues/{date}", response_class=HTMLResponse)
-def view_issue(
+@app.get("/emails/{date}", response_class=HTMLResponse)
+def view_email(
     date: str,
     request: Request,
     admin_token: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    """Re-render a past daily issue's email HTML (the as-sent archive view).
+    """Re-render a past daily email's HTML (the as-sent archive view).
 
     The rich, browse-everything experience lives on the homepage (``/``); the
     issue archive deliberately shows the email exactly as it was sent, so the

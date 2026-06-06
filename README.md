@@ -18,7 +18,9 @@ richer web experience: a large aggregation of ranked picks plus an
 open-web block, with sticky `+`/`−` voting that feeds the same ranking
 loop, a "research a subject" box that runs a fresh web search on whatever
 topic you type, and a **Refresh** button that regenerates the whole page
-(it takes ~a minute). Past daily emails are archived at `/issues/<date>`.
+Past daily emails are archived at `/emails/<date>`. The homepage has no
+manual refresh button — it regenerates itself when the stored edition
+isn't from today (the rebuild runs asynchronously and takes ~a minute).
 
 ## Architecture
 

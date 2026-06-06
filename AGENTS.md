@@ -70,8 +70,9 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
 | `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link) |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
-| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/issues/{date}` email archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/home/*`) |
-| `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search, Refresh) |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/home/*`) |
+| `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search; auto-regenerates when stale) |
+| `templates/emails.html.j2` | the sent-email archive list |
 | `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, send now) |
 | `infra/template.yaml` | SAM stack |
 
@@ -87,16 +88,20 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   network edge injectable (HN takes a `fetch` callable; websearch a `client`;
   `run_digest` takes `hn_fn`/`websearch_fn`) so tests stay offline.
 - **Email vs. homepage are separate surfaces:**
-  - The **daily email** (`/issues/{date}` archive renders it as-sent) carries
-    `Config.max_rss_articles` ranked picks (RSS + Hacker News) plus
-    `Config.max_web_articles` open-web results, both votable via the signed
-    `/rate` link, plus discoveries. It links generically to the homepage.
+  - The **daily email** (`/emails/{date}` archive renders it as-sent; the
+    `/emails` list is the archive index) carries `Config.max_rss_articles`
+    ranked picks (RSS + Hacker News) plus `Config.max_web_articles` open-web
+    results, both votable via the signed `/rate` link, plus discoveries. It
+    links generically to the homepage.
   - The **homepage** (`/`, `read.html.j2`) is the rich, browse-everything web
     experience: a separate aggregation stored under the reserved issue key
-    `"home"` (see `digest.HOME_KEY`), regenerated on demand by the Refresh
-    button (`/api/home/refresh` → async digest `{"home": true}` → poll
-    `/api/home/status`). Voting uses `/api/vote` (admin cookie) writing the
-    same `FeedbackRow` shape as `/rate`, so both feed the next ranking.
+    `"home"` (see `digest.HOME_KEY`). There is **no refresh button** — the
+    page auto-regenerates when the stored edition is missing or not from today
+    (client kicks `/api/home/refresh` → async digest `{"home": true}`, polls
+    `/api/home/status`, reloads). Voting uses `/api/vote` (admin cookie),
+    same `FeedbackRow` shape as `/rate`; an **upvote** is sticky and a
+    **downvote removes** the article from the page (and it stays gone — the
+    home view drops already-downvoted articles).
 - **Admin config** lives in the profile table under `id="config"`
   (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
   `max_web_articles`, and `web_variety` (0–100 exploration dial for

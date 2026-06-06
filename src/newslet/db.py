@@ -270,7 +270,7 @@ def get_issue(date: str) -> Issue | None:
     # Validate discoveries leniently: issues persisted before feed_url became
     # required (added for one-click subscribe) have discovery rows without it,
     # and a strict validate here would raise and make the whole issue
-    # unreadable — breaking /rate and /issues/{date} for every old issue that
+    # unreadable — breaking /rate and /emails/{date} for every old issue that
     # had discoveries. Skip the unrenderable ones instead; picks and the
     # rating links (the load-bearing part of an archived issue) still resolve.
     discoveries_raw = json.loads(item.get("discoveries_json", "[]"))
