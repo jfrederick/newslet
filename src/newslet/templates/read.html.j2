@@ -127,12 +127,23 @@
     <div class="dateline">{{ date_header|e }}</div>
     {% if subject %}<h1>{{ subject|e }}</h1>{% endif %}
     {% if intro %}<p>{{ intro|e }}</p>{% endif %}
-    {% if has_content %}
-    <p class="count">{{ total }} articles · {{ picks|length }} ranked · {{ web_articles|length }} from around the web. <span style="color:var(--ok)">+</span> keeps · <span style="color:var(--bad)">−</span> removes — both tune future ranking.</p>
-    {% endif %}
   </div>
 
   <div class="spinner" id="prep-spinner">Preparing today's edition — this takes about a minute…</div>
+
+  {% if picks %}
+  <h2 class="section">Ranked picks</h2>
+  <div class="grid" id="picks-grid">
+    {% for c in picks %}{{ card(c) }}{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if web_articles %}
+  <h2 class="section">From around the web</h2>
+  <div class="grid" id="web-grid">
+    {% for c in web_articles %}{{ card(c) }}{% endfor %}
+  </div>
+  {% endif %}
 
   <!-- Research desk: type a subject, the web search hones in -->
   <section class="research">
@@ -153,20 +164,6 @@
       {% endif %}
     </div>
   </section>
-
-  {% if picks %}
-  <h2 class="section">Ranked picks</h2>
-  <div class="grid" id="picks-grid">
-    {% for c in picks %}{{ card(c) }}{% endfor %}
-  </div>
-  {% endif %}
-
-  {% if web_articles %}
-  <h2 class="section">From around the web</h2>
-  <div class="grid" id="web-grid">
-    {% for c in web_articles %}{{ card(c) }}{% endfor %}
-  </div>
-  {% endif %}
 </div>
 
 <script>
