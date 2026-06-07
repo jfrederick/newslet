@@ -19,8 +19,8 @@ class Settings:
     anthropic_api_key: str
     claude_model: str
 
-    # xAI / Grok — optional X (Twitter) source via Grok Live Search. The key is
-    # blank until configured; the X source then degrades to "disabled" rather
+    # xAI / Grok — optional X (Twitter) source via Grok's x_search tool. The key
+    # is blank until configured; the X source then degrades to "disabled" rather
     # than breaking the digest (see :mod:`newslet.x_grok`).
     xai_api_key: str
     xai_model: str
@@ -121,7 +121,7 @@ def settings() -> Settings:
         anthropic_api_key=_secret("ANTHROPIC_API_KEY", "anthropic-api-key"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-7"),
         xai_api_key=_optional_secret("XAI_API_KEY", "xai-api-key"),
-        xai_model=os.environ.get("XAI_MODEL", "grok-4-latest"),
+        xai_model=os.environ.get("XAI_MODEL", "grok-4.3"),
         resend_api_key=_secret("RESEND_API_KEY", "resend-api-key"),
         from_email=_required("FROM_EMAIL"),
         to_email=_required("TO_EMAIL"),

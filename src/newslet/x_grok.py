@@ -1,10 +1,14 @@
-"""X (Twitter) as a ranking source, via xAI's Grok with Live Search.
+"""X (Twitter) as a ranking source, via xAI's Grok ``x_search`` tool.
 
 X's own API has no free read tier — pulling timelines/search needs the paid
-Basic plan ($200/mo+). xAI's Grok API instead exposes **Live Search**, which
-can read X directly as a search source and bills per-use (cents for a daily
-digest's handful of posts), so we get fresh, on-profile posts without the flat
-monthly floor and without scraping.
+Basic plan ($200/mo+). xAI's Grok instead exposes a server-side **``x_search``
+tool** (the Agent Tools API, on ``POST /v1/responses``) that reads X directly
+and bills per-use (cents for a daily digest's handful of posts), so we get
+fresh, on-profile posts without the flat monthly floor and without scraping.
+
+This replaces xAI's older "Live Search" API (``search_parameters`` on
+``/v1/chat/completions``), which xAI retired on 2026-01-12 — those requests now
+return ``410 Gone``. See https://docs.x.ai/developers/tools/x-search.
 
 Shape mirrors the other ranking-pool sources (:mod:`newslet.hn`,
 :mod:`newslet.newsletters`): :func:`fetch_x_articles` returns ``list[Article]``
@@ -15,8 +19,8 @@ otherwise.
 
 Best-effort throughout: a missing key, a network/parse error, or an empty reply
 yields ``[]`` rather than raising — X must never block a send. The network edge
-is an injected ``complete`` callable (a single chat-completion request → parsed
-JSON response) so tests stay offline and we pull in no new SDK dependency.
+is an injected ``complete`` callable (a single Responses request → parsed JSON
+response) so tests stay offline and we pull in no new SDK dependency.
 """
 
 from __future__ import annotations
@@ -35,42 +39,37 @@ from .discovery import _extract_json_object  # shared JSON-from-model-reply help
 
 logger = logging.getLogger(__name__)
 
-# xAI's OpenAI-compatible chat-completions endpoint. Live Search is requested
-# via the ``search_parameters`` extension on the request body.
-_XAI_ENDPOINT = "https://api.x.ai/v1/chat/completions"
-_REQUEST_TIMEOUT = 20
+# xAI's Responses (Agent Tools) endpoint. The X source is requested by putting
+# the server-side ``x_search`` tool in the ``tools`` array.
+_XAI_ENDPOINT = "https://api.x.ai/v1/responses"
+_REQUEST_TIMEOUT = 30
 _USER_AGENT = "newslet/1.0 (+https://github.com/jfrederick/newslet)"
 
 # How recent a post must be to count as "today's" — mirrors the digest's 24h
 # RSS window, with a day of slack so timezone boundaries don't drop anything.
 _RECENCY = timedelta(days=2)
 
-_SYSTEM_PROMPT = """\
-You surface the best recent posts from X (Twitter) for a personalized daily \
-news digest. Use Live Search over X to find up to {max_results} high-signal, \
-RECENT posts that match the user's interests. Prefer substantive posts from \
-credible accounts — analysis, primary-source news, expert threads — over memes, \
-engagement bait, and ads. Skip near-duplicates.
+# The x_search tool is agentic (no result-cap parameter), so the post count is
+# steered through the prompt and enforced when we slice the parsed output.
+_PROMPT = """\
+Use X search to find up to {max_results} high-signal, RECENT posts from X \
+(Twitter) that match the interests below. Prefer substantive posts from \
+credible accounts — analysis, primary-source news, expert threads — over \
+memes, engagement bait, and ads. Skip near-duplicates.
 
+# Interests
+{query}
+
+# Output
 Reply with ONLY a JSON object (no prose, no markdown fences) matching this \
 schema:
-
-{{
-  "posts": [
-    {{
-      "url":     "<canonical link to the post (https://x.com/<user>/status/<id>)>",
-      "author":  "<the posting account's @handle>",
-      "text":    "<the post's text, lightly trimmed>",
-      "likes":   <integer like count, or 0 if unknown>,
-      "reposts": <integer repost count, or 0 if unknown>
-    }}
-  ]
-}}
+{{"posts": [{{"url": "https://x.com/<user>/status/<id>", "author": "@handle", \
+"text": "the post text", "likes": 0, "reposts": 0}}]}}
 """
 
 
 def _default_complete(payload: dict, api_key: str) -> dict:
-    """POST ``payload`` to the xAI endpoint and return the parsed JSON reply.
+    """POST ``payload`` to the xAI Responses endpoint and parse the JSON reply.
 
     Used in production; tests inject a fake ``complete`` instead.
     """
@@ -89,16 +88,29 @@ def _default_complete(payload: dict, api_key: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _message_content(response: dict) -> str | None:
-    """Pull the assistant message text out of an OpenAI-shaped reply."""
+def _output_text(response: dict) -> str | None:
+    """Pull the final assistant text out of a Responses-API reply.
+
+    The Responses output is a list of items (reasoning, tool calls, then the
+    assistant ``message``); the answer lives in the message's ``output_text``
+    content block(s). Some gateways also surface a convenience ``output_text``
+    aggregate — prefer it when present.
+    """
     if not isinstance(response, dict):
         return None
-    choices = response.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    return content if isinstance(content, str) else None
+    aggregate = response.get("output_text")
+    if isinstance(aggregate, str) and aggregate.strip():
+        return aggregate
+    parts: list[str] = []
+    for item in response.get("output", []) or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for block in item.get("content", []) or []:
+            if isinstance(block, dict) and block.get("type") in ("output_text", "text"):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+    return "\n".join(parts) if parts else None
 
 
 def _summary_for(post: dict) -> str:
@@ -175,23 +187,21 @@ def fetch_x_articles(
     now = now or datetime.now(UTC)
     model = model or settings().xai_model
 
-    search_parameters: dict = {
-        "mode": "on",
-        "sources": [{"type": "x"}],
-        "max_search_results": max(1, max_results),
-        "return_citations": True,
-    }
+    # The X source = the server-side x_search tool. Recency goes in the tool
+    # itself (from_date), per the Agent Tools API.
+    x_search_tool: dict = {"type": "x_search"}
     if recent:
-        search_parameters["from_date"] = (now - _RECENCY).strftime("%Y-%m-%d")
+        x_search_tool["from_date"] = (now - _RECENCY).strftime("%Y-%m-%d")
 
     payload = {
         "model": model,
-        "temperature": 0,
-        "search_parameters": search_parameters,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT.format(max_results=max_results)},
-            {"role": "user", "content": query.strip()},
+        "input": [
+            {
+                "role": "user",
+                "content": _PROMPT.format(max_results=max_results, query=query.strip()),
+            }
         ],
+        "tools": [x_search_tool],
     }
 
     try:
@@ -200,9 +210,9 @@ def fetch_x_articles(
         logger.warning("x: API call failed: %s", exc)
         return []
 
-    text = _message_content(response)
+    text = _output_text(response)
     if text is None:
-        logger.warning("x: no message content in response")
+        logger.warning("x: no output text in response")
         return []
 
     json_str = _extract_json_object(text)
