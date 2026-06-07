@@ -40,6 +40,19 @@ pushing — running only `pytest` will miss lint failures:
 .venv/bin/python -m pytest -q
 ```
 
+Browser end-to-end tests (`tests/e2e/`, Playwright) are **opt-in** — the
+default `pytest -q` run deselects them (marker `e2e`). They drive the real
+FastAPI app in Chromium, served by `uvicorn` in-process against moto-backed
+DynamoDB, so they stay offline like the rest of the suite. Run them with:
+
+```bash
+.venv/bin/playwright install chromium   # one-time; downloads the browser
+.venv/bin/python -m pytest -m e2e
+```
+
+CI runs them in a dedicated `e2e` job (separate from the fast unit gate); both
+gate deploy.
+
 Render a sample email locally (no network, no AWS) to eyeball template
 changes:
 
@@ -118,6 +131,11 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   resend → monkeypatched**.
 - `test_integration.py` and `test_web.py` are integration-level (real modules
   composed, only the edges faked); the rest are unit tests.
+- `tests/e2e/` is the Playwright browser suite (opt-in, marker `e2e`): it
+  serves the app via `uvicorn` in a background thread inside the active moto
+  mock and drives it in Chromium. New tests under that dir are auto-marked
+  `e2e` by its `conftest.py`. Keep them offline — exercise only routes that
+  read DynamoDB, never the Anthropic-backed paths.
 - When adding a real network/IO call in production code, make it **injectable**
   (a callable arg, like `feeds.fetch_recent`'s `is_seen`) so tests can
   substitute a fake and stay offline.

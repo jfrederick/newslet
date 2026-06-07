@@ -10,5 +10,6 @@ out/
 .aws-sam/
 .pytest_cache/
 .ruff_cache/
+test-results/
 dist/
 build/
