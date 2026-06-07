@@ -37,6 +37,14 @@ class Settings:
     # the admin "send now" button. Empty on the digest Lambda itself.
     digest_function_name: str
 
+    # Newsletter subscriptions (inbound email source).
+    # ``mail_domain`` is the domain SES receives newsletter mail on (MX points
+    # at SES); generated subscription addresses live under it. Empty until a
+    # domain is wired up — the admin UI degrades gracefully when it is.
+    # ``inbox_bucket`` is the S3 bucket SES drops raw inbound mail into.
+    mail_domain: str
+    inbox_bucket: str
+
     # AWS / Dynamo
     aws_region: str
     table_feeds: str
@@ -44,6 +52,8 @@ class Settings:
     table_seen: str
     table_issues: str
     table_feedback: str
+    table_subscriptions: str
+    table_inbox: str
 
 
 def _required(name: str) -> str:
@@ -89,10 +99,16 @@ def settings() -> Settings:
         # Not required on the web Lambda — see Settings.public_base_url.
         public_base_url=os.environ.get("PUBLIC_BASE_URL", ""),
         digest_function_name=os.environ.get("DIGEST_FUNCTION_NAME", ""),
+        mail_domain=os.environ.get("MAIL_DOMAIN", ""),
+        inbox_bucket=os.environ.get("INBOX_BUCKET", ""),
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),
         table_feeds=os.environ.get("TABLE_FEEDS", "newslet-feeds"),
         table_profile=os.environ.get("TABLE_PROFILE", "newslet-profile"),
         table_seen=os.environ.get("TABLE_SEEN", "newslet-seen-articles"),
         table_issues=os.environ.get("TABLE_ISSUES", "newslet-issues"),
         table_feedback=os.environ.get("TABLE_FEEDBACK", "newslet-feedback"),
+        table_subscriptions=os.environ.get(
+            "TABLE_SUBSCRIPTIONS", "newslet-subscriptions"
+        ),
+        table_inbox=os.environ.get("TABLE_INBOX", "newslet-inbox"),
     )

@@ -68,7 +68,22 @@ def get_issue(date: str) -> Issue | None: ...
 # Feedback
 def put_feedback(row: FeedbackRow) -> None: ...
 def recent_feedback(limit: int = 50) -> list[FeedbackRow]: ...
+
+# Newsletter subscriptions (inbound-email source)
+def add_subscription(source: str, *, address: str) -> Subscription: ...
+def list_subscriptions() -> list[Subscription]: ...
+def get_subscription(address: str) -> Subscription | None: ...   # case-insensitive
+def delete_subscription(address: str) -> None: ...
+def mark_subscription_confirmed(address: str, *, when=None) -> None: ...
+def touch_subscription(address: str, *, when=None) -> None: ...
+
+# Inbox (received newsletters → extracted Article candidates, 30d TTL)
+def put_inbox_email(*, message_id, source, address, articles, received_at) -> None: ...
+def recent_inbox_articles(since: datetime, *, now=None) -> list[Article]: ...
 ```
+
+Addresses are stored lowercased so inbound matching is case-insensitive
+regardless of how SES/the sender cases the recipient.
 
 URLs are hashed with `hashlib.sha256(url.encode()).hexdigest()` for the
 `SeenArticles` PK so URL length never matters.
@@ -133,6 +148,45 @@ on the profile, high roams into related ancillary areas (never random).
 `max_searches`/`model` let the interactive subject box use a fast model and
 few rounds to fit the HTTP API's ~30s limit.
 
+### `newslet.newsletters`
+
+Pure parsing of inbound newsletter email into ranking candidates, plus
+double-opt-in handling. No DynamoDB; no network (the confirm-link *follow*
+lives in the inbound handler, where it is injectable).
+
+```python
+def generate_address(domain: str) -> str: ...        # n-<hex>@domain; raises if no domain
+def parse_email(raw: bytes) -> ParsedEmail: ...       # never raises
+def extract_links(parsed: ParsedEmail) -> list[tuple[str, str]]: ...   # (url, anchor)
+def extract_articles(parsed, source, *, now=None, max_articles=30) -> list[Article]: ...
+def is_confirmation(parsed: ParsedEmail) -> bool: ...
+def find_confirmation_link(parsed: ParsedEmail) -> str | None: ...
+```
+
+Extraction is heuristic and lenient: it keeps headline-shaped links from the
+HTML body (or bare URLs from a plain-text-only body), drops chrome
+(unsubscribe / preferences / social / "view in browser"), dedupes, and uses the
+message Date (or `now`) as each candidate's `published` so the digest's 24h
+window includes it.
+
+### `newslet.handlers.inbound`
+
+SES-invoked Lambda entry point for received newsletter mail.
+
+```python
+def handler(event: dict, context: object) -> dict: ...   # never raises per-record
+def process_message(
+    raw: bytes, recipients: list[str], message_id: str,
+    *, confirm=_follow_link, now=None,
+) -> dict: ...   # core, network-injectable
+```
+
+`handler` loads each message's raw MIME from S3 (`inbound/<messageId>`), matches
+the recipient to a `Subscription`, and either auto-follows a confirmation link
+(`mark_subscription_confirmed`) or extracts links and stores them
+(`put_inbox_email` + `touch_subscription`). One record's failure is logged and
+swallowed so SES does not retry the whole batch.
+
 ### `newslet.email_render`
 
 ```python
@@ -193,6 +247,8 @@ Routes:
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
 - `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety}` → 303 `/admin`
+- `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
+- `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
 - `GET /emails` — the sent-email archive index
 - `GET /emails/{date}` — the as-sent daily email HTML (archive view)
@@ -212,6 +268,12 @@ Routes:
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
 | `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `discoveries_json`, `web_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
+| `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
+| `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |
+
+`newslet-inbox` has a GSI `inbox-by-ts` (HASH `bucket` = year, RANGE
+`received_at`) so `recent_inbox_articles` reads a time range without a scan —
+the same shard pattern as `feedback-by-ts`.
 
 ## Claude prompt JSON shape
 

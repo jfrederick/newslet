@@ -19,6 +19,7 @@ def env(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "supersecret")
     monkeypatch.setenv("SIGNING_KEY", "signing-key")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("MAIL_DOMAIN", "inbox.example.com")
     monkeypatch.setenv("AWS_REGION", "us-east-1")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     from newslet.config import settings
@@ -80,6 +81,12 @@ def aws(env):
             ],
             BillingMode="PAY_PER_REQUEST",
         )
+        ddb.create_table(
+            TableName="newslet-subscriptions",
+            KeySchema=[{"AttributeName": "address", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "address", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
         yield
 
 
@@ -136,6 +143,39 @@ def test_profile_save(client):
     assert r.status_code == 303
     r = client.get("/admin")
     assert "I like LLMs and Postgres." in r.text
+
+
+def test_subscription_create_and_delete_roundtrip(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/subscriptions", data={"source": "Stratechery"})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin"
+
+    r = client.get("/admin")
+    assert r.status_code == 200
+    assert "Stratechery" in r.text
+    assert "@inbox.example.com" in r.text  # a generated address is shown
+
+    # Pull the generated address out of the DB to delete it.
+    from newslet import db
+
+    subs = db.list_subscriptions()
+    assert len(subs) == 1
+    addr = subs[0].address
+
+    r = client.post("/api/subscriptions/delete", data={"address": addr})
+    assert r.status_code == 303
+    assert db.list_subscriptions() == []
+
+
+def test_subscription_create_requires_mail_domain(client, monkeypatch):
+    from newslet.config import settings
+
+    monkeypatch.setenv("MAIL_DOMAIN", "")
+    settings.cache_clear()
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/subscriptions", data={"source": "X"})
+    assert r.status_code == 503
 
 
 def test_rate_rejects_unsigned_token(client):
