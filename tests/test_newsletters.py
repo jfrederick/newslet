@@ -197,3 +197,20 @@ def test_find_confirmation_link_none_when_absent():
         _build_email(subject="Confirm", html='<a href="https://news.example/home">home</a>')
     )
     assert newsletters.find_confirmation_link(parsed) is None
+
+
+def test_find_confirmation_link_allows_account_path():
+    # An /account-style confirm link must not be pre-filtered as boilerplate.
+    html = '<a href="https://account.example.com/verify?token=abc">Confirm your subscription</a>'
+    parsed = newsletters.parse_email(_build_email(subject="Confirm", html=html))
+    assert (
+        newsletters.find_confirmation_link(parsed)
+        == "https://account.example.com/verify?token=abc"
+    )
+
+
+def test_find_confirmation_link_ignores_click_tracker():
+    # A generic /c/ click-tracker is not a confirmation link.
+    html = '<a href="https://news.example/c/track123">Read the full story</a>'
+    parsed = newsletters.parse_email(_build_email(subject="Confirm", html=html))
+    assert newsletters.find_confirmation_link(parsed) is None

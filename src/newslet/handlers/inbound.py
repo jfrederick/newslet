@@ -16,11 +16,15 @@ confirmation-link follow) are injectable so tests stay offline.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from newslet import db, newsletters
 from newslet.config import settings
@@ -48,16 +52,53 @@ def _load_raw(message_id: str) -> bytes:
     return obj["Body"].read()
 
 
+def _is_public_url(url: str) -> bool:
+    """True if ``url`` is http(s) and every resolved IP is publicly routable.
+
+    Confirmation links come from untrusted inbound email, so before we GET one
+    we refuse anything that resolves into private/loopback/link-local space —
+    otherwise a confirmation-shaped email could drive an arbitrary internal GET
+    (SSRF). Re-checked on every redirect hop via :class:`_PublicOnlyRedirect`.
+    """
+    parts = urlparse(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port)
+    except OSError:
+        return False
+    for *_, sockaddr in infos:
+        try:
+            if not ipaddress.ip_address(sockaddr[0]).is_global:
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+class _PublicOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    """Re-validate each redirect target so a 3xx can't bounce us into a private host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_public_url(newurl):
+            raise urllib.error.URLError(f"unsafe redirect target: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _follow_link(url: str) -> bool:
     """GET a confirmation URL; True on a 2xx/3xx response, False otherwise.
 
     Newsletters confirm via a plain link click, so a GET is almost always the
-    right verb. We never raise — a failed confirm just leaves the subscription
-    ``pending`` for the user to resolve manually.
+    right verb. We never raise — a failed (or refused) confirm just leaves the
+    subscription ``pending`` for the user to resolve manually.
     """
+    if not _is_public_url(url):
+        log.warning("refusing to follow non-public confirmation link %s", url)
+        return False
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _CONFIRM_UA})
-        with urllib.request.urlopen(req, timeout=_CONFIRM_TIMEOUT) as resp:  # noqa: S310
+        opener = urllib.request.build_opener(_PublicOnlyRedirect)
+        with opener.open(req, timeout=_CONFIRM_TIMEOUT) as resp:  # noqa: S310
             return 200 <= resp.status < 400
     except Exception:  # noqa: BLE001 - any network/HTTP error -> not confirmed
         log.warning("confirmation follow failed for %s", url, exc_info=True)
@@ -96,19 +137,25 @@ def process_message(
         log.warning("no subscription matches recipients %r; dropping", recipients)
         return {"status": "no_match"}
 
-    if newsletters.is_confirmation(parsed):
+    # Only treat a message as a confirmation when the subscription is still
+    # awaiting opt-in AND we actually find a confirmation link. A confirmation
+    # false-positive (footer boilerplate on a real issue) then falls through to
+    # extraction rather than silently dropping that issue's articles.
+    if sub.status == "pending" and newsletters.is_confirmation(parsed):
         link = newsletters.find_confirmation_link(parsed)
-        if not link:
-            log.info("confirmation email for %s but no link found", sub.address)
-            return {"status": "confirm_no_link", "address": sub.address}
-        ok = confirm(link)
-        if ok:
-            db.mark_subscription_confirmed(sub.address, when=now)
-            log.info("auto-confirmed subscription %s (%s)", sub.address, sub.source)
-        return {
-            "status": "confirmed" if ok else "confirm_failed",
-            "address": sub.address,
-        }
+        if link:
+            ok = confirm(link)
+            if ok:
+                db.mark_subscription_confirmed(sub.address, when=now)
+                log.info("auto-confirmed subscription %s (%s)", sub.address, sub.source)
+            return {
+                "status": "confirmed" if ok else "confirm_failed",
+                "address": sub.address,
+            }
+        log.info(
+            "confirmation-shaped email for %s but no link; extracting articles",
+            sub.address,
+        )
 
     articles = newsletters.extract_articles(parsed, source=sub.source, now=now)
     db.put_inbox_email(
