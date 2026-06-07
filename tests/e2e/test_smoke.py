@@ -44,7 +44,7 @@ def test_admin_feed_roundtrip(live_server: str, page: Page) -> None:
     # Add a feed through the real form and confirm it shows up.
     page.fill("form[action='/api/feeds'] input[name=url]", "https://example.com/rss")
     page.click("form[action='/api/feeds'] button[type=submit]")
-    expect(page.locator("input[value='https://example.com/rss']")).to_be_visible()
+    expect(page.locator("input[value='https://example.com/rss']")).to_have_count(1)
 
     # Delete it again (the delete form confirms via window.confirm).
     page.on("dialog", lambda dialog: dialog.accept())

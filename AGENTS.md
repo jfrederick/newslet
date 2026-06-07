@@ -50,8 +50,8 @@ DynamoDB, so they stay offline like the rest of the suite. Run them with:
 .venv/bin/python -m pytest -m e2e
 ```
 
-CI runs them in a dedicated `e2e` job (separate from the fast unit gate); both
-gate deploy.
+CI does not yet run them — a dedicated `e2e` job (separate from the fast unit
+gate, gating deploy alongside the unit job) is a pending follow-up.
 
 Render a sample email locally (no network, no AWS) to eyeball template
 changes:
