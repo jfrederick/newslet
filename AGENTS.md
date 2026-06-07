@@ -64,7 +64,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
-| `x_grok.py` | X (Twitter) ranking candidates via xAI Grok Live Search, injected `complete`; on only when `XAI_API_KEY` is set |
+| `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |

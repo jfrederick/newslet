@@ -14,7 +14,7 @@ lets the web search roam from strictly on-topic to exploratory, related
 ancillary areas.
 
 You can optionally add **X (Twitter)** as a source without paying for X's
-API: if you set an xAI API key, newslet asks **Grok's Live Search** for
+API: if you set an xAI API key, newslet asks **Grok's `x_search` tool** for
 recent posts matching your profile and folds them into the daily ranking
 pool alongside RSS and Hacker News. It's billed per-use by xAI (cents a
 day), so you skip X's flat paid-API floor. The source stays dormant until a
@@ -164,10 +164,10 @@ the crons in `infra/template.yaml` if you want different times of day
 ### Optional: X (Twitter) via Grok
 
 newslet can pull recent, on-profile posts from X into the daily ranking
-pool — without paying for X's API. It goes through **xAI's Grok Live
-Search**, which can read X as a search source and bills per-use (a daily
-digest's handful of posts costs cents), so you avoid X's flat paid-API
-floor and any scraping.
+pool — without paying for X's API. It goes through **xAI's Grok `x_search`
+tool** (the Agent Tools API), which reads X as a search source and bills
+per-use (a daily digest's handful of posts costs cents), so you avoid X's
+flat paid-API floor and any scraping.
 
 It's off until you add a key. To enable it:
 
@@ -179,10 +179,10 @@ aws ssm put-parameter --region $REGION --type SecureString \
 
 The digest Lambda already has permission to read `/newslet/*` and decrypt
 it, so no redeploy is needed — the source switches on at the next cold
-start. The model defaults to `grok-4-latest`; override it by setting the
-`XAI_MODEL` env var on the digest function if you want a different Grok
-model. With no key set, the source simply stays empty and the digest runs
-exactly as before.
+start. The model defaults to `grok-4.3` (a reasoning model — the `x_search`
+tool requires one); override it with the `XAI_MODEL` env var on the digest
+function for a different Grok model. With no key set, the source simply
+stays empty and the digest runs exactly as before.
 
 ### Optional: subscribing to newsletters
 

@@ -39,12 +39,25 @@ def _reply(*posts: dict) -> str:
 
 
 def _fake_complete(reply: str):
-    """Build a complete(payload, api_key) that returns an xAI-shaped reply."""
+    """Build a complete(payload, api_key) returning a Responses-API reply.
+
+    The Responses output is a list of items; the assistant text lives in a
+    ``message`` item's ``output_text`` content block.
+    """
     calls: list[dict] = []
 
     def complete(payload: dict, api_key: str) -> dict:
         calls.append({"payload": payload, "api_key": api_key})
-        return {"choices": [{"message": {"content": reply}}]}
+        return {
+            "output": [
+                {"type": "reasoning", "content": []},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": reply}],
+                },
+            ]
+        }
 
     complete.calls = calls  # type: ignore[attr-defined]
     return complete
@@ -127,21 +140,38 @@ def test_api_exception_returns_empty(env):
     assert x_grok.fetch_x_articles("topic", complete=boom) == []
 
 
-def test_request_targets_x_live_search(env):
-    """The request asks xAI Live Search to read X, recent-only, with the key."""
+def test_request_uses_x_search_tool_on_responses_api(env):
+    """The request uses the Agent Tools x_search tool, recent-only, with key."""
     complete = _fake_complete(_reply(_post("https://x.com/a/status/1")))
     x_grok.fetch_x_articles("topic", complete=complete, model="grok-test")
     call = complete.calls[0]
     assert call["api_key"] == "xai-test-key"
     payload = call["payload"]
     assert payload["model"] == "grok-test"
-    sp = payload["search_parameters"]
-    assert sp["mode"] == "on"
-    assert sp["sources"] == [{"type": "x"}]
-    assert "from_date" in sp  # recent=True by default
+    # Responses API: `input`, not chat `messages`; no legacy search_parameters.
+    assert "input" in payload
+    assert "search_parameters" not in payload
+    tool = payload["tools"][0]
+    assert tool["type"] == "x_search"
+    assert "from_date" in tool  # recent=True puts recency in the tool itself
 
 
 def test_model_defaults_to_configured(env):
     complete = _fake_complete(_reply(_post("https://x.com/a/status/1")))
     x_grok.fetch_x_articles("topic", complete=complete)
     assert complete.calls[0]["payload"]["model"] == settings().xai_model
+
+
+def test_reads_output_text_aggregate(env):
+    """A reply that only carries the convenience output_text aggregate parses."""
+    def complete(payload, api_key):
+        return {"output_text": _reply(_post("https://x.com/a/status/1"))}
+
+    out = x_grok.fetch_x_articles("topic", complete=complete)
+    assert [str(a.url) for a in out] == ["https://x.com/a/status/1"]
+
+
+def test_recent_false_omits_date_range(env):
+    complete = _fake_complete(_reply(_post("https://x.com/a/status/1")))
+    x_grok.fetch_x_articles("topic", complete=complete, recent=False)
+    assert "from_date" not in complete.calls[0]["payload"]["tools"][0]

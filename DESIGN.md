@@ -150,10 +150,12 @@ few rounds to fit the HTTP API's ~30s limit.
 
 ### `newslet.x_grok`
 
-X (Twitter) as a ranking-pool source via xAI's Grok **Live Search**. Returns
-`Article` candidates that compete with RSS/HN for the day's picks. The network
-edge is an injected `complete(payload, api_key) -> dict` (one chat-completion
-request → parsed JSON), so no new SDK dependency and tests stay offline.
+X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
+Agent Tools API on `POST /v1/responses`; the older Live Search API was retired
+2026-01-12). Returns `Article` candidates that compete with RSS/HN for the
+day's picks. The network edge is an injected `complete(payload, api_key) -> dict`
+(one Responses request → parsed JSON), so no new SDK dependency and tests stay
+offline.
 
 ```python
 def fetch_x_articles(
