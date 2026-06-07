@@ -203,6 +203,55 @@
     </section>
 
     <section>
+      <h2>Newsletter subscriptions<span class="count">({{ subscriptions|length }})</span></h2>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
+        Subscribe to email newsletters as a source. Generate an address, paste it
+        into the newsletter's signup form, and newslet folds its links into the
+        daily ranking. Double opt-in confirmations are followed automatically.
+      </p>
+
+      {% if not mail_domain %}
+      <div style="font-size:13px;color:var(--warn,#a06000);background:var(--danger-bg);border:1px solid var(--danger-border);border-radius:6px;padding:10px 14px;margin-bottom:14px;">
+        No inbound mail domain configured yet. Set <code>MAIL_DOMAIN</code> (and
+        point its MX records at SES) to start generating addresses — see the
+        README.
+      </div>
+      {% endif %}
+
+      {% if subscriptions %}
+      <ul class="feeds">
+        {% for sub in subscriptions %}
+        <li>
+          <div class="feed-info">
+            <div class="feed-title">{{ (sub.source or "(unlabeled)")|e }}</div>
+            <div class="feed-url" style="font-family:ui-monospace,Menlo,Consolas,monospace;">{{ sub.address|e }}</div>
+            <div class="feed-added">
+              {% if sub.status == "confirmed" %}
+                <span style="color:var(--accent);">✓ confirmed</span>
+              {% else %}
+                <span style="color:var(--warn,#a06000);">⏳ pending confirmation</span>
+              {% endif %}
+              · added {{ sub.created_at|e }}{% if sub.last_received_at %} · last mail {{ sub.last_received_at|e }}{% endif %}
+            </div>
+          </div>
+          <form class="inline" method="POST" action="/api/subscriptions/delete" onsubmit="return confirm('Delete this subscription? You will stop receiving its newsletter links.');">
+            <input type="hidden" name="address" value="{{ sub.address|e }}">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty">No newsletter subscriptions yet.</div>
+      {% endif %}
+
+      <form class="add-form" method="POST" action="/api/subscriptions">
+        <input type="text" name="source" placeholder="Newsletter name (e.g. Stratechery)"{% if not mail_domain %} disabled{% endif %}>
+        <button type="submit" class="primary"{% if not mail_domain %} disabled{% endif %}>Generate address</button>
+      </form>
+    </section>
+
+    <section>
       <h2>Profile</h2>
       <form method="POST" action="/api/profile">
         <textarea name="markdown" rows="12" placeholder="Tell newslet about your interests in plain text or Markdown.">{{ profile_md|e }}</textarea>

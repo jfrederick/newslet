@@ -64,13 +64,15 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
-| `db.py` | boto3 DynamoDB wrappers (5 tables) |
+| `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
+| `db.py` | boto3 DynamoDB wrappers (7 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
 | `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link) |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
-| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/home/*`) |
+| `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`) |
 | `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search; auto-regenerates when stale) |
 | `templates/emails.html.j2` | the sent-email archive list |
 | `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, send now) |
@@ -82,11 +84,22 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   part of every signed message and bounds replay scope. Mirror the existing
   `/rate` pattern for any new email-clickable action.
 - **Best-effort enrichment:** summarize, discovery, the Hacker News source
-  (`hn.fetch_hn_articles`), and the web-search block (`websearch.search_web`)
-  must never block a send — they degrade to empty on any failure. Keep new
-  enrichment steps in the same `try/except → empty` shape, and make their
-  network edge injectable (HN takes a `fetch` callable; websearch a `client`;
-  `run_digest` takes `hn_fn`/`websearch_fn`) so tests stay offline.
+  (`hn.fetch_hn_articles`), the web-search block (`websearch.search_web`), and
+  the subscribed-newsletter source (`db.recent_inbox_articles`) must never
+  block a send — they degrade to empty on any failure. Keep new enrichment
+  steps in the same `try/except → empty` shape, and make their network edge
+  injectable (HN takes a `fetch` callable; websearch a `client`; `run_digest`
+  takes `hn_fn`/`websearch_fn`/`newsletters_fn`) so tests stay offline.
+- **Newsletter source (inbound email):** SES receives mail on `MAIL_DOMAIN`,
+  writes raw MIME to the inbox S3 bucket, and invokes `handlers/inbound.py`. It
+  matches the recipient to a `Subscription` (per-source generated addresses),
+  **auto-follows double-opt-in confirmation links**, and stores extracted
+  article links in the inbox table for the digest to fold into its ranking
+  pool. The handler **never raises** (a raise makes SES retry-storm); its S3
+  read and confirm-follow are injectable so tests stay offline. The SES
+  *receipt rule* resources are conditional on `MailDomain` being set — the rest
+  of the infra (bucket, tables, Lambda) deploys regardless, and the active
+  rule set must be set manually post-deploy (see `README.md`).
 - **Email vs. homepage are separate surfaces:**
   - The **daily email** (`/emails/{date}` archive renders it as-sent; the
     `/emails` list is the archive index) carries `Config.max_rss_articles`

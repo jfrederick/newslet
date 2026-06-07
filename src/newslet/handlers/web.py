@@ -19,7 +19,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mangum import Mangum
 from pydantic import ValidationError
 
-from newslet import db, email_render, hn, tokens, websearch
+from newslet import db, email_render, hn, newsletters, tokens, websearch
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -238,6 +238,20 @@ def admin_index(
         (i["date"] for i in recent_issues if i.get("sent_at")),
         None,
     )
+    subscriptions = [
+        {
+            "address": s.address,
+            "source": s.source,
+            "status": s.status,
+            "created_at": s.created_at.strftime("%Y-%m-%d"),
+            "last_received_at": (
+                s.last_received_at.strftime("%Y-%m-%d")
+                if s.last_received_at
+                else ""
+            ),
+        }
+        for s in db.list_subscriptions()
+    ]
     html = _TEMPLATES.get_template("admin.html.j2").render(
         feeds=feeds_rows,
         profile_md=profile.markdown,
@@ -245,6 +259,8 @@ def admin_index(
         recent_issues=recent_issues,
         last_sent=last_sent,
         sent=sent,
+        subscriptions=subscriptions,
+        mail_domain=settings().mail_domain,
     )
     return HTMLResponse(html)
 
@@ -316,6 +332,39 @@ def save_config(
             detail=f"invalid config: {exc.errors()[0]['msg']}",
         ) from exc
     db.put_config(cfg)
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/api/subscriptions")
+def add_subscription(
+    source: str = Form(default=""),
+    admin_token: str | None = Cookie(default=None),
+) -> Response:
+    """Mint a fresh inbound address for a newsletter and store it as pending.
+
+    The generated address is shown on the admin page; the user pastes it into
+    the newsletter's signup form. Requires ``MAIL_DOMAIN`` to be configured —
+    without it there is nowhere for the mail to land.
+    """
+    _require_admin(admin_token)
+    try:
+        address = newsletters.generate_address(settings().mail_domain)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="MAIL_DOMAIN is not configured; cannot create subscriptions",
+        ) from exc
+    db.add_subscription(source.strip(), address=address)
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/api/subscriptions/delete")
+def delete_subscription(
+    address: str = Form(...),
+    admin_token: str | None = Cookie(default=None),
+) -> Response:
+    _require_admin(admin_token)
+    db.delete_subscription(address)
     return RedirectResponse(url="/admin", status_code=303)
 
 

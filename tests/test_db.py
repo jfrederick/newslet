@@ -10,7 +10,7 @@ import moto
 import pytest
 
 from newslet.config import settings
-from newslet.contracts import Discovery, FeedbackRow, Issue, Pick, WebArticle
+from newslet.contracts import Article, Discovery, FeedbackRow, Issue, Pick, WebArticle
 
 
 @pytest.fixture
@@ -32,6 +32,8 @@ def dynamo(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("TABLE_SEEN", "newslet-seen-articles")
     monkeypatch.setenv("TABLE_ISSUES", "newslet-issues")
     monkeypatch.setenv("TABLE_FEEDBACK", "newslet-feedback")
+    monkeypatch.setenv("TABLE_SUBSCRIPTIONS", "newslet-subscriptions")
+    monkeypatch.setenv("TABLE_INBOX", "newslet-inbox")
     settings.cache_clear()
 
     with moto.mock_aws():
@@ -78,6 +80,32 @@ def dynamo(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
                     "KeySchema": [
                         {"AttributeName": "bucket", "KeyType": "HASH"},
                         {"AttributeName": "ts", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName="newslet-subscriptions",
+            KeySchema=[{"AttributeName": "address", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "address", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName="newslet-inbox",
+            KeySchema=[{"AttributeName": "message_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[
+                {"AttributeName": "message_id", "AttributeType": "S"},
+                {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "received_at", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "inbox-by-ts",
+                    "KeySchema": [
+                        {"AttributeName": "bucket", "KeyType": "HASH"},
+                        {"AttributeName": "received_at", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 }
@@ -543,3 +571,115 @@ def test_manual_issue_hidden_from_list_but_gettable(dynamo: None) -> None:
 
     # ...but the manual issue is still directly retrievable.
     assert db.get_issue("manual-20260517-120000") is not None
+
+
+# ---------------------------------------------------------------------------
+# Subscriptions
+# ---------------------------------------------------------------------------
+
+
+def test_subscription_crud_and_lifecycle(dynamo: None) -> None:
+    from newslet import db
+
+    assert db.list_subscriptions() == []
+    assert db.get_subscription("n-a@inbox.example.com") is None
+
+    sub = db.add_subscription("Stratechery", address="N-A@Inbox.Example.com")
+    # Address is stored lowercased so inbound matching is case-insensitive.
+    assert sub.address == "n-a@inbox.example.com"
+    assert sub.status == "pending"
+
+    got = db.get_subscription("n-a@inbox.example.com")
+    assert got is not None
+    assert got.source == "Stratechery"
+    # Case-insensitive lookup.
+    assert db.get_subscription("N-A@INBOX.EXAMPLE.COM") is not None
+
+    listed = db.list_subscriptions()
+    assert len(listed) == 1
+
+    db.delete_subscription("n-a@inbox.example.com")
+    assert db.list_subscriptions() == []
+
+
+def test_subscription_confirm_and_touch(dynamo: None) -> None:
+    from newslet import db
+
+    db.add_subscription("X", address="n-b@inbox.example.com")
+    when = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
+
+    db.mark_subscription_confirmed("n-b@inbox.example.com", when=when)
+    sub = db.get_subscription("n-b@inbox.example.com")
+    assert sub.status == "confirmed"
+    assert sub.confirmed_at == when
+
+    db.touch_subscription("n-b@inbox.example.com", when=when)
+    assert db.get_subscription("n-b@inbox.example.com").last_received_at == when
+
+
+def test_list_subscriptions_skips_bad_rows(dynamo: None) -> None:
+    from newslet import db
+
+    db.add_subscription("Good", address="n-good@inbox.example.com")
+    # Inject a corrupt row directly (e.g. missing created_at).
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-subscriptions"
+    ).put_item(Item={"address": "n-bad@inbox.example.com"})
+
+    subs = db.list_subscriptions()
+    assert [s.address for s in subs] == ["n-good@inbox.example.com"]
+
+
+# ---------------------------------------------------------------------------
+# Inbox (received newsletter articles)
+# ---------------------------------------------------------------------------
+
+
+def test_inbox_put_and_recent_window(dynamo: None) -> None:
+    from newslet import db
+
+    now = datetime(2026, 6, 2, 9, 0, tzinfo=UTC)
+    fresh = datetime(2026, 6, 2, 8, 0, tzinfo=UTC)
+    stale = datetime(2026, 5, 1, 8, 0, tzinfo=UTC)
+
+    db.put_inbox_email(
+        message_id="m-fresh",
+        source="Daily",
+        address="n-a@inbox.example.com",
+        articles=[
+            Article(url="https://s.example/fresh", title="Fresh", source="Daily",
+                    published=fresh),
+        ],
+        received_at=fresh,
+    )
+    db.put_inbox_email(
+        message_id="m-stale",
+        source="Daily",
+        address="n-a@inbox.example.com",
+        articles=[
+            Article(url="https://s.example/stale", title="Stale", source="Daily",
+                    published=stale),
+        ],
+        received_at=stale,
+    )
+
+    since = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    arts = db.recent_inbox_articles(since, now=now)
+    urls = [str(a.url) for a in arts]
+    assert "https://s.example/fresh" in urls
+    assert "https://s.example/stale" not in urls
+
+
+def test_inbox_recent_dedupes_across_emails(dynamo: None) -> None:
+    from newslet import db
+
+    now = datetime(2026, 6, 2, 9, 0, tzinfo=UTC)
+    t = datetime(2026, 6, 2, 8, 0, tzinfo=UTC)
+    dup = Article(url="https://s.example/dup", title="Dup", source="D", published=t)
+    db.put_inbox_email(message_id="m1", source="D", address="a", articles=[dup],
+                       received_at=t)
+    db.put_inbox_email(message_id="m2", source="D", address="a", articles=[dup],
+                       received_at=t)
+
+    arts = db.recent_inbox_articles(datetime(2026, 6, 1, tzinfo=UTC), now=now)
+    assert len(arts) == 1

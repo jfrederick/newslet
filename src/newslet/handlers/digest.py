@@ -132,6 +132,7 @@ def run_digest(
     discovery_fn=None,
     hn_fn=None,
     websearch_fn=None,
+    newsletters_fn=None,
     max_picks: int = _DEFAULT_MAX_PICKS,
     min_picks: int = 5,
     max_web: int = _DEFAULT_MAX_WEB,
@@ -153,6 +154,7 @@ def run_digest(
     discovery_fn = discovery_fn or discovery.find_discoveries
     hn_fn = hn_fn or hn.fetch_hn_articles
     websearch_fn = websearch_fn or websearch.search_web
+    newsletters_fn = newsletters_fn or db.recent_inbox_articles
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -170,6 +172,18 @@ def run_digest(
         candidates = _dedupe_candidates(candidates + hn_candidates)
     except Exception:  # noqa: BLE001 - HN is best effort, never block the send
         log.exception("Hacker News fetch failed; ranking without it")
+
+    # Subscribed newsletters: links extracted from emails received in the last
+    # 24h, stored by the inbound Lambda. Joins the ranking pool like HN — same
+    # best-effort, seen-filtered shape so a storage hiccup never blocks the send.
+    try:
+        nl_candidates = [
+            a for a in newsletters_fn(since) if not is_seen(str(a.url))
+        ]
+        log.info("fetched %d newsletter candidates", len(nl_candidates))
+        candidates = _dedupe_candidates(candidates + nl_candidates)
+    except Exception:  # noqa: BLE001 - newsletters are best effort, never block
+        log.exception("newsletter fetch failed; ranking without it")
 
     date = now.strftime("%Y-%m-%d")
     if not candidates:
@@ -492,6 +506,19 @@ def _fake_hn(pages: int = 0, **_) -> list[Article]:
     ]
 
 
+def _fake_newsletters(since: datetime, **_) -> list[Article]:
+    """Deterministic, offline subscribed-newsletter candidates for --dry-run."""
+    return [
+        Article(
+            url="https://example.com/newsletter-story",
+            title="A story pulled from a newsletter you subscribed to",
+            summary="",
+            source="Example Newsletter",
+            published=datetime.now(UTC),
+        )
+    ]
+
+
 def _fake_websearch(query: str, **_) -> list[WebArticle]:
     """Deterministic, offline web-search results for --dry-run."""
     return [
@@ -557,6 +584,7 @@ def main(argv: list[str] | None = None) -> int:
         discovery_fn=_fake_discoveries,
         hn_fn=_fake_hn,
         websearch_fn=_fake_websearch,
+        newsletters_fn=_fake_newsletters,
     )
 
     if not issue.picks:
