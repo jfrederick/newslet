@@ -27,7 +27,8 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from pydantic import ValidationError
@@ -51,6 +52,7 @@ _USER_AGENT = "newslet/1.0 (+https://github.com/jfrederick/newslet)"
 # least the first 20 pages"), but pass only the highest-signal subset on to
 # the ranker, ordered by points.
 _DEFAULT_RANK_CAP = 120
+_MAX_AGE = timedelta(days=7)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -99,6 +101,7 @@ def _fetch_hits(
     fetch: Callable[[str], dict],
     *,
     tags: str = "story",
+    min_created_at: int | None = None,
 ) -> list[dict]:
     """Walk ``pages`` of the Algolia search index, deduped by objectID.
 
@@ -108,7 +111,14 @@ def _fetch_hits(
     seen: set[str] = set()
     hits: list[dict] = []
     for page in range(max(pages, 0)):
-        url = f"{_ALGOLIA_SEARCH}?tags={tags}&page={page}&hitsPerPage={_HITS_PER_PAGE}"
+        query = {
+            "tags": tags,
+            "page": page,
+            "hitsPerPage": _HITS_PER_PAGE,
+        }
+        if min_created_at is not None:
+            query["numericFilters"] = f"created_at_i>={min_created_at}"
+        url = f"{_ALGOLIA_SEARCH}?{urlencode(query)}"
         try:
             payload = fetch(url)
         except Exception as exc:  # noqa: BLE001 - any network/parse error is non-fatal
@@ -125,6 +135,39 @@ def _fetch_hits(
             seen.add(oid)
             hits.append(hit)
     return hits
+
+
+def _published_at(hit: dict) -> datetime | None:
+    created = hit.get("created_at_i")
+    if not isinstance(created, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(created, tz=UTC)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _fresh_hits(
+    hits: list[dict],
+    *,
+    now: datetime,
+    max_age: timedelta,
+) -> list[tuple[dict, datetime]]:
+    """Keep only HN hits with a trustworthy timestamp inside the freshness cap."""
+    cutoff = now - max_age
+    out: list[tuple[dict, datetime]] = []
+    for hit in hits:
+        published = _published_at(hit)
+        if published is None:
+            logger.info(
+                "hn: skipping hit %s without a usable timestamp",
+                hit.get("objectID"),
+            )
+            continue
+        if not cutoff <= published <= now:
+            continue
+        out.append((hit, published))
+    return out
 
 
 def _summary_for(hit: dict) -> str:
@@ -144,6 +187,8 @@ def fetch_hn_articles(
     *,
     fetch: Callable[[str], dict] | None = None,
     rank_cap: int = _DEFAULT_RANK_CAP,
+    now: datetime | None = None,
+    max_age: timedelta = _MAX_AGE,
 ) -> list[Article]:
     """Return HN stories as ranking candidates, best-effort.
 
@@ -153,25 +198,22 @@ def fetch_hn_articles(
     ``[]`` on any failure — HN must never break the digest.
     """
     fetch = fetch or _default_fetch
+    now = now or datetime.now(UTC)
+    min_created_at = int((now - max_age).timestamp())
     try:
-        hits = _fetch_hits(pages, fetch)
+        hits = _fetch_hits(pages, fetch, min_created_at=min_created_at)
     except Exception:  # noqa: BLE001 - belt-and-suspenders; never raise out of here
         logger.exception("hn: fetch failed; skipping HN source")
         return []
 
-    hits.sort(key=lambda h: h.get("points") or 0, reverse=True)
+    fresh_hits = _fresh_hits(hits, now=now, max_age=max_age)
+    fresh_hits.sort(key=lambda item: item[0].get("points") or 0, reverse=True)
 
     articles: list[Article] = []
-    for hit in hits[: max(rank_cap, 0)]:
+    for hit, published in fresh_hits[: max(rank_cap, 0)]:
         url = _hit_url(hit)
         if not url:
             continue
-        created = hit.get("created_at_i")
-        published = (
-            datetime.fromtimestamp(created, tz=UTC)
-            if isinstance(created, (int, float))
-            else datetime.now(UTC)
-        )
         try:
             articles.append(
                 Article(
@@ -192,6 +234,8 @@ def fetch_hn_rich(
     *,
     fetch: Callable[[str], dict] | None = None,
     limit: int = 20,
+    now: datetime | None = None,
+    max_age: timedelta = _MAX_AGE,
 ) -> list[WebArticle]:
     """Return the top HN stories as :class:`WebArticle`\\ s for the web view.
 
@@ -200,8 +244,15 @@ def fetch_hn_rich(
     Best-effort: ``[]`` on any failure.
     """
     fetch = fetch or _default_fetch
+    now = now or datetime.now(UTC)
+    min_created_at = int((now - max_age).timestamp())
     try:
-        hits = _fetch_hits(pages, fetch, tags="front_page")
+        hits = _fetch_hits(
+            pages,
+            fetch,
+            tags="front_page",
+            min_created_at=min_created_at,
+        )
     except Exception:  # noqa: BLE001 - never raise out of a best-effort fetch
         logger.exception("hn: rich fetch failed")
         return []
@@ -210,6 +261,7 @@ def fetch_hn_rich(
     # tag ever changes shape under us.
     if not hits:
         return []
+    hits = [hit for hit, _published in _fresh_hits(hits, now=now, max_age=max_age)]
     hits = hits[: max(limit, 0)]
 
     out: list[WebArticle] = []
