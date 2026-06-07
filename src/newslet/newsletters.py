@@ -183,6 +183,15 @@ _SKIP_PATH = re.compile(
     re.I,
 )
 
+# Narrower skip set for confirmation-link selection: only unsubscribe/manage
+# links are excluded. Account/profile paths are kept because a confirm link
+# often lives there (e.g. /account/verify), which _SKIP_PATH would discard.
+_SKIP_CONFIRM_PATH = re.compile(
+    r"unsubscribe|/unsub|manage[-_/]?(your[-_/]?)?(sub|email|preference)|"
+    r"opt[-_]?out|email[-_]?(setting|preference)|list-manage",
+    re.I,
+)
+
 # Anchor texts that are calls-to-action / chrome, not headlines.
 _SKIP_ANCHOR = {
     "", "read more", "read", "read on", "continue reading", "view", "view more",
@@ -290,7 +299,8 @@ def extract_articles(
 
 
 _CONFIRM_SUBJECT = re.compile(
-    r"confirm|verify|activate|opt[-\s]?in|please\s+confirm|finish\s+(subscrib|sign)",
+    r"\bconfirm\b|\bverify\b|opt[-\s]?in|please\s+confirm|finish\s+(subscrib|sign)|"
+    r"activate\s+your\s+(subscription|account|email)",
     re.I,
 )
 _CONFIRM_BODY = re.compile(
@@ -302,7 +312,7 @@ _CONFIRM_BODY = re.compile(
 )
 # A link whose URL or anchor text screams "this confirms the subscription".
 _CONFIRM_LINK = re.compile(
-    r"confirm|verify|activate|opt[-_]?in|/c/|/confirm|subscription/confirm|"
+    r"confirm|verify|activate|opt[-_]?in|/confirm|subscription/confirm|"
     r"double[-_]?opt", re.I,
 )
 _CONFIRM_ANCHOR = re.compile(
@@ -310,12 +320,22 @@ _CONFIRM_ANCHOR = re.compile(
 )
 
 
+def _confirmation_body(parsed: ParsedEmail) -> str:
+    """Plain text to keyword-match for confirmation intent.
+
+    Prefer the text part; otherwise strip tags from the HTML so footer markup
+    (``href``s, class names) can't read as confirmation phrasing.
+    """
+    if parsed.text:
+        return parsed.text
+    return re.sub(r"<[^>]+>", " ", parsed.html)
+
+
 def is_confirmation(parsed: ParsedEmail) -> bool:
     """True if this message looks like a double-opt-in confirmation request."""
     if _CONFIRM_SUBJECT.search(parsed.subject):
         return True
-    body = parsed.text or parsed.html
-    return bool(_CONFIRM_BODY.search(body))
+    return bool(_CONFIRM_BODY.search(_confirmation_body(parsed)))
 
 
 def find_confirmation_link(parsed: ParsedEmail) -> str | None:
@@ -328,7 +348,7 @@ def find_confirmation_link(parsed: ParsedEmail) -> str | None:
         (href.strip(), anchor)
         for href, anchor in extract_links(parsed)
         if urlparse(href.strip()).scheme in ("http", "https")
-        and not _SKIP_PATH.search(href)
+        and not _SKIP_CONFIRM_PATH.search(href)
         and urlparse(href.strip()).netloc.lower() not in _SKIP_HOSTS
     ]
     for href, anchor in links:

@@ -175,6 +175,56 @@ def test_process_message_matches_via_recipient_case_insensitively(dynamo):
     assert result["address"] == sub.address
 
 
+def test_process_message_misclassified_confirmation_still_extracts(dynamo):
+    from newslet import db
+    from newslet.handlers import inbound
+
+    sub = db.add_subscription("Daily", address="n-fp@inbox.example.com")
+    assert sub.status == "pending"
+    # Confirmation-shaped subject but the only link is a real article — must
+    # fail safe toward extraction rather than dropping the issue.
+    raw = _email(
+        to=sub.address,
+        subject="Confirm you caught this week's stories",
+        html='<a href="https://site.example/story-one">A genuinely interesting headline</a>',
+    )
+    result = inbound.process_message(
+        raw, [sub.address], "fp-1", confirm=lambda _u: True
+    )
+    assert result["status"] == "stored"
+    assert result["articles"] == 1
+
+
+def test_process_message_confirmed_sub_still_extracts(dynamo):
+    from newslet import db
+    from newslet.handlers import inbound
+
+    sub = db.add_subscription("S", address="n-cf@inbox.example.com")
+    db.mark_subscription_confirmed(sub.address, when=datetime(2026, 6, 1, tzinfo=UTC))
+    raw = _email(
+        to=sub.address,
+        subject="Confirm your subscription",
+        html='<a href="https://site.example/story-one">A genuinely interesting headline</a>',
+    )
+    called: list[str] = []
+    result = inbound.process_message(
+        raw, [sub.address], "cf-1", confirm=lambda u: called.append(u) or True
+    )
+    assert result["status"] == "stored"
+    assert result["articles"] == 1
+    assert called == []
+
+
+def test_follow_link_refuses_non_public_and_bad_scheme():
+    from newslet.handlers import inbound
+
+    assert inbound._is_public_url("http://127.0.0.1/confirm") is False
+    assert inbound._is_public_url("http://10.0.0.1/confirm") is False
+    assert inbound._is_public_url("http://169.254.169.254/latest/meta-data") is False
+    assert inbound._is_public_url("ftp://example.com/x") is False
+    assert inbound._is_public_url("http://93.184.216.34/confirm") is True
+
+
 def test_handler_isolates_record_failures(dynamo, monkeypatch):
     from newslet.handlers import inbound
 
