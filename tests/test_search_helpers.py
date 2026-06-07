@@ -13,13 +13,12 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-# Imported from their current private homes. When these helpers are
-# consolidated into a shared module this import block is the only thing that
-# moves — every assertion below is behavior-preserving.
-from newslet.discovery import _extract_json_object as extract_json_object
-from newslet.discovery import _host_key as host_key
-from newslet.discovery import _last_text_block as last_text_block
-from newslet.websearch import _web_search_tool as web_search_tool
+from newslet.search_common import (
+    extract_json_object,
+    host_key,
+    last_text_block,
+    web_search_tool,
+)
 
 # ---------- web_search_tool --------------------------------------------------
 
