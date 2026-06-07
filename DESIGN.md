@@ -128,6 +128,23 @@ def fetch_hn_rich(
 Best-effort: a failing page is skipped, total failure returns `[]`. Text/Ask
 posts (no `url`) fall back to their HN thread link.
 
+### `newslet.search_common`
+
+Shared primitives for Claude server-side `web_search` calls, used by both
+`discovery` and `websearch` (so neither reaches into the other's internals).
+
+```python
+def web_search_tool(max_uses: int = 5) -> dict: ...   # tool def; max_uses floored at 1
+def last_text_block(content: list) -> str | None: ... # final text block (tool use interleaves)
+def extract_json_object(text: str) -> str | None: ... # dig JSON out of fenced/prose replies
+def host_key(url: str) -> str: ...                     # lowercased, www-stripped host for dedup
+```
+
+`extract_json_object` returns the first balanced `{...}` span (ignoring braces
+inside string literals), preferring a fenced object when present, so a model
+reply wrapped in prose or a ` ```json ` fence still parses. `host_key` is a
+host-level backstop, not a true eTLD+1 extractor.
+
 ### `newslet.websearch`
 
 On-demand web search via Claude's `web_search` tool. Powers the digest's
@@ -142,8 +159,9 @@ def search_web(
 ) -> list[WebArticle]: ...
 ```
 
-Returns `[]` on any failure (best-effort). Reuses `discovery`'s JSON
-extraction helpers. `variety` (0–100) is the admin exploration dial: low stays
+Returns `[]` on any failure (best-effort). Shares the `web_search` tool
+definition and JSON-extraction helpers with `discovery` via
+`newslet.search_common`. `variety` (0–100) is the admin exploration dial: low stays
 on the profile, high roams into related ancillary areas (never random).
 `max_searches`/`model` let the interactive subject box use a fast model and
 few rounds to fit the HTTP API's ~30s limit.

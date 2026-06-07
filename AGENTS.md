@@ -63,6 +63,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `tokens.py` | HMAC sign/verify for `/rate` links |
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
+| `search_common.py` | shared Claude `web_search` primitives (tool def, last-text-block, JSON extraction, host key) used by `discovery` + `websearch` |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
