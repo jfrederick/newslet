@@ -64,6 +64,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
+| `x_grok.py` | X (Twitter) ranking candidates via xAI Grok Live Search, injected `complete`; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
@@ -84,12 +85,18 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   part of every signed message and bounds replay scope. Mirror the existing
   `/rate` pattern for any new email-clickable action.
 - **Best-effort enrichment:** summarize, discovery, the Hacker News source
-  (`hn.fetch_hn_articles`), the web-search block (`websearch.search_web`), and
-  the subscribed-newsletter source (`db.recent_inbox_articles`) must never
-  block a send — they degrade to empty on any failure. Keep new enrichment
-  steps in the same `try/except → empty` shape, and make their network edge
-  injectable (HN takes a `fetch` callable; websearch a `client`; `run_digest`
-  takes `hn_fn`/`websearch_fn`/`newsletters_fn`) so tests stay offline.
+  (`hn.fetch_hn_articles`), the web-search block (`websearch.search_web`), the
+  subscribed-newsletter source (`db.recent_inbox_articles`), and the X source
+  (`x_grok.fetch_x_articles`) must never block a send — they degrade to empty
+  on any failure. Keep new enrichment steps in the same `try/except → empty`
+  shape, and make their network edge injectable (HN takes a `fetch` callable;
+  websearch a `client`; X a `complete` callable; `run_digest` takes
+  `hn_fn`/`websearch_fn`/`newsletters_fn`/`x_fn`) so tests stay offline.
+- **Optional-source keys:** sources gated on a key the user may not have set
+  (the X source's `XAI_API_KEY`) read it via `config._optional_secret`, which
+  returns `""` (feature disabled) instead of raising, and only consults SSM
+  inside Lambda — so a missing optional key never breaks `settings()` locally
+  or in the offline test suite.
 - **Newsletter source (inbound email):** SES receives mail on `MAIL_DOMAIN`,
   writes raw MIME to the inbox S3 bucket, and invokes `handlers/inbound.py`. It
   matches the recipient to a `Subscription` (per-source generated addresses),

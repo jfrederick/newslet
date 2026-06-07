@@ -184,6 +184,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     from newslet import summarize as summarize_mod
     from newslet import tune as tune_mod
     from newslet import websearch as websearch_mod
+    from newslet import x_grok as x_grok_mod
 
     summarize = summarize or (lambda picks, **_: ("", ""))
     discoveries = discoveries if discoveries is not None else (lambda *_a, **_k: [])
@@ -195,6 +196,8 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     # production; stub them to offline empties so the pipeline stays offline.
     monkeypatch.setattr(hn_mod, "fetch_hn_articles", lambda *a, **k: [])
     monkeypatch.setattr(websearch_mod, "search_web", lambda *a, **k: [])
+    # The X source reaches xAI in production; stub to an offline empty too.
+    monkeypatch.setattr(x_grok_mod, "fetch_x_articles", lambda *a, **k: [])
 
 
 def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
@@ -473,7 +476,7 @@ def test_send_email_invokes_resend_correctly(aws, monkeypatch):
 def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
     """An empty-candidate day should still produce an email so the user
     notices the pipeline ran (vs silently going dark)."""
-    from newslet import db, feeds, hn, websearch
+    from newslet import db, feeds, hn, websearch, x_grok
     from newslet.handlers import digest
 
     # No entries at all → empty candidate list → no rank call needed.
@@ -484,10 +487,11 @@ def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
             bozo=0, bozo_exception=None, feed={"title": "T"}, entries=[]
         )),
     )
-    # Stub the HN and web-search network edges so "no candidates" really means
-    # none — otherwise HN would fill the pool and force a (real) rank call.
+    # Stub the HN, X, and web-search network edges so "no candidates" really
+    # means none — otherwise a source could fill the pool and force a rank call.
     monkeypatch.setattr(hn, "fetch_hn_articles", lambda *a, **k: [])
     monkeypatch.setattr(websearch, "search_web", lambda *a, **k: [])
+    monkeypatch.setattr(x_grok, "fetch_x_articles", lambda *a, **k: [])
 
     sent: list[dict] = []
     monkeypatch.setattr(digest, "_send_email", lambda s, h: sent.append({"s": s, "h": h}))
@@ -652,6 +656,51 @@ def test_run_digest_merges_subscribed_newsletters(env, monkeypatch):
     # was filtered out before ranking.
     assert "https://news.example/story" in pool
     assert "https://news.example/old" not in pool
+    assert "https://feed.example/rss-1" in pool
+
+
+def test_run_digest_merges_x_posts(env, monkeypatch):
+    """X posts join the ranking pool, best-effort and seen-filtered like HN."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.handlers import digest
+
+    rss = Article(url="https://feed.example/rss-1", title="RSS One", summary="s",
+                  source="Feed", published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [rss])
+
+    x_fresh = Article(url="https://x.com/a/status/1", title="Fresh Post", summary="",
+                      source="X", published=datetime.now(UTC))
+    x_seen = Article(url="https://x.com/a/status/2", title="Old Post", summary="",
+                     source="X", published=datetime.now(UTC))
+
+    seen_candidates: list[list[str]] = []
+
+    def fake_rank(*, candidates, **k):
+        seen_candidates.append([str(c.url) for c in candidates])
+        return RankResponse(picks=[
+            Pick(url=c.url, title=c.title, blurb="b", source=c.source, score=0.5)
+            for c in candidates
+        ])
+
+    issue, _ = digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: u == "https://x.com/a/status/2",
+        rank_fn=fake_rank,
+        summarize_fn=lambda picks, **k: ("subj", "intro"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=lambda *a, **k: [],
+        newsletters_fn=lambda since, **k: [],
+        x_fn=lambda *a, **k: [x_fresh, x_seen],
+    )
+
+    pool = seen_candidates[0]
+    # The fresh post reached the ranker; the already-seen one was filtered out.
+    assert "https://x.com/a/status/1" in pool
+    assert "https://x.com/a/status/2" not in pool
     assert "https://feed.example/rss-1" in pool
 
 
