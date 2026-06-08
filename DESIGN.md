@@ -236,6 +236,11 @@ handler = Mangum(app)
 ```
 
 Routes:
+- `GET /docs` — public product guide: the attractive HTML viewer
+  (`newslet/docs/index.html`) that pulls the markdown live and offers three
+  selectable technical-detail levels. Linked from `/admin`.
+- `GET /docs/content.md` — the canonical product-guide markdown
+  (`newslet/docs/product.md`), served as `text/markdown` for the viewer to fetch
 - `GET /` — the homepage: rich reading UX (`read.html.j2`) over the stored
   `"home"` aggregation, with a today's-date header, +/- voting (upvote sticky,
   downvote removes the article), and a subject-search box. No refresh button —

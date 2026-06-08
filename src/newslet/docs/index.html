@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>newslet · product guide</title>
+<meta name="description" content="Product guide for newslet — your personal daily news editor.">
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6f6f76;
+    --faint: #9a9aa3;
+    --border: #e6e6e1;
+    --accent: #0b3d91;
+    --accent-soft: #eaf0fb;
+    --little-bg: #f3f6fb;
+    --little-border: #cdd9ef;
+    --medium-bg: #f0f4ef;
+    --medium-border: #cdded0;
+    --code-bg: #f1f1ee;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15151a;
+      --panel: #1d1d22;
+      --fg: #ececec;
+      --muted: #a6a6b0;
+      --faint: #74747e;
+      --border: #2c2c33;
+      --accent: #8ab4ff;
+      --accent-soft: #1d2735;
+      --little-bg: #181d27;
+      --little-border: #2b3a55;
+      --medium-bg: #171f1a;
+      --medium-border: #2a3f30;
+      --code-bg: #14141a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+
+  /* ---- top bar ---- */
+  header.top {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  .top-inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 20px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .brand {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
+    margin-right: auto; text-decoration: none; color: var(--fg);
+  }
+  .brand .sub { color: var(--faint); font-weight: 400; font-size: 14px; }
+  .depth { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .depth-label { font-size: 12px; color: var(--muted); }
+  .seg {
+    display: inline-flex; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 2px;
+  }
+  .seg button {
+    font: inherit; font-size: 13px; cursor: pointer;
+    border: none; background: transparent; color: var(--muted);
+    padding: 5px 12px; border-radius: 999px; line-height: 1.2;
+  }
+  .seg button:hover { color: var(--fg); }
+  .seg button[aria-pressed="true"] {
+    background: var(--accent); color: #fff;
+  }
+  .nav-home { font-size: 13px; color: var(--muted); text-decoration: none; }
+  .nav-home:hover { color: var(--fg); text-decoration: underline; }
+
+  /* ---- layout ---- */
+  .layout {
+    max-width: 1080px; margin: 0 auto; padding: 28px 20px 96px;
+    display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 40px;
+  }
+  nav.toc {
+    position: sticky; top: 78px; align-self: start;
+    max-height: calc(100vh - 100px); overflow-y: auto;
+    font-size: 13.5px;
+  }
+  nav.toc .toc-title {
+    text-transform: uppercase; letter-spacing: .08em; font-size: 11px;
+    color: var(--faint); margin: 0 0 10px 2px;
+  }
+  nav.toc ul { list-style: none; margin: 0; padding: 0; }
+  nav.toc li { margin: 1px 0; }
+  nav.toc a {
+    display: block; padding: 4px 10px; border-radius: 6px;
+    color: var(--muted); text-decoration: none; border-left: 2px solid transparent;
+  }
+  nav.toc a:hover { color: var(--fg); background: var(--accent-soft); }
+  nav.toc a.sub { padding-left: 22px; font-size: 13px; }
+  nav.toc a.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
+
+  main {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 40px 48px; box-shadow: var(--shadow);
+    min-width: 0;
+  }
+  .article { max-width: 720px; }
+
+  /* ---- markdown typography ---- */
+  .article h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; margin: 28px 0 8px; }
+  .article h2 {
+    font-size: 22px; letter-spacing: -0.01em; margin: 44px 0 12px;
+    padding-top: 14px; border-top: 1px solid var(--border); scroll-margin-top: 84px;
+  }
+  .article h2:first-of-type { border-top: none; }
+  .article h3 { font-size: 17px; margin: 28px 0 8px; scroll-margin-top: 84px; }
+  .article p { margin: 12px 0; }
+  .article ul, .article ol { margin: 12px 0; padding-left: 22px; }
+  .article li { margin: 5px 0; }
+  .article strong { font-weight: 650; }
+  .article hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  .article code {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88em;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
+  }
+  .article pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+  }
+  .article pre code { background: none; padding: 0; }
+  .article em { color: var(--muted); }
+  .article blockquote {
+    margin: 16px 0; padding: 2px 16px; border-left: 3px solid var(--border);
+    color: var(--muted);
+  }
+
+  /* ---- complexity tiers ---- */
+  .tier {
+    position: relative; margin: 14px 0; padding: 14px 18px 14px 18px;
+    border-radius: 10px; border: 1px solid;
+  }
+  .tier > :first-child { margin-top: 0; }
+  .tier > :last-child { margin-bottom: 0; }
+  .tier::before {
+    display: inline-block; font-size: 10.5px; letter-spacing: .07em;
+    text-transform: uppercase; font-weight: 600; padding: 2px 8px;
+    border-radius: 999px; margin-bottom: 8px;
+  }
+  .tier-little { background: var(--little-bg); border-color: var(--little-border); }
+  .tier-little::before { content: "Some detail"; color: var(--accent); background: var(--accent-soft); }
+  .tier-medium { background: var(--medium-bg); border-color: var(--medium-border); }
+  .tier-medium::before { content: "More detail"; color: #2e6b3e; background: #e3efe4; }
+  @media (prefers-color-scheme: dark) {
+    .tier-medium::before { color: #9ad6a6; background: #1f2f23; }
+  }
+
+  /* depth visibility */
+  body[data-depth="none"]  .tier { display: none; }
+  body[data-depth="little"] .tier-medium { display: none; }
+
+  .status { color: var(--muted); padding: 40px 0; font-size: 15px; }
+  .status code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; gap: 18px; }
+    nav.toc { display: none; }
+    main { padding: 8px 22px 36px; }
+    .top-inner { padding: 10px 16px; }
+    .depth-label { display: none; }
+  }
+</style>
+</head>
+<body data-depth="none">
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="#top">newslet <span class="sub">· product guide</span></a>
+      <div class="depth">
+        <span class="depth-label">Detail</span>
+        <div class="seg" role="group" aria-label="Technical detail level">
+          <button data-depth="none"   aria-pressed="true">Plain</button>
+          <button data-depth="little" aria-pressed="false">Some</button>
+          <button data-depth="medium" aria-pressed="false">More</button>
+        </div>
+        <a class="nav-home" href="/admin">admin →</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout" id="top">
+    <nav class="toc" aria-label="Table of contents">
+      <p class="toc-title">On this page</p>
+      <ul id="toc"></ul>
+    </nav>
+    <main>
+      <article class="article" id="content">
+        <p class="status" id="status">Loading the guide…</p>
+      </article>
+    </main>
+  </div>
+
+  <script>
+  (function () {
+    // Where to find the markdown. The app serves it at /docs/content.md;
+    // opened straight from the folder, it sits next to this file.
+    var CANDIDATES = (window.__MD_SRC__ ? [window.__MD_SRC__] : [])
+      .concat(['/docs/content.md', './product.md', './content.md']);
+
+    var statusEl = document.getElementById('status');
+    var contentEl = document.getElementById('content');
+    var tocEl = document.getElementById('toc');
+
+    // ---- depth selector ----
+    var DEPTHS = ['none', 'little', 'medium'];
+    function setDepth(depth) {
+      if (DEPTHS.indexOf(depth) === -1) depth = 'none';
+      document.body.setAttribute('data-depth', depth);
+      var btns = document.querySelectorAll('.seg button');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].setAttribute('aria-pressed', btns[i].getAttribute('data-depth') === depth ? 'true' : 'false');
+      }
+      try { localStorage.setItem('newslet.docs.depth', depth); } catch (e) {}
+    }
+    var saved = null;
+    try { saved = localStorage.getItem('newslet.docs.depth'); } catch (e) {}
+    setDepth(saved || 'none');
+    var segBtns = document.querySelectorAll('.seg button');
+    for (var i = 0; i < segBtns.length; i++) {
+      segBtns[i].addEventListener('click', function () { setDepth(this.getAttribute('data-depth')); });
+    }
+
+    // Turn ":::tier little / :::tier medium / :::" fences into marker
+    // paragraphs the renderer keeps as plain text, so the markdown *inside*
+    // each tier renders normally and we can group it afterward.
+    function preprocess(md) {
+      var out = [];
+      var lines = md.replace(/\r\n/g, '\n').split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var open = lines[i].match(/^:::tier\s+(little|medium)\s*$/);
+        var close = lines[i].match(/^:::\s*$/);
+        if (open) { out.push('', '@@TIER:' + open[1] + '@@', ''); }
+        else if (close) { out.push('', '@@TIER:end@@', ''); }
+        else { out.push(lines[i]); }
+      }
+      return out.join('\n');
+    }
+
+    // Walk the rendered children and wrap each run of nodes between a tier
+    // marker and its end marker in a styled <div>.
+    function groupTiers(root) {
+      var kids = Array.prototype.slice.call(root.children);
+      var open = null;
+      kids.forEach(function (el) {
+        var t = (el.textContent || '').trim();
+        var m = t.match(/^@@TIER:(little|medium)@@$/);
+        if (el.tagName === 'P' && m) {
+          open = document.createElement('div');
+          open.className = 'tier tier-' + m[1];
+          root.insertBefore(open, el);
+          el.parentNode.removeChild(el);
+          return;
+        }
+        if (el.tagName === 'P' && t === '@@TIER:end@@') { open = null; el.parentNode.removeChild(el); return; }
+        if (open) { open.appendChild(el); }
+      });
+    }
+
+    function slug(s) {
+      return s.toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 64) || 'section';
+    }
+
+    function buildToc() {
+      var heads = contentEl.querySelectorAll('h2, h3');
+      var used = {};
+      var frag = document.createDocumentFragment();
+      heads.forEach(function (h) {
+        var id = slug(h.textContent);
+        while (used[id]) { id = id + '-x'; }
+        used[id] = true; h.id = id;
+        var li = document.createElement('li');
+        var a = document.createElement('a');
+        a.href = '#' + id; a.textContent = h.textContent;
+        if (h.tagName === 'H3') a.className = 'sub';
+        a.addEventListener('click', function () {
+          // let the hash + smooth scroll do the work; close nothing
+        });
+        li.appendChild(a); frag.appendChild(li);
+      });
+      tocEl.appendChild(frag);
+
+      // Active-section highlighting.
+      var links = {};
+      tocEl.querySelectorAll('a').forEach(function (a) { links[a.getAttribute('href').slice(1)] = a; });
+      if ('IntersectionObserver' in window) {
+        var current = null;
+        var obs = new IntersectionObserver(function (entries) {
+          entries.forEach(function (e) {
+            if (e.isIntersecting) {
+              if (current) current.classList.remove('active');
+              current = links[e.target.id];
+              if (current) current.classList.add('active');
+            }
+          });
+        }, { rootMargin: '-80px 0px -70% 0px', threshold: 0 });
+        heads.forEach(function (h) { obs.observe(h); });
+      }
+    }
+
+    function render(md) {
+      var html;
+      if (window.marked && (window.marked.parse || typeof window.marked === 'function')) {
+        var parse = window.marked.parse || window.marked;
+        try { window.marked.setOptions && window.marked.setOptions({ headerIds: false, mangle: false }); } catch (e) {}
+        html = parse(preprocess(md));
+        contentEl.innerHTML = html;
+        groupTiers(contentEl);
+        buildToc();
+      } else {
+        // Renderer unavailable (offline / blocked): show the raw markdown
+        // rather than nothing.
+        var pre = document.createElement('pre');
+        pre.textContent = md;
+        contentEl.innerHTML = '';
+        contentEl.appendChild(pre);
+      }
+      // If the page loaded with a hash, jump to it now that anchors exist.
+      if (location.hash) {
+        var target = document.getElementById(location.hash.slice(1));
+        if (target) target.scrollIntoView();
+      }
+    }
+
+    function fetchFirst(urls) {
+      var idx = 0;
+      function attempt() {
+        if (idx >= urls.length) {
+          return Promise.reject(new Error('no markdown source reachable'));
+        }
+        var url = urls[idx++];
+        return fetch(url, { cache: 'no-cache' }).then(function (r) {
+          if (!r.ok) throw new Error(r.status + ' on ' + url);
+          return r.text();
+        }).catch(function () { return attempt(); });
+      }
+      return attempt();
+    }
+
+    function loadMarkedThen(md) {
+      if (window.marked) { render(md); return; }
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
+      s.onload = function () { render(md); };
+      s.onerror = function () { render(md); }; // render() falls back to raw
+      document.head.appendChild(s);
+    }
+
+    fetchFirst(CANDIDATES).then(function (md) {
+      loadMarkedThen(md);
+    }).catch(function () {
+      statusEl.innerHTML = "Couldn't load the guide. The markdown source is " +
+        "<code>product.md</code> (served by the app at <code>/docs/content.md</code>).";
+    });
+  })();
+  </script>
+</body>
+</html>
