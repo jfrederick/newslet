@@ -1,10 +1,25 @@
-"""Shared helpers for parsing JSON from Claude responses.
+"""Shared primitives for Claude server-side ``web_search`` calls.
 
-Both :mod:`discovery` and :mod:`websearch` ask Claude to return JSON objects
-after using the server-side ``web_search`` tool. The response interleaves
-tool-use and text blocks, and Claude frequently ignores the "no prose, no
-fences" instruction. These utilities extract, parse, and validate that JSON
-in a single reusable pipeline so both modules share one battle-tested path.
+Both :mod:`newslet.discovery` (sources outside your feeds) and
+:mod:`newslet.websearch` (the "from around the web" block + the web view's
+subject box) ask Claude to run a live web search and reply with a JSON object.
+That shared shape needs the same handful of helpers:
+
+- :func:`web_search_tool` — the server-side ``web_search`` tool definition.
+- :func:`last_text_block` — the model's final JSON lands in the *last* text
+  block, not ``content[0]``, because tool use interleaves tool-call/result
+  blocks ahead of it.
+- :func:`extract_json_object` — with the search tool active the model often
+  ignores "ONLY a JSON object, no fences" and wraps its answer in a ```json
+  fence or surrounding prose; this digs the object back out.
+- :func:`host_key` — a lowercased, ``www.``-stripped host used to dedupe and
+  to exclude already-followed domains.
+- :func:`parse_llm_json_response` — end-to-end convenience that chains
+  ``last_text_block`` → ``extract_json_object`` → ``json.loads``, returning
+  the parsed dict or ``None`` on any failure (logged under a caller label).
+
+Keeping them here (rather than reaching into one module's privates from the
+other) gives both callers a single, directly-tested home.
 """
 
 from __future__ import annotations
@@ -15,6 +30,24 @@ import re
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+# Server-side web search tool. Pin to the version string the API expects;
+# tests never call the real API so the exact value is not load-bearing here.
+_WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
+
+
+def web_search_tool(max_uses: int = 5) -> dict:
+    """The server-side ``web_search`` tool, capped at ``max_uses`` rounds.
+
+    ``max_uses`` is floored at 1: the interactive subject box may pass a low
+    (or zero) cap to stay under the HTTP API's ~30s timeout, but the tool must
+    always allow at least one search round rather than emit an invalid cap.
+    """
+    return {
+        "type": _WEB_SEARCH_TOOL_TYPE,
+        "name": "web_search",
+        "max_uses": max(1, max_uses),
+    }
 
 
 def host_key(url: str) -> str:
@@ -46,17 +79,17 @@ def last_text_block(content: list) -> str | None:
 
 
 def extract_json_object(text: str) -> str | None:
-    """Pull the first balanced JSON object out of a model reply.
+    """Pull the JSON object out of a model reply.
 
     With the web_search tool active the model often ignores the
     "ONLY a JSON object, no fences" instruction and wraps its answer in a
-    ``json`` fence, prefixes a sentence ("Here are the articles..."), or
-    trails one ("...}\\nHope that helps!"). A bare ``json.loads`` on any of
-    those raises and — because discovery is best-effort — the section
-    silently vanishes from the email. Prefer the first fenced block that
-    looks like an object, then return the first balanced ``{...}`` span,
-    ignoring braces inside string literals so surrounding prose (or a stray
-    brace in a title/reason) can't kill an otherwise-valid payload.
+    ```json fence, prefixes a sentence ("Here are the articles..."), or
+    trails one ("...}\nHope that helps!"). A bare ``json.loads`` on any of
+    those raises and — because these callers are best-effort — the section
+    silently vanishes. Prefer the first fenced block that looks like an
+    object, then return the first balanced ``{...}`` span, ignoring braces
+    inside string literals so surrounding prose (or a stray brace in a
+    title/reason) can't kill an otherwise-valid payload.
     """
     candidate = text.strip()
 
@@ -98,27 +131,22 @@ def extract_json_object(text: str) -> str | None:
     return None
 
 
-def parse_llm_json_response(
-    content: list,
-    *,
-    label: str = "llm",
-) -> dict | None:
-    """Extract and parse a JSON object from a Claude response's content blocks.
+def parse_llm_json_response(content: list, *, label: str = "llm") -> dict | None:
+    """Extract and parse a JSON object from Claude response content blocks.
 
-    Returns the parsed ``dict`` on success, or ``None`` on any failure (no text
-    block, no JSON found, or invalid JSON). All failures are logged under
-    ``label`` for diagnostics.
+    Chains :func:`last_text_block` → :func:`extract_json_object` →
+    ``json.loads``, returning the parsed dict on success or ``None`` on any
+    failure (missing text block, no JSON found, decode error). Failures are
+    logged under ``label`` so the caller can be identified in logs.
     """
     text = last_text_block(content)
     if text is None:
         logger.warning("%s: no text block in response", label)
         return None
-
     json_str = extract_json_object(text)
     if json_str is None:
         logger.warning("%s: no JSON object found: %.200s", label, text)
         return None
-
     try:
         return json.loads(json_str)
     except json.JSONDecodeError as err:

@@ -10,9 +10,9 @@ Two consumers:
 
 Best-effort throughout: a parse failure or empty model reply yields an empty
 list rather than raising. The Anthropic client is injectable so tests never
-touch the network. JSON extraction reuses :mod:`newslet.llm_parse` helpers,
-which already tolerate the fences/prose the model emits when the search tool
-is active.
+touch the network. The shared web-search primitives in
+:mod:`newslet.search_common` already tolerate the fences/prose the model emits
+when the search tool is active.
 """
 
 from __future__ import annotations
@@ -24,23 +24,9 @@ from pydantic import TypeAdapter, ValidationError
 
 from .config import get_anthropic_client, settings
 from .contracts import WebArticle
-from .llm_parse import host_key as _host_key
-from .llm_parse import parse_llm_json_response
+from .search_common import host_key, parse_llm_json_response, web_search_tool
 
 logger = logging.getLogger(__name__)
-
-def _web_search_tool(max_searches: int) -> dict:
-    """The server-side web_search tool, capped at ``max_searches`` rounds.
-
-    The interactive subject box runs behind an HTTP API with a hard ~30s
-    integration timeout, so it passes a low cap (and a fast model) to stay
-    well under it; the digest, with a 300s Lambda budget, can search more.
-    """
-    return {
-        "type": "web_search_20250305",
-        "name": "web_search",
-        "max_uses": max(1, max_searches),
-    }
 
 _SYSTEM_PROMPT = """\
 You are a research librarian. Use the web_search tool to find up to \
@@ -137,14 +123,14 @@ def search_web(
     if client is None:
         client = get_anthropic_client()
 
-    excluded = {_host_key(f"//{h}") or h.lower() for h in (exclude_hosts or [])}
+    excluded = {host_key(f"//{h}") or h.lower() for h in (exclude_hosts or [])}
 
     try:
         response = client.messages.create(
             model=model or settings().claude_model,
             max_tokens=2048,
             system=_SYSTEM_PROMPT.format(max_results=max_results),
-            tools=[_web_search_tool(max_searches)],
+            tools=[web_search_tool(max_searches)],
             messages=[
                 {
                     "role": "user",
@@ -175,7 +161,7 @@ def search_web(
         key = str(article.url)
         if key in seen_urls:
             continue
-        if _host_key(key) in excluded:
+        if host_key(key) in excluded:
             continue
         seen_urls.add(key)
         out.append(article)

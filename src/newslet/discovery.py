@@ -17,18 +17,9 @@ from pydantic import TypeAdapter, ValidationError
 
 from .config import get_anthropic_client, settings
 from .contracts import Discovery
-from .llm_parse import host_key as _host_key
-from .llm_parse import parse_llm_json_response
+from .search_common import host_key, parse_llm_json_response, web_search_tool
 
 logger = logging.getLogger(__name__)
-
-# Server-side web search tool. Pin to the version string the API expects;
-# tests never call the real API so the exact value is not load-bearing here.
-_WEB_SEARCH_TOOL = {
-    "type": "web_search_20250305",
-    "name": "web_search",
-    "max_uses": 5,
-}
 
 _SYSTEM_PROMPT = """\
 You discover fresh news sources for a personalized daily email digest.
@@ -114,7 +105,7 @@ def find_discoveries(
     if client is None:
         client = get_anthropic_client()
 
-    excluded = {_host_key(f"//{d}") or d.lower() for d in feed_domains}
+    excluded = {host_key(f"//{d}") or d.lower() for d in feed_domains}
 
     system_prompt = _system_prompt(max_results)
     user_block = _build_user_block(profile_md, feed_domains)
@@ -123,7 +114,7 @@ def find_discoveries(
         model=settings().claude_model,
         max_tokens=2048,
         system=system_prompt,
-        tools=[_WEB_SEARCH_TOOL],
+        tools=[web_search_tool()],
         messages=[{"role": "user", "content": user_block}],
     )
 
@@ -147,7 +138,7 @@ def find_discoveries(
     # max_results so we don't fetch feeds we'd only discard.
     kept: list[Discovery] = []
     for d in discoveries:
-        if _host_key(str(d.url)) in excluded:
+        if host_key(str(d.url)) in excluded:
             continue
         if not feed_validator(str(d.feed_url)):
             logger.info("discovery: dropping %s — feed not live", d.url)
