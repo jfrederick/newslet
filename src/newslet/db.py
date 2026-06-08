@@ -38,6 +38,7 @@ def _serialize_models(models: Iterable[BaseModel]) -> str:
     """Serialize a list of Pydantic models to a JSON string for DynamoDB."""
     return json.dumps([json.loads(m.model_dump_json()) for m in models])
 
+
 _SEEN_TTL_SECONDS = 21 * 86400
 _FEEDBACK_GSI = "feedback-by-ts"
 # Received-newsletter rows expire after 30d — comfortably past the 24h digest
