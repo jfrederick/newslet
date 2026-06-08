@@ -31,6 +31,18 @@ refresh button: a scheduled job rebuilds it every morning at 09:45 UTC
 stored edition isn't from today. Past daily emails are archived at
 `/emails/<date>`.
 
+## Product guide
+
+A feature-by-feature **product guide** lives at
+[`src/newslet/docs/product.md`](src/newslet/docs/product.md) and is served as an
+attractive, self-contained HTML page at **`/docs`** (linked from the admin UI).
+The page pulls the markdown in real time and lets the reader pick how much
+technical detail to see — *none*, *some*, or *more* — so the same document works
+for a curious user and for an engineer. The markdown is the single source of
+truth; the HTML never holds its own copy. A scheduled AI step keeps the guide in
+sync with the code on every push to `main` (see
+[`docs/docs-autoupdate-setup.md`](docs/docs-autoupdate-setup.md)).
+
 ## Architecture
 
 ```
