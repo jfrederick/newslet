@@ -252,6 +252,7 @@ resolve a lockfile.
 - `src/newslet/tokens.py` — HMAC sign/verify for `/rate` links
 - `src/newslet/feeds.py` — feedparser wrapper, 24h filter, dedup via injected `is_seen`
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
+- `src/newslet/search_common.py` — shared Claude `web_search` primitives (tool def, JSON extraction, host key) for `discovery` + `websearch`
 - `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers
