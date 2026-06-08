@@ -97,7 +97,9 @@ def _is_https(request: Request) -> bool:
 
 
 def _require_admin(admin_token: str | None) -> None:
-    if not admin_token or not hmac.compare_digest(admin_token, settings().admin_token):
+    if not admin_token or not hmac.compare_digest(
+        admin_token.encode(), settings().admin_token.encode()
+    ):
         raise HTTPException(status_code=303, headers={"Location": "/login"})
 
 
@@ -118,7 +120,7 @@ def login_form() -> HTMLResponse:
 
 @app.post("/login")
 def login(request: Request, token: str = Form(...)) -> Response:
-    if not hmac.compare_digest(token, settings().admin_token):
+    if not hmac.compare_digest(token.encode(), settings().admin_token.encode()):
         return _login_page("Invalid token")
     resp = RedirectResponse(url="/", status_code=303)
     resp.set_cookie(
