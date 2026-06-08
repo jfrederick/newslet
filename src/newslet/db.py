@@ -15,7 +15,7 @@ from typing import Any
 
 import boto3
 from boto3.dynamodb.conditions import Key
-from pydantic import HttpUrl, ValidationError
+from pydantic import BaseModel, HttpUrl, ValidationError
 
 from newslet.config import settings
 from newslet.contracts import (
@@ -33,6 +33,11 @@ from newslet.contracts import (
 
 log = logging.getLogger(__name__)
 
+
+def _serialize_models(models: Iterable[BaseModel]) -> str:
+    """Serialize a list of Pydantic models to a JSON string for DynamoDB."""
+    return json.dumps([json.loads(m.model_dump_json()) for m in models])
+
 _SEEN_TTL_SECONDS = 21 * 86400
 _FEEDBACK_GSI = "feedback-by-ts"
 # Received-newsletter rows expire after 30d — comfortably past the 24h digest
@@ -41,18 +46,13 @@ _INBOX_TTL_SECONDS = 30 * 86400
 _INBOX_GSI = "inbox-by-ts"
 
 
-def _feedback_bucket(ts: datetime) -> str:
-    """Shard key for the recent-feedback GSI — one bucket per year.
+def _year_bucket(ts: datetime) -> str:
+    """Per-year shard key for GSI partitioning (feedback and inbox).
 
     Personal-app traffic comfortably fits in a single per-year partition;
     sharding avoids the documented hot-partition anti-pattern from a
     constant string PK without the complexity of monthly shards.
     """
-    return ts.strftime("%Y")
-
-
-def _inbox_bucket(ts: datetime) -> str:
-    """Per-year shard for the recent-inbox GSI — same rationale as feedback."""
     return ts.strftime("%Y")
 
 
@@ -252,13 +252,9 @@ def is_seen(url: str) -> bool:
 
 
 def put_issue(issue: Issue, *, manual: bool = False) -> None:
-    picks_json = json.dumps([json.loads(p.model_dump_json()) for p in issue.picks])
-    discoveries_json = json.dumps(
-        [json.loads(d.model_dump_json()) for d in issue.discoveries]
-    )
-    web_articles_json = json.dumps(
-        [json.loads(w.model_dump_json()) for w in issue.web_articles]
-    )
+    picks_json = _serialize_models(issue.picks)
+    discoveries_json = _serialize_models(issue.discoveries)
+    web_articles_json = _serialize_models(issue.web_articles)
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
@@ -349,7 +345,7 @@ def put_feedback(row: FeedbackRow) -> None:
             "title": row.title,
             "rating": row.rating,
             "note": row.note,
-            "bucket": _feedback_bucket(row.ts),
+            "bucket": _year_bucket(row.ts),
         }
     )
 
@@ -426,10 +422,10 @@ def recent_feedback(limit: int = 50, *, now: datetime | None = None) -> list[Fee
     rows (e.g., early January), supplements from the previous year.
     """
     now = now or datetime.now(UTC)
-    items: list[dict[str, Any]] = _query_feedback_bucket(_feedback_bucket(now), limit)
+    items: list[dict[str, Any]] = _query_feedback_bucket(_year_bucket(now), limit)
     if len(items) < limit:
         prev = now.replace(year=now.year - 1)
-        items.extend(_query_feedback_bucket(_feedback_bucket(prev), limit - len(items)))
+        items.extend(_query_feedback_bucket(_year_bucket(prev), limit - len(items)))
 
     rows: list[FeedbackRow] = []
     for item in items:
@@ -637,7 +633,7 @@ def put_inbox_email(
     import uuid
 
     mid = message_id or ("inbox-" + uuid.uuid4().hex)
-    articles_json = json.dumps([json.loads(a.model_dump_json()) for a in articles])
+    articles_json = _serialize_models(articles)
     expires_at = int(received_at.timestamp() + _INBOX_TTL_SECONDS)
     _t_inbox().put_item(
         Item={
@@ -646,7 +642,7 @@ def put_inbox_email(
             "source": source,
             "address": address,
             "articles_json": articles_json,
-            "bucket": _inbox_bucket(received_at),
+            "bucket": _year_bucket(received_at),
             "expires_at": expires_at,
         }
     )
@@ -670,9 +666,9 @@ def recent_inbox_articles(since: datetime, *, now: datetime | None = None) -> li
     fatal, since the digest must not break on one malformed inbound email.
     """
     now = now or datetime.now(UTC)
-    items = _query_inbox_bucket(_inbox_bucket(now), since)
-    if _inbox_bucket(since) != _inbox_bucket(now):
-        items += _query_inbox_bucket(_inbox_bucket(since), since)
+    items = _query_inbox_bucket(_year_bucket(now), since)
+    if _year_bucket(since) != _year_bucket(now):
+        items += _query_inbox_bucket(_year_bucket(since), since)
 
     articles: list[Article] = []
     seen: set[str] = set()

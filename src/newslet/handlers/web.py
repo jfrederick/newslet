@@ -141,11 +141,7 @@ def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
         if votes.get(str(p.url)) != "down"
     ]
     web_cards = [
-        _article_card(
-            url=w.url, title=w.title, blurb=w.blurb, source=w.source,
-            score=None, rating=votes.get(str(w.url), ""),
-            points=w.points, comments=w.comments, comments_url=w.comments_url,
-        )
+        {**w.to_card_dict(), "score": None, "rating": votes.get(str(w.url), "")}
         for w in issue.web_articles
         if votes.get(str(w.url)) != "down"
     ]
@@ -188,11 +184,7 @@ def home(
     if query:
         for r in _interactive_search(query):
             search_cards.append(
-                _article_card(
-                    url=r.url, title=r.title, blurb=r.blurb, source=r.source,
-                    score=None, rating="", points=r.points,
-                    comments=r.comments, comments_url=r.comments_url,
-                )
+                {**r.to_card_dict(), "score": None, "rating": ""}
             )
 
     html = _TEMPLATES.get_template("read.html.j2").render(
@@ -706,18 +698,7 @@ def api_search(
     return JSONResponse(
         {
             "query": q,
-            "results": [
-                {
-                    "url": str(r.url),
-                    "title": r.title,
-                    "blurb": r.blurb,
-                    "source": r.source,
-                    "points": r.points,
-                    "comments": r.comments,
-                    "comments_url": r.comments_url,
-                }
-                for r in results
-            ],
+            "results": [r.to_card_dict() for r in results],
         }
     )
 
@@ -730,18 +711,7 @@ def api_hn(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
     stories = hn.fetch_hn_rich(pages=2, limit=20)
     return JSONResponse(
         {
-            "results": [
-                {
-                    "url": str(s.url),
-                    "title": s.title,
-                    "blurb": s.blurb,
-                    "source": s.source,
-                    "points": s.points,
-                    "comments": s.comments,
-                    "comments_url": s.comments_url,
-                }
-                for s in stories
-            ],
+            "results": [s.to_card_dict() for s in stories],
         }
     )
 

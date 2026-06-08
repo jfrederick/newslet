@@ -86,6 +86,13 @@ def _secret(env_name: str, ssm_suffix: str) -> str:
     return resp["Parameter"]["Value"]
 
 
+def get_anthropic_client():
+    """Return a configured Anthropic client using the stored API key."""
+    import anthropic
+
+    return anthropic.Anthropic(api_key=settings().anthropic_api_key)
+
+
 @lru_cache(maxsize=1)
 def settings() -> Settings:
     return Settings(

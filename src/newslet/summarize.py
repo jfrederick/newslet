@@ -16,7 +16,7 @@ import json
 
 import anthropic
 
-from .config import settings
+from .config import get_anthropic_client, settings
 from .contracts import Pick
 
 _SYSTEM_PROMPT = """\
@@ -78,7 +78,7 @@ def summarize_issue(
     yields ``("", "")`` so the caller can fall back; this never raises.
     """
     if client is None:
-        client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
+        client = get_anthropic_client()
 
     picks_block = _format_picks(picks)
 

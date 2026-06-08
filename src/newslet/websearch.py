@@ -10,22 +10,22 @@ Two consumers:
 
 Best-effort throughout: a parse failure or empty model reply yields an empty
 list rather than raising. The Anthropic client is injectable so tests never
-touch the network. JSON extraction reuses :mod:`newslet.discovery`'s helpers,
+touch the network. JSON extraction reuses :mod:`newslet.llm_parse` helpers,
 which already tolerate the fences/prose the model emits when the search tool
 is active.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 
 import anthropic
 from pydantic import TypeAdapter, ValidationError
 
-from .config import settings
+from .config import get_anthropic_client, settings
 from .contracts import WebArticle
-from .discovery import _extract_json_object, _host_key, _last_text_block
+from .llm_parse import host_key as _host_key
+from .llm_parse import parse_llm_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def search_web(
     if not query.strip():
         return []
     if client is None:
-        client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
+        client = get_anthropic_client()
 
     excluded = {_host_key(f"//{h}") or h.lower() for h in (exclude_hosts or [])}
 
@@ -158,20 +158,8 @@ def search_web(
         logger.warning("websearch: API call failed: %s", exc)
         return []
 
-    text = _last_text_block(response.content)
-    if text is None:
-        logger.warning("websearch: no text block in response")
-        return []
-
-    json_str = _extract_json_object(text)
-    if json_str is None:
-        logger.warning("websearch: no JSON object found: %.200s", text)
-        return []
-
-    try:
-        payload = json.loads(json_str)
-    except json.JSONDecodeError as err:
-        logger.warning("websearch: could not parse response: %s", err)
+    payload = parse_llm_json_response(response.content, label="websearch")
+    if payload is None:
         return []
 
     raw = payload.get("articles", []) if isinstance(payload, dict) else []

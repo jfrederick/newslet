@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import anthropic
 
-from .config import settings
-from .contracts import FeedbackRow
+from .config import get_anthropic_client, settings
+from .contracts import FeedbackRow, format_feedback_line
 
 _BLOCK_START = "<!-- learned-preferences:auto:start -->"
 _BLOCK_END = "<!-- learned-preferences:auto:end -->"
@@ -82,14 +82,10 @@ def _extract_block(profile_md: str) -> str:
 
 def _format_feedback(feedback: list[FeedbackRow]) -> str:
     """Format feedback rows (rating + note) into a compact prompt block."""
-    lines = []
-    for row in feedback:
-        sign = "+" if row.rating == "up" else "-"
-        line = f'{sign} {row.title} ({row.article_url})'
-        if row.note:
-            line += f" — note: {row.note}"
-        lines.append(line)
-    return "\n".join(lines)
+    return "\n".join(
+        format_feedback_line(row, f"{row.title} ({row.article_url})")
+        for row in feedback
+    )
 
 
 def _build_block(summary: str) -> str:
@@ -119,7 +115,7 @@ def tune_profile(
         return profile_md
 
     if client is None:
-        client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
+        client = get_anthropic_client()
 
     human = _strip_block(profile_md)
     existing = _extract_block(profile_md)

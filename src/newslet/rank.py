@@ -13,8 +13,8 @@ import json
 import anthropic
 from pydantic import ValidationError
 
-from .config import settings
-from .contracts import Article, FeedbackRow, RankResponse
+from .config import get_anthropic_client, settings
+from .contracts import Article, FeedbackRow, RankResponse, format_feedback_line
 
 _SYSTEM_PROMPT = """\
 You rank candidate news articles for a personalized daily email digest.
@@ -55,11 +55,9 @@ def _build_stable_block(profile_md: str, feedback: list[FeedbackRow]) -> str:
         lines.append("(none yet)")
     else:
         for row in feedback:
-            sign = "+" if row.rating == "up" else "-"
-            line = f'{sign} {row.article_url} "{row.title}"'
-            if row.note:
-                line += f" — note: {row.note}"
-            lines.append(line)
+            lines.append(
+                format_feedback_line(row, f'{row.article_url} "{row.title}"')
+            )
     return "\n".join(lines)
 
 
@@ -97,7 +95,7 @@ def rank(
     the *original* ``ValidationError`` is raised.
     """
     if client is None:
-        client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
+        client = get_anthropic_client()
 
     system_prompt = _build_system_prompt(min_picks, max_picks)
     stable_block = _build_stable_block(profile_md, feedback)

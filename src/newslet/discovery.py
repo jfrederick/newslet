@@ -8,18 +8,17 @@ empty response) yields an empty list rather than crashing the digest.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from collections.abc import Callable
-from urllib.parse import urlsplit
 
 import anthropic
 import feedparser
 from pydantic import TypeAdapter, ValidationError
 
-from .config import settings
+from .config import get_anthropic_client, settings
 from .contracts import Discovery
+from .llm_parse import host_key as _host_key
+from .llm_parse import parse_llm_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -63,87 +62,6 @@ fences) matching this schema:
 """
 
 _discovery_adapter = TypeAdapter(Discovery)
-
-
-def _host_key(url: str) -> str:
-    """Return the lowercased host of ``url`` without a leading ``www.``.
-
-    This is a host-level backstop, not a true registered-domain (eTLD+1)
-    extractor: ``news.bbc.co.uk`` and ``bbc.co.uk`` produce different keys.
-    The primary "exclude sources the user already follows" rule is enforced
-    by the model via the system prompt; this filter just catches exact-host
-    repeats without pulling in a public-suffix dependency.
-    """
-    host = (urlsplit(url).hostname or "").lower()
-    return host[4:] if host.startswith("www.") else host
-
-
-def _last_text_block(content: list) -> str | None:
-    """Return the text of the final text block in ``content``.
-
-    With the web search tool the response interleaves several content
-    blocks (tool calls, results), so the model's final JSON is in the
-    *last* text block, not ``content[0]``.
-    """
-    for block in reversed(content):
-        if getattr(block, "type", None) == "text" or hasattr(block, "text"):
-            text = getattr(block, "text", None)
-            if text is not None:
-                return text
-    return None
-
-
-def _extract_json_object(text: str) -> str | None:
-    """Pull the discoveries JSON object out of a model reply.
-
-    With the web_search tool active the model often ignores the
-    "ONLY a JSON object, no fences" instruction and wraps its answer in a
-    ```json fence, prefixes a sentence ("Here are the articles..."), or
-    trails one ("...}\nHope that helps!"). A bare ``json.loads`` on any of
-    those raises and — because discovery is best-effort — the section
-    silently vanishes from the email. Prefer the first fenced block that
-    looks like an object, then return the first balanced ``{...}`` span,
-    ignoring braces inside string literals so surrounding prose (or a stray
-    brace in a title/reason) can't kill an otherwise-valid payload.
-    """
-    candidate = text.strip()
-
-    # If the answer is fenced, take the first fenced block that actually
-    # looks like a JSON object — the model sometimes emits an unrelated
-    # example fence before the real one.
-    for body in re.findall(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL):
-        body = body.strip()
-        if body.startswith("{"):
-            candidate = body
-            break
-
-    # Return the first balanced {...} span. A string-literal toggle keeps
-    # braces inside values (e.g. "covers {tech} topics") from skewing the
-    # depth count, and stopping at depth 0 trims any trailing prose.
-    start = candidate.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for i in range(start, len(candidate)):
-        ch = candidate[i]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-        elif ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return candidate[start : i + 1]
-    return None
 
 
 def _feed_is_live(feed_url: str) -> bool:
@@ -194,7 +112,7 @@ def find_discoveries(
     if feed_validator is None:
         feed_validator = _feed_is_live
     if client is None:
-        client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
+        client = get_anthropic_client()
 
     excluded = {_host_key(f"//{d}") or d.lower() for d in feed_domains}
 
@@ -209,20 +127,8 @@ def find_discoveries(
         messages=[{"role": "user", "content": user_block}],
     )
 
-    text = _last_text_block(response.content)
-    if text is None:
-        logger.warning("discovery: no text block in response")
-        return []
-
-    json_str = _extract_json_object(text)
-    if json_str is None:
-        logger.warning("discovery: no JSON object found in response: %.200s", text)
-        return []
-
-    try:
-        payload = json.loads(json_str)
-    except json.JSONDecodeError as err:
-        logger.warning("discovery: could not parse response: %s", err)
+    payload = parse_llm_json_response(response.content, label="discovery")
+    if payload is None:
         return []
     raw = payload.get("discoveries", []) if isinstance(payload, dict) else []
 

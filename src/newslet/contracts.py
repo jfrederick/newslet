@@ -62,6 +62,18 @@ class WebArticle(BaseModel):
     comments: int | None = None
     comments_url: str = ""
 
+    def to_card_dict(self) -> dict:
+        """Serialize to the dict shape the web-view templates and JSON APIs expect."""
+        return {
+            "url": str(self.url),
+            "title": self.title,
+            "blurb": self.blurb,
+            "source": self.source or "",
+            "points": self.points,
+            "comments": self.comments,
+            "comments_url": self.comments_url or "",
+        }
+
 
 class Discovery(BaseModel):
     """A new candidate source/article surfaced outside the user's feeds.
@@ -153,3 +165,17 @@ class Config(BaseModel):
     max_rss_articles: int = Field(default=10, ge=1, le=40)
     max_web_articles: int = Field(default=5, ge=0, le=30)
     web_variety: int = Field(default=30, ge=0, le=100)
+
+
+def format_feedback_line(row: FeedbackRow, label: str) -> str:
+    """Format a single feedback row as ``+/- label [— note: ...]``.
+
+    ``label`` is the caller's preferred article description (rank puts the
+    URL first; tune puts the title first). The sign and optional note suffix
+    are shared logic.
+    """
+    sign = "+" if row.rating == "up" else "-"
+    line = f"{sign} {label}"
+    if row.note:
+        line += f" — note: {row.note}"
+    return line
