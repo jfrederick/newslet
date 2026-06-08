@@ -72,7 +72,8 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link) |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
 | `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
-| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`) |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`) |
+| `docs/product.md` + `docs/index.html` | the **product guide**: canonical markdown + a self-contained HTML viewer that fetches it live (3 selectable detail levels). Served at `/docs`; the markdown is the single source of truth |
 | `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search; auto-regenerates when stale) |
 | `templates/emails.html.j2` | the sent-email archive list |
 | `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, send now) |
@@ -128,6 +129,15 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 - **Manual "send now":** stores under a synthetic `manual-<ts>-<rand>` key
   that's hidden from "recent issues" and stays out of the daily cadence — see
   `digest._run_manual`. Don't surface that internal key in user-facing output.
+- **Product guide (`src/newslet/docs/`):** `product.md` is the single source of
+  truth; `index.html` fetches it at runtime and renders it client-side, so the
+  two never drift (no md→html sync step needed). It lives under `src/` (not the
+  top-level `docs/`) so it ships in the Lambda bundle and can be served at
+  `/docs`. Complexity tiers are encoded as `:::tier little` / `:::tier medium`
+  fences the viewer filters on; keep them balanced. A scheduled GitHub Actions
+  step regenerates `product.md` from the code on pushes to `main`
+  (`docs/docs-autoupdate-setup.md`), so keep the guide fact-based and let the
+  code be the source of truth.
 - **Match surrounding style:** comment density, naming, and idioms vary by
   file; follow the file you're editing.
 

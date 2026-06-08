@@ -28,7 +28,22 @@ _TEMPLATES = Environment(
     autoescape=select_autoescape(["html", "j2"]),
 )
 
-app = FastAPI(title="newslet")
+# docs_url/redoc_url/openapi_url are disabled so the product guide can own the
+# `/docs` path (FastAPI's interactive API docs default there) — and so the web
+# Lambda doesn't expose an API schema it has no use for.
+app = FastAPI(title="newslet", docs_url=None, redoc_url=None, openapi_url=None)
+
+# The product guide ships with the package under newslet/docs/. The HTML viewer
+# (index.html) pulls the markdown (product.md) at runtime from /docs/content.md,
+# so the rendered page can never drift from its source.
+_DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+
+
+def _read_doc(name: str) -> str:
+    try:
+        return (_DOCS_DIR / name).read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 # Reserved issues-table key for the standalone homepage aggregation (mirrors
 # digest.HOME_KEY; defined here too so the web Lambda need not import the
@@ -117,6 +132,36 @@ def logout() -> Response:
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie("admin_token")
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Product guide (public) — the attractive HTML docs, linked from /admin
+# ---------------------------------------------------------------------------
+
+
+@app.get("/docs", response_class=HTMLResponse)
+def product_guide() -> HTMLResponse:
+    """Serve the product guide's HTML viewer.
+
+    Public (no admin cookie) so the guide is shareable. The viewer fetches the
+    canonical markdown from ``/docs/content.md`` and renders it in the browser,
+    with a selectable technical-detail level — so the HTML stays in lock-step
+    with the markdown source rather than mirroring a stale copy.
+    """
+    html = _read_doc("index.html")
+    if not html:
+        raise HTTPException(status_code=404, detail="product guide not found")
+    return HTMLResponse(html)
+
+
+@app.get("/docs/content.md")
+def product_guide_markdown() -> Response:
+    """The canonical product-guide markdown — the single source of truth the
+    HTML viewer pulls in real time."""
+    md = _read_doc("product.md")
+    if not md:
+        raise HTTPException(status_code=404, detail="product guide not found")
+    return Response(content=md, media_type="text/markdown; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------
