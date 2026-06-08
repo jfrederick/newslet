@@ -8,6 +8,7 @@ Two auth schemes:
 
 from __future__ import annotations
 
+import hmac
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mangum import Mangum
 from pydantic import ValidationError
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from newslet import db, email_render, hn, newsletters, tokens, websearch
 from newslet.config import settings
@@ -29,6 +31,24 @@ _TEMPLATES = Environment(
 )
 
 app = FastAPI(title="newslet")
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject defensive HTTP headers on every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if _is_https(request):
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=63072000; includeSubDomains"
+            )
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 # Reserved issues-table key for the standalone homepage aggregation (mirrors
 # digest.HOME_KEY; defined here too so the web Lambda need not import the
@@ -77,7 +97,7 @@ def _is_https(request: Request) -> bool:
 
 
 def _require_admin(admin_token: str | None) -> None:
-    if not admin_token or admin_token != settings().admin_token:
+    if not admin_token or not hmac.compare_digest(admin_token, settings().admin_token):
         raise HTTPException(status_code=303, headers={"Location": "/login"})
 
 
@@ -98,7 +118,7 @@ def login_form() -> HTMLResponse:
 
 @app.post("/login")
 def login(request: Request, token: str = Form(...)) -> Response:
-    if token != settings().admin_token:
+    if not hmac.compare_digest(token, settings().admin_token):
         return _login_page("Invalid token")
     resp = RedirectResponse(url="/", status_code=303)
     resp.set_cookie(
