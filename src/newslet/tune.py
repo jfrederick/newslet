@@ -14,10 +14,14 @@ input markdown unchanged.
 
 from __future__ import annotations
 
+import logging
+
 import anthropic
 
 from .config import settings
 from .contracts import FeedbackRow
+
+logger = logging.getLogger(__name__)
 
 _BLOCK_START = "<!-- learned-preferences:auto:start -->"
 _BLOCK_END = "<!-- learned-preferences:auto:end -->"
@@ -140,7 +144,8 @@ def tune_profile(
             messages=[{"role": "user", "content": user_block}],
         )
         summary = response.content[0].text
-    except Exception:
+    except Exception:  # noqa: BLE001 - tuning is best effort, never raise
+        logger.warning("profile tuning Claude call failed", exc_info=True)
         return profile_md
 
     block = _build_block(summary)

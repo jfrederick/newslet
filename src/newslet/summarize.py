@@ -13,11 +13,14 @@ and never raises, letting the caller fall back to its own defaults.
 from __future__ import annotations
 
 import json
+import logging
 
 import anthropic
 
 from .config import settings
 from .contracts import Pick
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You write the subject line and TL;DR intro for a personalized daily news
@@ -94,6 +97,7 @@ def summarize_issue(
         subject = parsed["subject"]
         intro = parsed["intro"]
     except Exception:  # noqa: BLE001 - safe fallback, never raise
+        logger.warning("summarize failed", exc_info=True)
         return ("", "")
 
     if not isinstance(subject, str) or not isinstance(intro, str):

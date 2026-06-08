@@ -163,9 +163,14 @@ def get_profile() -> Profile:
     item = resp.get("Item")
     if not item:
         return Profile(markdown="", updated_at=datetime.now(UTC))
+    try:
+        updated_at = datetime.fromisoformat(item["updated_at"])
+    except (KeyError, ValueError, TypeError) as exc:
+        log.warning("bad updated_at in profile row: %s", exc)
+        updated_at = datetime.now(UTC)
     return Profile(
         markdown=item.get("markdown", ""),
-        updated_at=datetime.fromisoformat(item["updated_at"]),
+        updated_at=updated_at,
     )
 
 
@@ -504,13 +509,16 @@ def list_issues(limit: int = 30) -> list[dict[str, Any]]:
             picks_count = len(json.loads(item.get("picks_json", "[]")))
         except json.JSONDecodeError:
             picks_count = 0
-        rows.append(
-            {
-                "date": item["date"],
-                "picks_count": picks_count,
-                "sent_at": item.get("sent_at"),
-            }
-        )
+        try:
+            rows.append(
+                {
+                    "date": item["date"],
+                    "picks_count": picks_count,
+                    "sent_at": item.get("sent_at"),
+                }
+            )
+        except KeyError as exc:
+            log.warning("skipping issue row missing required field: %s", exc)
     rows.sort(key=lambda r: r["date"], reverse=True)
     return rows[:limit]
 
@@ -685,7 +693,12 @@ def recent_inbox_articles(since: datetime, *, now: datetime | None = None) -> li
         for entry in raw:
             try:
                 art = Article.model_validate(entry)
-            except ValidationError:
+            except ValidationError as exc:
+                log.warning(
+                    "skipping bad article in inbox row %r: %s",
+                    item.get("message_id"),
+                    exc,
+                )
                 continue
             key = str(art.url)
             if key in seen:

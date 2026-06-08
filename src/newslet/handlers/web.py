@@ -9,6 +9,7 @@ Two auth schemes:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from pydantic import ValidationError
 from newslet import db, email_render, hn, newsletters, tokens, websearch
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
+
+log = logging.getLogger(__name__)
 
 _TEMPLATES = Environment(
     loader=FileSystemLoader(str(Path(__file__).resolve().parent.parent / "templates")),
@@ -231,14 +234,17 @@ def home(
     query = (q or "").strip()
     search_cards: list[dict] = []
     if query:
-        for r in _interactive_search(query):
-            search_cards.append(
-                _article_card(
-                    url=r.url, title=r.title, blurb=r.blurb, source=r.source,
-                    score=None, rating="", points=r.points,
-                    comments=r.comments, comments_url=r.comments_url,
+        try:
+            for r in _interactive_search(query):
+                search_cards.append(
+                    _article_card(
+                        url=r.url, title=r.title, blurb=r.blurb, source=r.source,
+                        score=None, rating="", points=r.points,
+                        comments=r.comments, comments_url=r.comments_url,
+                    )
                 )
-            )
+        except Exception:  # noqa: BLE001 - search is best effort on the homepage
+            log.warning("homepage subject search failed", exc_info=True)
 
     html = _TEMPLATES.get_template("read.html.j2").render(
         vote_key=_HOME_KEY,
@@ -430,11 +436,17 @@ def send_now(admin_token: str | None = Cookie(default=None)) -> Response:
             status_code=503,
             detail="DIGEST_FUNCTION_NAME is not configured for the web app",
         )
-    boto3.client("lambda").invoke(
-        FunctionName=fn,
-        InvocationType="Event",
-        Payload=json.dumps({"manual": True}),
-    )
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=fn,
+            InvocationType="Event",
+            Payload=json.dumps({"manual": True}),
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the invoke failure
+        log.error("send-now Lambda invoke failed: %s", exc)
+        raise HTTPException(
+            status_code=502, detail="Failed to invoke digest Lambda"
+        ) from exc
     return RedirectResponse(url="/admin?sent=1", status_code=303)
 
 
@@ -717,11 +729,17 @@ def home_refresh(admin_token: str | None = Cookie(default=None)) -> JSONResponse
             status_code=503,
             detail="DIGEST_FUNCTION_NAME is not configured for the web app",
         )
-    boto3.client("lambda").invoke(
-        FunctionName=fn,
-        InvocationType="Event",
-        Payload=json.dumps({"home": True}),
-    )
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=fn,
+            InvocationType="Event",
+            Payload=json.dumps({"home": True}),
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the invoke failure
+        log.error("home-refresh Lambda invoke failed: %s", exc)
+        raise HTTPException(
+            status_code=502, detail="Failed to invoke digest Lambda"
+        ) from exc
     return JSONResponse({"ok": True, "status": "refreshing"})
 
 

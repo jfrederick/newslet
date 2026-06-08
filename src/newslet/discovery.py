@@ -116,13 +116,17 @@ def find_discoveries(
     system_prompt = _system_prompt(max_results)
     user_block = _build_user_block(profile_md, feed_domains)
 
-    response = client.messages.create(
-        model=settings().claude_model,
-        max_tokens=2048,
-        system=system_prompt,
-        tools=[web_search_tool()],
-        messages=[{"role": "user", "content": user_block}],
-    )
+    try:
+        response = client.messages.create(
+            model=settings().claude_model,
+            max_tokens=2048,
+            system=system_prompt,
+            tools=[web_search_tool()],
+            messages=[{"role": "user", "content": user_block}],
+        )
+    except Exception as exc:  # noqa: BLE001 - best effort; never raise
+        logger.warning("discovery: API call failed: %s", exc)
+        return []
 
     text = last_text_block(response.content)
     if text is None:
