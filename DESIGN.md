@@ -254,9 +254,10 @@ Lambda entry point + CLI dry-run.
 isolated send-now and `event={"home": true}` rebuilds the homepage aggregation
 (stored under `HOME_KEY="home"`, no email). Two EventBridge schedules drive it:
 the home rebuild at 09:45 UTC (`{"home": true}`) and the email digest at 10:00
-UTC. `run_digest` takes `max_picks`, `max_web`, and `web_variety` (daily reads
-them from `Config`; the homepage uses generous fixed counts), and folds in the
-HN, subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
+UTC. `run_digest` takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and
+`max_x_posts` (daily reads them from `Config`; the homepage uses generous fixed
+counts but honours the same X toggle), and folds in the HN,
+subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
 seen-filtered — alongside the RSS candidates.
 
 ```python
@@ -294,7 +295,7 @@ Routes:
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety}` → 303 `/admin`
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
