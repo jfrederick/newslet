@@ -65,7 +65,7 @@ def test_smoke(stub_sign: None) -> None:
         ]
     )
     subject, html = render_email(issue, BASE_URL)
-    assert subject == "newslet — 2026-05-17"
+    assert subject == "dailyscoop — 2026-05-17"
     assert html.lstrip().startswith("<")
     assert "Alpha title" in html
     assert "Beta title" in html
@@ -128,7 +128,7 @@ def test_token_verifies(real_env: None) -> None:
 def test_empty_picks(stub_sign: None) -> None:
     issue = _issue([])
     subject, html = render_email(issue, BASE_URL)
-    assert subject == "newslet — 2026-05-17"
+    assert subject == "dailyscoop — 2026-05-17"
     assert "<!doctype html>" in html.lower() or html.lstrip().startswith("<")
     assert "0 picks today" in html
 
@@ -144,7 +144,7 @@ def test_trailing_slash_idempotent(stub_sign: None) -> None:
 def test_subject_falls_back_when_empty(stub_sign: None) -> None:
     issue = _issue([_pick("https://a.example.com/1", "T", "B")])
     subject, _ = render_email(issue, BASE_URL)
-    assert subject == "newslet — 2026-05-17"
+    assert subject == "dailyscoop — 2026-05-17"
 
 
 def test_subject_override_used_when_present(stub_sign: None) -> None:
@@ -268,7 +268,7 @@ def test_homepage_link_present(stub_sign: None) -> None:
     issue = _issue([_pick("https://a.example.com/1", "T", "B")])
     _, html = render_email(issue, BASE_URL)
     # The email links generically to the newslet homepage (rich web UX).
-    assert "Open newslet" in html
+    assert "Open dailyscoop" in html
     assert f'href="{BASE_URL}/"' in html
 
 
@@ -283,10 +283,10 @@ def test_manual_key_not_surfaced(stub_sign: None) -> None:
     )
     subject, html = render_email(issue, BASE_URL)
     assert key not in subject
-    assert subject == "newslet — 2026-05-31"
+    assert subject == "dailyscoop — 2026-05-31"
     # The internal key is not shown as a visible label (header / <title>).
-    assert f"newslet · {key}" not in html
-    assert "<title>newslet · 2026-05-31</title>" in html
+    assert f"dailyscoop · {key}" not in html
+    assert "<title>dailyscoop · 2026-05-31</title>" in html
     assert "2026-05-31" in html
     # Real key still travels on the feedback links so rating resolves.
     assert f"d={key}" in html.replace("&amp;", "&")

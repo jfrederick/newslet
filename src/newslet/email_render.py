@@ -37,7 +37,7 @@ def _display_date(date: str) -> str:
 def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
     """Return ``(subject, html)`` for one issue."""
     display_date = _display_date(issue.date)
-    subject = issue.subject or f"newslet — {display_date}"
+    subject = issue.subject or f"dailyscoop — {display_date}"
     base = public_base_url.rstrip("/")
     sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
 
