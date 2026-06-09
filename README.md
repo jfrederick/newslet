@@ -38,6 +38,18 @@ refresh button: a scheduled job rebuilds it every morning at 09:45 UTC
 stored edition isn't from today. Past daily emails are archived at
 `/emails/<date>`.
 
+## Product guide
+
+A feature-by-feature **product guide** lives at
+[`src/newslet/docs/product.md`](src/newslet/docs/product.md) and is served as an
+attractive, self-contained HTML page at **`/docs`** (linked from the admin UI).
+The page pulls the markdown in real time and lets the reader pick how much
+technical detail to see — *none*, *some*, or *more* — so the same document works
+for a curious user and for an engineer. The markdown is the single source of
+truth; the HTML never holds its own copy. A scheduled AI step keeps the guide in
+sync with the code on every push to `main` (see
+[`docs/docs-autoupdate-setup.md`](docs/docs-autoupdate-setup.md)).
+
 ## Architecture
 
 ```
@@ -270,6 +282,7 @@ resolve a lockfile.
 - `src/newslet/tokens.py` — HMAC sign/verify for `/rate` links
 - `src/newslet/feeds.py` — feedparser wrapper, 24h filter, dedup via injected `is_seen`
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
+- `src/newslet/search_common.py` — shared Claude `web_search` primitives (tool def, JSON extraction, host key) for `discovery` + `websearch`
 - `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
 - `src/newslet/x_grok.py` — X (Twitter) ranking candidates via xAI Grok Live Search (optional; on when `XAI_API_KEY` is set)
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling

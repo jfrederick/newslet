@@ -8,6 +8,7 @@ Two auth schemes:
 
 from __future__ import annotations
 
+import hmac
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mangum import Mangum
 from pydantic import ValidationError
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from newslet import db, email_render, hn, newsletters, tokens, websearch
 from newslet.config import settings
@@ -28,7 +30,40 @@ _TEMPLATES = Environment(
     autoescape=select_autoescape(["html", "j2"]),
 )
 
-app = FastAPI(title="newslet")
+# docs_url/redoc_url/openapi_url are disabled so the product guide can own the
+# `/docs` path (FastAPI's interactive API docs default there) — and so the web
+# Lambda doesn't expose an API schema it has no use for.
+app = FastAPI(title="newslet", docs_url=None, redoc_url=None, openapi_url=None)
+
+# The product guide ships with the package under newslet/docs/. The HTML viewer
+# (index.html) pulls the markdown (product.md) at runtime from /docs/content.md,
+# so the rendered page can never drift from its source.
+_DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+
+
+def _read_doc(name: str) -> str:
+    try:
+        return (_DOCS_DIR / name).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject defensive HTTP headers on every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if _is_https(request):
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=63072000; includeSubDomains"
+            )
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 # Reserved issues-table key for the standalone homepage aggregation (mirrors
 # digest.HOME_KEY; defined here too so the web Lambda need not import the
@@ -77,7 +112,9 @@ def _is_https(request: Request) -> bool:
 
 
 def _require_admin(admin_token: str | None) -> None:
-    if not admin_token or admin_token != settings().admin_token:
+    if not admin_token or not hmac.compare_digest(
+        admin_token.encode(), settings().admin_token.encode()
+    ):
         raise HTTPException(status_code=303, headers={"Location": "/login"})
 
 
@@ -98,7 +135,7 @@ def login_form() -> HTMLResponse:
 
 @app.post("/login")
 def login(request: Request, token: str = Form(...)) -> Response:
-    if token != settings().admin_token:
+    if not hmac.compare_digest(token.encode(), settings().admin_token.encode()):
         return _login_page("Invalid token")
     resp = RedirectResponse(url="/", status_code=303)
     resp.set_cookie(
@@ -117,6 +154,36 @@ def logout() -> Response:
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie("admin_token")
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Product guide (public) — the attractive HTML docs, linked from /admin
+# ---------------------------------------------------------------------------
+
+
+@app.get("/docs", response_class=HTMLResponse)
+def product_guide() -> HTMLResponse:
+    """Serve the product guide's HTML viewer.
+
+    Public (no admin cookie) so the guide is shareable. The viewer fetches the
+    canonical markdown from ``/docs/content.md`` and renders it in the browser,
+    with a selectable technical-detail level — so the HTML stays in lock-step
+    with the markdown source rather than mirroring a stale copy.
+    """
+    html = _read_doc("index.html")
+    if not html:
+        raise HTTPException(status_code=404, detail="product guide not found")
+    return HTMLResponse(html)
+
+
+@app.get("/docs/content.md")
+def product_guide_markdown() -> Response:
+    """The canonical product-guide markdown — the single source of truth the
+    HTML viewer pulls in real time."""
+    md = _read_doc("product.md")
+    if not md:
+        raise HTTPException(status_code=404, detail="product guide not found")
+    return Response(content=md, media_type="text/markdown; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------
