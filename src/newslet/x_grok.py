@@ -35,7 +35,7 @@ from pydantic import ValidationError
 
 from .config import settings
 from .contracts import Article
-from .discovery import _extract_json_object  # shared JSON-from-model-reply helper
+from .search_common import extract_json_object  # shared JSON-from-model-reply helper
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +231,7 @@ def fetch_x_articles(
         logger.warning("x: no output text in response")
         return []
 
-    json_str = _extract_json_object(text)
+    json_str = extract_json_object(text)
     if json_str is None:
         logger.warning("x: no JSON object found in response: %.200s", text)
         return []
