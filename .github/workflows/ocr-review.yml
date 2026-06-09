@@ -15,8 +15,8 @@
 # auto-reviewed; only branches pushed to this repository are.
 #
 # Required secrets:
-#   OCR_LLM_URL        - LLM API endpoint (e.g. https://api.openai.com/v1/chat/completions)
-#   OCR_LLM_AUTH_TOKEN - Authentication token for the LLM API
+#   OCR_LLM_URL          - LLM API endpoint (e.g. https://api.openai.com/v1/chat/completions)
+#   OCR_LLM_AUTH_TOKEN   - Authentication token for the LLM API
 #
 # Optional secrets:
 #   OCR_LLM_MODEL          - Model name (default: gpt-4o)
@@ -43,6 +43,7 @@ permissions:
 jobs:
   code-review:
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # Hard ceiling so a stalled review can't run forever.
     # Run on PR opened, or on a trigger comment from a trusted author.
     # The author_association gate stops arbitrary accounts from launching
     # secret-backed jobs via a comment.
@@ -60,7 +61,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // For issue_comment events, get PR info
+            // For issue_comment events, look up the PR the comment is on.
             const prNumber = context.issue.number;
             const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -74,7 +75,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history needed for merge-base diff
+          fetch-depth: 0  # Full history needed for merge-base diff.
           ref: ${{ github.event.pull_request.head.sha || steps.pr-context.outputs.head_sha }}
 
       - name: Fetch PR head ref (ensures the head commit is available)
@@ -88,16 +89,12 @@ jobs:
       - name: Install OpenCodeReview
         run: npm install -g @alibaba-group/open-code-review
 
-      - name: Configure OCR
+      - name: Configure OCR (non-credential settings)
         run: |
-          # Quote every interpolation so values with spaces survive intact.
-          # Skip the optional settings when their secret is empty so an
-          # empty value can't clobber OCR's own defaults.
-          ocr config set llm.url "${{ secrets.OCR_LLM_URL }}"
-          ocr config set llm.auth_token "${{ secrets.OCR_LLM_AUTH_TOKEN }}"
-          if [ -n "${{ secrets.OCR_LLM_MODEL }}" ]; then
-            ocr config set llm.model "${{ secrets.OCR_LLM_MODEL }}"
-          fi
+          # Credentials are passed as env vars on the review step below
+          # (OCR's highest-precedence source). Only non-credential settings
+          # are written to config here. Skip optional values when empty so
+          # they can't clobber OCR's own defaults.
           if [ -n "${{ secrets.OCR_LLM_USE_ANTHROPIC }}" ]; then
             ocr config set llm.use_anthropic "${{ secrets.OCR_LLM_USE_ANTHROPIC }}"
           fi
@@ -105,8 +102,22 @@ jobs:
 
       - name: Run OpenCodeReview
         id: review
+        env:
+          # OCR's native credential env vars (highest precedence).
+          # Note: the token var is OCR_LLM_TOKEN, not OCR_LLM_AUTH_TOKEN.
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
         run: |
-          # Get base ref and head SHA from PR context (different for comment triggers)
+          # Fail fast with an actionable message instead of OCR's cryptic
+          # "no valid LLM endpoint" error when secrets are missing/empty
+          # (e.g. a fork PR, which never receives secrets).
+          if [ -z "$OCR_LLM_URL" ] || [ -z "$OCR_LLM_TOKEN" ]; then
+            echo "::error::OCR_LLM_URL / OCR_LLM_TOKEN are empty. Check the repo secret names (OCR_LLM_URL, OCR_LLM_AUTH_TOKEN); fork PRs do not receive secrets." >&2
+            exit 1
+          fi
+
+          # Base ref / head SHA differ between PR and comment triggers.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_REF="${{ github.event.pull_request.base.ref }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -115,24 +126,30 @@ jobs:
             HEAD_SHA="${{ steps.pr-context.outputs.head_sha }}"
           fi
 
-          echo "Reviewing PR: ${HEAD_SHA} against origin/${BASE_REF}"
+          echo "Reviewing ${HEAD_SHA} against origin/${BASE_REF}"
 
-          # Run OCR in range mode with JSON output.
-          # --audience agent keeps human progress output off stdout so the
-          # redirected file is pure JSON for the parse step below.
-          ocr review \
+          # --audience agent keeps progress chatter off stdout so the
+          #   redirected file is pure JSON for the parse step below.
+          # stdout -> JSON file; stderr is streamed live to the console AND
+          #   saved (via tee) so progress/errors are visible in real time
+          #   instead of a blank, "still running" log.
+          # `timeout` self-aborts before the job's hard ceiling.
+          # Raise --concurrency if large diffs review too slowly.
+          timeout 12m ocr review \
             --from "origin/${BASE_REF}" \
             --to "${HEAD_SHA}" \
             --format json \
             --audience agent \
-            > /tmp/ocr-result.json 2>/tmp/ocr-stderr.log || true
+            --concurrency 4 \
+            > /tmp/ocr-result.json \
+            2> >(tee /tmp/ocr-stderr.log >&2) \
+            || echo "::warning::ocr review exited non-zero (code $?) — see stderr above"
 
-          echo "OCR review completed. Output:"
-          cat /tmp/ocr-result.json
-          echo "OCR review completed. Error log:"
-          cat /tmp/ocr-stderr.log
+          echo "----- ocr-result.json -----"
+          cat /tmp/ocr-result.json || true
 
       - name: Post review comments to PR
+        if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -140,15 +157,16 @@ jobs:
             const fs = require('fs');
             const path = '/tmp/ocr-result.json';
 
-            // Read OCR output
+            // Read OCR output.
             let result;
             try {
               const raw = fs.readFileSync(path, 'utf8');
               result = JSON.parse(raw);
             } catch (e) {
               console.log('Failed to parse OCR output:', e.message);
-              // Post a simple comment if parsing fails
-              const stderr = fs.readFileSync('/tmp/ocr-stderr.log', 'utf8').trim();
+              // Post a simple comment if parsing fails.
+              let stderr = '';
+              try { stderr = fs.readFileSync('/tmp/ocr-stderr.log', 'utf8').trim(); } catch (_) {}
               if (stderr) {
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
@@ -163,7 +181,7 @@ jobs:
             const comments = result.comments || [];
             const warnings = result.warnings || [];
 
-            // If no comments, post a summary
+            // If no comments, post a summary.
             if (comments.length === 0) {
               const message = result.message || 'No comments generated. Looks good to me.';
               await github.rest.issues.createComment({
@@ -175,15 +193,15 @@ jobs:
               return;
             }
 
-            // Prepare PR review with inline comments
+            // Prepare PR review with inline comments.
             const prNumber = context.issue.number;
             let commitSha;
 
-            // Get commit SHA from event context
+            // Get commit SHA from event context.
             if (context.eventName === 'pull_request') {
               commitSha = context.payload.pull_request.head.sha;
             } else {
-              // For comment events, we need to fetch the PR
+              // For comment events, fetch the PR.
               const { data: pullRequest } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -192,15 +210,15 @@ jobs:
               commitSha = pullRequest.head.sha;
             }
 
-            // Build review comments array for the PR review API
-            // Only inline comments with line info can be posted via createReview
+            // Build review comments array for the PR review API.
+            // Only inline comments with line info can be posted via createReview.
             const reviewComments = [];
             const commentsWithoutLine = [];
 
             for (const comment of comments) {
               const body = formatComment(comment);
 
-              // Check if comment has valid line information for inline comment (line >= 1)
+              // Inline comment requires valid line info (line >= 1).
               const hasValidLine = (comment.start_line >= 1) || (comment.end_line >= 1);
               if (!hasValidLine) {
                 commentsWithoutLine.push({ comment, body });
@@ -212,7 +230,7 @@ jobs:
                 body: body
               };
 
-              // Use line range if available
+              // Use a line range if available.
               if (comment.start_line >= 1 && comment.end_line >= 1 && comment.start_line !== comment.end_line) {
                 reviewComment.start_line = comment.start_line;
                 reviewComment.line = comment.end_line;
@@ -229,7 +247,7 @@ jobs:
               reviewComments.push(reviewComment);
             }
 
-            // Submit as a single PR review with all comments
+            // Submit as a single PR review with all comments.
             const totalCount = comments.length;
             const inlineCount = reviewComments.length;
             const summaryCount = commentsWithoutLine.length;
@@ -242,13 +260,13 @@ jobs:
               summaryBody += `\n\n⚠️ ${warnings.length} warning(s) occurred during review.`;
             }
 
-            // Add comments without line info to summary body
+            // Add comments without line info to the summary body.
             for (const { comment, body } of commentsWithoutLine) {
               summaryBody += '\n\n---\n\n';
               summaryBody += formatCommentMarkdown(comment);
             }
 
-            // Statistics tracking
+            // Statistics tracking.
             let successCount = 0;
             let failedCount = 0;
             const failedComments = [];
@@ -269,7 +287,7 @@ jobs:
               console.log('Failed to post review with inline comments:', e.message);
               console.log('Falling back to posting comments individually...');
 
-              // Fallback: post comments one by one
+              // Fallback: post comments one by one.
               for (const reviewComment of reviewComments) {
                 try {
                   await github.rest.pulls.createReview({
@@ -290,7 +308,7 @@ jobs:
                 }
               }
 
-              // Post summary comment with statistics
+              // Post a summary comment with statistics.
               let finalBody = summaryBody;
               finalBody += `\n\n---\n\n📊 **Posting Statistics:**`;
               finalBody += `\n- ✅ Successfully posted: ${successCount} comment(s)`;
@@ -298,7 +316,7 @@ jobs:
                 finalBody += `\n- ❌ Failed to post: ${failedCount} comment(s)`;
               }
 
-              // Add failed comments details
+              // Add failed comment details.
               if (failedComments.length > 0) {
                 finalBody += '\n\n<details><summary>❌ Failed Comments Details</summary>\n\n';
                 for (const { comment, error } of failedComments) {
@@ -318,7 +336,7 @@ jobs:
             function formatComment(comment) {
               let body = comment.content || '';
 
-              // Add code suggestion if available
+              // Add a code suggestion if available.
               if (comment.suggestion_code && comment.existing_code) {
                 body += '\n\n**Suggestion:**\n';
                 body += '```suggestion\n';
