@@ -549,6 +549,7 @@ def test_main_dry_run_no_picks(env, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(digest, "_fake_hn", lambda **_: [])
     monkeypatch.setattr(digest, "_fake_newsletters", lambda _s, **_: [])
     monkeypatch.setattr(digest, "_fake_websearch", lambda *_a, **_k: [])
+    monkeypatch.setattr(digest, "_fake_x", lambda *_a, **_k: [])
 
     exit_code = digest.main([
         "--dry-run",

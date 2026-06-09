@@ -13,6 +13,13 @@ RSS/HN picks and max open-web results), along with a **variety dial** that
 lets the web search roam from strictly on-topic to exploratory, related
 ancillary areas.
 
+You can optionally add **X (Twitter)** as a source without paying for X's
+API: if you set an xAI API key, newslet asks **Grok's `x_search` tool** for
+recent posts matching your profile and folds them into the daily ranking
+pool alongside RSS and Hacker News. It's billed per-use by xAI (cents a
+day), so you skip X's flat paid-API floor. The source stays dormant until a
+key is configured (see [Optional: X (Twitter) via Grok](#optional-x-twitter-via-grok)).
+
 You can also **subscribe to existing email newsletters** as a source: the
 admin UI mints a working inbound address you paste into any newsletter's
 signup form. SES receives the mail 24/7, an inbound Lambda extracts the
@@ -166,6 +173,29 @@ EventBridge fires the digest Lambda twice daily: a homepage rebuild at
 the crons in `infra/template.yaml` if you want different times of day
 (EventBridge cron is always UTC).
 
+### Optional: X (Twitter) via Grok
+
+newslet can pull recent, on-profile posts from X into the daily ranking
+pool — without paying for X's API. It goes through **xAI's Grok `x_search`
+tool** (the Agent Tools API), which reads X as a search source and bills
+per-use (a daily digest's handful of posts costs cents), so you avoid X's
+flat paid-API floor and any scraping.
+
+It's off until you add a key. To enable it:
+
+```bash
+REGION=us-east-1
+aws ssm put-parameter --region $REGION --type SecureString \
+  --name /newslet/xai-api-key --value 'xai-...'
+```
+
+The digest Lambda already has permission to read `/newslet/*` and decrypt
+it, so no redeploy is needed — the source switches on at the next cold
+start. The model defaults to `grok-4.3` (a reasoning model — the `x_search`
+tool requires one); override it with the `XAI_MODEL` env var on the digest
+function for a different Grok model. With no key set, the source simply
+stays empty and the digest runs exactly as before.
+
 ### Optional: subscribing to newsletters
 
 newslet can subscribe to existing email newsletters and fold their links
@@ -254,6 +284,7 @@ resolve a lockfile.
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
 - `src/newslet/search_common.py` — shared Claude `web_search` primitives (tool def, JSON extraction, host key) for `discovery` + `websearch`
 - `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
+- `src/newslet/x_grok.py` — X (Twitter) ranking candidates via xAI Grok Live Search (optional; on when `XAI_API_KEY` is set)
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers
 - `src/newslet/rank.py` — Anthropic call with prompt caching
