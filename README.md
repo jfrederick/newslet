@@ -140,7 +140,19 @@ Accept the defaults; pick a stack name (e.g. `newslet`); say `y` to
 "create managed ECR repositories" if asked and `y` to "allow IAM role
 creation". Note the `ApiUrl` and `DigestFunctionName` outputs.
 
-Subsequent deploys are just `sam build && sam deploy`.
+Subsequent deploys are just `sam build && sam deploy` — always run
+`sam build` first; a bare `sam deploy` ships the source without its
+dependencies and breaks the Lambdas.
+
+#### Optional: serve the UI on your own domain
+
+Set `SiteDomain` (and `SiteHostedZoneId`, its Route 53 zone) in
+`infra/samconfig.toml` to put the web UI on `https://<SiteDomain>` instead
+of the `execute-api` URL. The template then provisions a DNS-validated ACM
+certificate, the API Gateway custom domains, and the Route 53 alias records;
+`www.<SiteDomain>` is also created and 301-redirects to the apex. The
+domain's nameservers must already point at the Route 53 hosted zone. Emailed
+links automatically switch to the custom domain too.
 
 ### 4. Configure your feeds and profile
 

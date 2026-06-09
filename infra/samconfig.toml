@@ -7,6 +7,8 @@ s3_prefix = "newslet"
 region = "us-east-1"
 capabilities = "CAPABILITY_IAM"
 image_repositories = []
+# Deployment-specific values (keep personal infra IDs out of the template).
+parameter_overrides = "SiteDomain=dailyscoop.email SiteHostedZoneId=Z09245005KNH43T4R77C"
 
 [default.global.parameters]
 region = "us-east-1"
