@@ -185,7 +185,7 @@ def fetch_x_articles(
 
 Best-effort: returns `[]` when no `XAI_API_KEY` is configured (the source is
 simply disabled — no network call) and on any error/empty reply. Reuses
-`discovery._extract_json_object` for the model reply. Each post becomes an
+`search_common.extract_json_object` for the model reply. Each post becomes an
 `Article` with `source="X"`, an engagement-rich `summary`
 (likes/reposts + text), and `published=now`.
 
