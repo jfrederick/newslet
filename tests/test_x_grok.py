@@ -133,6 +133,15 @@ def test_bad_json_returns_empty_not_raises(env):
     assert out == []
 
 
+@pytest.mark.parametrize("output", [5, "boom", {"error": "nope"}, None])
+def test_malformed_output_returns_empty_not_raises(env, output):
+    """A non-list `output` (error object, scalar) degrades to [], never raises."""
+    out = x_grok.fetch_x_articles(
+        "topic", complete=lambda _p, _k: {"output": output}
+    )
+    assert out == []
+
+
 def test_api_exception_returns_empty(env):
     def boom(_payload, _key):
         raise RuntimeError("rate limited")
@@ -154,6 +163,8 @@ def test_request_uses_x_search_tool_on_responses_api(env):
     tool = payload["tools"][0]
     assert tool["type"] == "x_search"
     assert "from_date" in tool  # recent=True puts recency in the tool itself
+    # A bounded output budget so a runaway reply can't burn tokens.
+    assert payload["max_output_tokens"] == x_grok._MAX_OUTPUT_TOKENS
 
 
 def test_model_defaults_to_configured(env):
