@@ -63,6 +63,25 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class _CanonicalHostMiddleware(BaseHTTPMiddleware):
+    """Redirect ``www.<domain>`` to the bare apex so the site has one
+    canonical host. Both names terminate TLS at the same API (see the
+    custom-domain resources in infra/template.yaml); this collapses them
+    to a single origin so links, cookies, and emailed URLs don't split."""
+
+    async def dispatch(self, request: Request, call_next):
+        host = request.url.hostname or ""
+        if host.startswith("www."):
+            target = request.url.replace(
+                scheme="https", hostname=host[4:], port=None
+            )
+            return RedirectResponse(url=str(target), status_code=301)
+        return await call_next(request)
+
+
+# Added before the security headers so that middleware stays outermost and
+# still decorates the 301 response.
+app.add_middleware(_CanonicalHostMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 
 # Reserved issues-table key for the standalone homepage aggregation (mirrors
@@ -375,15 +394,22 @@ def save_config(
     max_rss_articles: int = Form(...),
     max_web_articles: int = Form(...),
     web_variety: int = Form(...),
+    # An unchecked HTML checkbox submits nothing, so absence means "off".
+    # New fields default-optional so older clients/tests posting the original
+    # three still validate.
+    x_enabled: bool = Form(default=False),
+    max_x_articles: int = Form(default=15),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
-    """Persist the daily-email article counts and the web-search variety dial."""
+    """Persist the daily-email article counts, web-search variety, and X source."""
     _require_admin(admin_token)
     try:
         cfg = Config(
             max_rss_articles=max_rss_articles,
             max_web_articles=max_web_articles,
             web_variety=web_variety,
+            x_enabled=x_enabled,
+            max_x_articles=max_x_articles,
         )
     except ValidationError as exc:
         raise HTTPException(

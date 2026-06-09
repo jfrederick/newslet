@@ -128,8 +128,11 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
     home view drops already-downvoted articles).
 - **Admin config** lives in the profile table under `id="config"`
   (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
-  `max_web_articles`, and `web_variety` (0–100 exploration dial for
-  `websearch.search_web`). Read leniently (defaults on a missing/bad row).
+  `max_web_articles`, `web_variety` (0–100 exploration dial for
+  `websearch.search_web`), `x_enabled` (X source on/off; also needs
+  `XAI_API_KEY`), and `max_x_articles` (X posts pulled into the pool). Read
+  leniently (defaults on a missing/bad row; the X source has no per-account
+  config — relevance comes from the profile, like HN/web).
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model

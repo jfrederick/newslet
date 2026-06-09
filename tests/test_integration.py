@@ -469,7 +469,7 @@ def test_send_email_invokes_resend_correctly(aws, monkeypatch):
     payload = calls[0]
     assert payload["subject"] == "subject line"
     assert payload["html"] == "<p>hi</p>"
-    assert payload["from"] == "newslet <from@example.com>"
+    assert payload["from"] == "dailyscoop <from@example.com>"
     assert payload["to"] == ["to@example.com"]
 
 
@@ -702,6 +702,50 @@ def test_run_digest_merges_x_posts(env, monkeypatch):
     assert "https://x.com/a/status/1" in pool
     assert "https://x.com/a/status/2" not in pool
     assert "https://feed.example/rss-1" in pool
+
+
+def test_run_digest_skips_x_when_disabled(env, monkeypatch):
+    """x_enabled=False must not call the X source at all."""
+    from newslet import feeds
+    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.handlers import digest
+
+    rss = Article(url="https://feed.example/rss-1", title="RSS One", summary="s",
+                  source="Feed", published=datetime.now(UTC))
+    monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [rss])
+
+    called = {"x": 0}
+
+    def fake_x(*_a, **_k):
+        called["x"] += 1
+        return [Article(url="https://x.com/a/status/1", title="X", summary="",
+                        source="X", published=datetime.now(UTC))]
+
+    pools: list[list[str]] = []
+
+    def fake_rank(*, candidates, **k):
+        pools.append([str(c.url) for c in candidates])
+        return RankResponse(picks=[
+            Pick(url=c.url, title=c.title, blurb="b", source=c.source, score=0.5)
+            for c in candidates
+        ])
+
+    digest.run_digest(
+        feed_urls=["https://feed.example/rss"],
+        profile=Profile(markdown="p", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: False,
+        rank_fn=fake_rank,
+        summarize_fn=lambda picks, **k: ("s", "i"),
+        discovery_fn=lambda *a, **k: [],
+        hn_fn=lambda **k: [],
+        websearch_fn=lambda *a, **k: [],
+        newsletters_fn=lambda since, **k: [],
+        x_fn=fake_x,
+        x_enabled=False,
+    )
+    assert called["x"] == 0
+    assert pools[0] == ["https://feed.example/rss-1"]  # no X candidate in pool
 
 
 def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):

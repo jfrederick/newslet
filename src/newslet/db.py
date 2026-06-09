@@ -203,6 +203,10 @@ def get_config() -> Config:
             max_rss_articles=int(item.get("max_rss_articles", 10)),
             max_web_articles=int(item.get("max_web_articles", 5)),
             web_variety=int(item.get("web_variety", 30)),
+            # Legacy rows predate the X source; default it on (it still needs a
+            # key to actually run) so existing installs pick it up.
+            x_enabled=bool(item.get("x_enabled", True)),
+            max_x_articles=int(item.get("max_x_articles", 15)),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -217,6 +221,8 @@ def put_config(config: Config) -> Config:
             "max_rss_articles": config.max_rss_articles,
             "max_web_articles": config.max_web_articles,
             "web_variety": config.web_variety,
+            "x_enabled": config.x_enabled,
+            "max_x_articles": config.max_x_articles,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )

@@ -99,6 +99,25 @@ def client(aws):
 
 
 # ---------------------------------------------------------------------------
+# Canonical host (www -> apex)
+# ---------------------------------------------------------------------------
+
+
+def test_www_host_redirects_to_apex(client):
+    """Requests to www.<domain> get a 301 to the bare apex over https,
+    preserving path and query so links and bookmarks survive."""
+    r = client.get("/emails?page=2", headers={"host": "www.dailyscoop.email"})
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://dailyscoop.email/emails?page=2"
+
+
+def test_apex_host_is_served_directly(client):
+    """The bare apex is served normally — no redirect (guards against a loop)."""
+    r = client.get("/login", headers={"host": "dailyscoop.email"})
+    assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # Product guide (public docs)
 # ---------------------------------------------------------------------------
 
@@ -120,7 +139,7 @@ def test_docs_markdown_is_public_and_tiered(client):
     r = client.get("/docs/content.md")
     assert r.status_code == 200
     assert "text/markdown" in r.headers["content-type"]
-    assert "# newslet" in r.text
+    assert "# dailyscoop" in r.text
     # The three depth levels are encoded as :::tier fences.
     assert ":::tier little" in r.text
     assert ":::tier medium" in r.text
@@ -794,7 +813,13 @@ def test_config_save_and_render(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.post(
         "/api/config",
-        data={"max_rss_articles": "15", "max_web_articles": "8", "web_variety": "70"},
+        data={
+            "max_rss_articles": "15",
+            "max_web_articles": "8",
+            "web_variety": "70",
+            "x_enabled": "true",
+            "max_x_articles": "12",
+        },
     )
     assert r.status_code == 303
     assert r.headers["location"] == "/admin"
@@ -803,12 +828,30 @@ def test_config_save_and_render(client):
     assert cfg.max_rss_articles == 15
     assert cfg.max_web_articles == 8
     assert cfg.web_variety == 70
+    assert cfg.x_enabled is True
+    assert cfg.max_x_articles == 12
 
     # The admin page shows the saved values.
     r = client.get("/admin")
     assert 'name="max_rss_articles"' in r.text
     assert 'value="15"' in r.text
     assert 'name="web_variety"' in r.text
+    assert 'name="x_enabled"' in r.text
+    assert 'name="max_x_articles"' in r.text
+
+
+def test_config_x_disabled_when_checkbox_absent(client):
+    """An unchecked X checkbox submits nothing, which must persist as off."""
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        # No x_enabled key — mirrors an unchecked checkbox.
+        data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().x_enabled is False
 
 
 def test_config_rejects_out_of_range(client):
