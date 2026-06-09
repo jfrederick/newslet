@@ -29,6 +29,15 @@ Parameters:
       certificate via DNS and to create the alias records. Required whenever
       SiteDomain is set.
 
+Rules:
+  # Fail fast at parameter-validation time if SiteDomain is set without its
+  # zone ID, instead of deploying partway and erroring during ACM cert creation.
+  SiteDomainNeedsZone:
+    RuleCondition: !Not [!Equals [!Ref SiteDomain, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref SiteHostedZoneId, '']]
+        AssertDescription: SiteHostedZoneId is required when SiteDomain is set.
+
 Conditions:
   # The SES receipt-rule resources are only created once a mail domain is
   # supplied; everything else (bucket, tables, inbound Lambda) deploys either
