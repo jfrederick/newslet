@@ -139,7 +139,7 @@ def test_docs_markdown_is_public_and_tiered(client):
     r = client.get("/docs/content.md")
     assert r.status_code == 200
     assert "text/markdown" in r.headers["content-type"]
-    assert "# newslet" in r.text
+    assert "# dailyscoop" in r.text
     # The three depth levels are encoded as :::tier fences.
     assert ":::tier little" in r.text
     assert ":::tier medium" in r.text
