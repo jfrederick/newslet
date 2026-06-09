@@ -230,11 +230,15 @@ SES inbound is only available in some regions (`us-east-1`, `us-west-2`,
    `inbox.yourdomain.com`, so newsletter mail can't interfere with your
    normal email.
 
-2. **Redeploy with the domain set** so the SES receipt rule is created:
+2. **Redeploy with the domain set** so the SES receipt rule is created. Add
+   `MailDomain` to `parameter_overrides` in `infra/samconfig.toml` (alongside
+   `SiteDomain`/`SiteHostedZoneId`) so it persists — otherwise the next
+   merge-to-`main` auto-deploy redeploys with the empty default and tears the
+   receipt rule back down. Then:
 
    ```bash
    cd infra
-   sam build && sam deploy --parameter-overrides MailDomain=inbox.yourdomain.com
+   sam build && sam deploy
    ```
 
 3. **Verify the domain in SES** and **point its MX record at SES**:
