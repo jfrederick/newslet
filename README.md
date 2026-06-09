@@ -196,6 +196,15 @@ tool requires one); override it with the `XAI_MODEL` env var on the digest
 function for a different Grok model. With no key set, the source simply
 stays empty and the digest runs exactly as before.
 
+**What it pulls:** there's no list of accounts to follow — the X source is
+driven by your **profile** (the same interests text the admin UI uses for
+everything else). Grok searches recent X posts and returns the ones that
+best match your profile; they then compete in the daily ranking like any
+other source. The admin **Daily email settings** has two X controls: a
+**"Pull posts from X"** toggle (on by default once a key exists; turn it off
+to pause the paid source without deleting the key) and **Max X posts** (how
+many to pull into the ranking pool, default 15).
+
 ### Optional: subscribing to newsletters
 
 newslet can subscribe to existing email newsletters and fold their links
