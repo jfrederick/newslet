@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:   # manual "Run workflow" button; pick the branch in the UI
 
 permissions:
   id-token: write   # required for OIDC
@@ -26,10 +27,16 @@ jobs:
         run: pytest -q
 
   deploy:
-    # Only deploy from main pushes (not from PRs, even those merged
-    # via "Squash and merge" — those land as a push to main, which
-    # this catches; PR events themselves never deploy).
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Deploy only from main, whether triggered by:
+    #   - a push to main (PRs merged via "Squash and merge" land as a push to
+    #     main, which this catches; PR events themselves never deploy), or
+    #   - a manual "Run workflow" in the Actions UI with main selected
+    #     (workflow_dispatch) — handy for re-deploying without a new commit.
+    # Selecting any non-main branch runs the tests but skips the deploy, so a
+    # manual dispatch can't push unreviewed branch code to production.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: test
     runs-on: ubuntu-latest
     steps:
