@@ -12,11 +12,31 @@ Parameters:
       without activating SES reception — wire up the domain (verify it in SES,
       point its MX at SES) and redeploy with this set to start receiving.
 
+  SiteDomain:
+    Type: String
+    Default: ''
+    Description: >-
+      Apex domain the web UI is served at, e.g. dailyscoop.email. Also used to
+      build the links inside the daily email. Leave empty to serve only on the
+      execute-api URL. Set (with SiteHostedZoneId) in samconfig to attach the
+      custom domain. www.<SiteDomain> is also provisioned and 301s to the apex.
+
+  SiteHostedZoneId:
+    Type: String
+    Default: ''
+    Description: >-
+      Route 53 hosted zone ID for SiteDomain. Used to auto-validate the ACM
+      certificate via DNS and to create the alias records. Required whenever
+      SiteDomain is set.
+
 Conditions:
   # The SES receipt-rule resources are only created once a mail domain is
   # supplied; everything else (bucket, tables, inbound Lambda) deploys either
   # way so the code path is in place and just needs DNS to go live.
   HasMailDomain: !Not [!Equals [!Ref MailDomain, '']]
+  # The custom-domain resources (cert, API domains, alias records) deploy only
+  # when a site domain is configured; without it the app stays on execute-api.
+  HasSiteDomain: !Not [!Equals [!Ref SiteDomain, '']]
 
 Globals:
   Function:
@@ -34,6 +54,85 @@ Resources:
   # Uses the $default stage so URLs have no /<stage>/ prefix.
   Api:
     Type: AWS::Serverless::HttpApi
+
+  # ---------- Custom domain (web UI at https://<SiteDomain>) ----------
+  # All of this is created only when SiteDomain is set. The ACM cert is
+  # DNS-validated automatically because the zone is in Route 53 in this
+  # account, so the stack does not block waiting on manual record creation.
+  SiteCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasSiteDomain
+    Properties:
+      DomainName: !Ref SiteDomain
+      SubjectAlternativeNames:
+        - !Sub 'www.${SiteDomain}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref SiteDomain
+          HostedZoneId: !Ref SiteHostedZoneId
+        - DomainName: !Sub 'www.${SiteDomain}'
+          HostedZoneId: !Ref SiteHostedZoneId
+
+  # Apex: custom domain -> $default stage, plus a Route 53 alias at the apex.
+  SiteApiDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasSiteDomain
+    Properties:
+      DomainName: !Ref SiteDomain
+      DomainNameConfigurations:
+        - CertificateArn: !Ref SiteCertificate
+          EndpointType: REGIONAL
+
+  SiteApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasSiteDomain
+    Properties:
+      DomainName: !Ref SiteApiDomain
+      ApiId: !Ref Api
+      Stage: $default
+
+  SiteDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasSiteDomain
+    Properties:
+      HostedZoneId: !Ref SiteHostedZoneId
+      Name: !Ref SiteDomain
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt SiteApiDomain.RegionalDomainName
+        HostedZoneId: !GetAtt SiteApiDomain.RegionalHostedZoneId
+        EvaluateTargetHealth: false
+
+  # www: terminates TLS on the same API; the web app 301s it to the apex
+  # (see _CanonicalHostMiddleware in handlers/web.py).
+  SiteApiDomainWww:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasSiteDomain
+    Properties:
+      DomainName: !Sub 'www.${SiteDomain}'
+      DomainNameConfigurations:
+        - CertificateArn: !Ref SiteCertificate
+          EndpointType: REGIONAL
+
+  SiteApiMappingWww:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasSiteDomain
+    Properties:
+      DomainName: !Ref SiteApiDomainWww
+      ApiId: !Ref Api
+      Stage: $default
+
+  SiteDnsRecordWww:
+    Type: AWS::Route53::RecordSet
+    Condition: HasSiteDomain
+    Properties:
+      HostedZoneId: !Ref SiteHostedZoneId
+      Name: !Sub 'www.${SiteDomain}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt SiteApiDomainWww.RegionalDomainName
+        HostedZoneId: !GetAtt SiteApiDomainWww.RegionalHostedZoneId
+        EvaluateTargetHealth: false
 
   # ---------- DynamoDB Tables ----------
   FeedsTable:
@@ -240,7 +339,13 @@ Resources:
           TABLE_INBOX: !Ref InboxTable
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
           TO_EMAIL: !Sub '{{resolve:ssm:/newslet/to-email}}'
-          PUBLIC_BASE_URL: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+          # Email links use the custom domain when configured, else the
+          # raw execute-api URL. (The web Lambda derives its base URL from
+          # the request instead — see handlers/web.py — to avoid a cycle.)
+          PUBLIC_BASE_URL: !If
+            - HasSiteDomain
+            - !Sub 'https://${SiteDomain}'
+            - !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
           CLAUDE_MODEL: !Sub '{{resolve:ssm:/newslet/claude-model}}'
       Events:
         # Rebuild the standalone web homepage (the "home" aggregation) 15
@@ -420,6 +525,10 @@ Outputs:
   ApiUrl:
     Description: HTTP API invoke URL
     Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+  SiteUrl:
+    Condition: HasSiteDomain
+    Description: Public URL of the web UI on the custom domain
+    Value: !Sub 'https://${SiteDomain}'
   DigestFunctionName:
     Description: Name of the digest Lambda function
     Value: !Ref DigestFunction
