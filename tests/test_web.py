@@ -98,6 +98,34 @@ def client(aws):
     return TestClient(app, follow_redirects=False)
 
 
+# ---------------------------------------------------------------------------
+# Product guide (public docs)
+# ---------------------------------------------------------------------------
+
+
+def test_docs_viewer_is_public_html(client):
+    """The product guide renders without an admin cookie and points the viewer
+    at the markdown source."""
+    r = client.get("/docs")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "product guide" in r.text.lower()
+    # The viewer pulls the markdown in real time from this route.
+    assert "/docs/content.md" in r.text
+
+
+def test_docs_markdown_is_public_and_tiered(client):
+    """The canonical markdown is served as markdown and carries the
+    complexity-tier fences the viewer filters on."""
+    r = client.get("/docs/content.md")
+    assert r.status_code == 200
+    assert "text/markdown" in r.headers["content-type"]
+    assert "# newslet" in r.text
+    # The three depth levels are encoded as :::tier fences.
+    assert ":::tier little" in r.text
+    assert ":::tier medium" in r.text
+
+
 def test_unauthenticated_root_redirects_to_login(client):
     r = client.get("/")
     assert r.status_code == 303
