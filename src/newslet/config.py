@@ -19,6 +19,12 @@ class Settings:
     anthropic_api_key: str
     claude_model: str
 
+    # xAI / Grok — optional X (Twitter) source via Grok's x_search tool. The key
+    # is blank until configured; the X source then degrades to "disabled" rather
+    # than breaking the digest (see :mod:`newslet.x_grok`).
+    xai_api_key: str
+    xai_model: str
+
     # Resend
     resend_api_key: str
     from_email: str
@@ -86,6 +92,29 @@ def _secret(env_name: str, ssm_suffix: str) -> str:
     return resp["Parameter"]["Value"]
 
 
+def _optional_secret(env_name: str, ssm_suffix: str) -> str:
+    """Like :func:`_secret`, but returns ``""`` when the value is absent.
+
+    For optional integrations (the xAI/Grok X source) a missing key must mean
+    "feature disabled", not "every Lambda fails to boot". SSM is only consulted
+    when actually running in Lambda (``AWS_LAMBDA_FUNCTION_NAME`` is set) so
+    local dev and the offline test suite never reach for the network just to
+    discover a key isn't there.
+    """
+    val = os.environ.get(env_name)
+    if val:
+        return val
+    if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return ""
+    prefix = os.environ.get("NEWSLET_SSM_PREFIX", "/newslet")
+    full = f"{prefix}/{ssm_suffix}"
+    try:
+        resp = _ssm_client().get_parameter(Name=full, WithDecryption=True)
+    except Exception:  # noqa: BLE001 - absent optional secret is not an error
+        return ""
+    return resp["Parameter"]["Value"]
+
+
 def get_anthropic_client():
     """Return a configured Anthropic client using the stored API key."""
     import anthropic
@@ -93,11 +122,14 @@ def get_anthropic_client():
     return anthropic.Anthropic(api_key=settings().anthropic_api_key)
 
 
+
 @lru_cache(maxsize=1)
 def settings() -> Settings:
     return Settings(
         anthropic_api_key=_secret("ANTHROPIC_API_KEY", "anthropic-api-key"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-7"),
+        xai_api_key=_optional_secret("XAI_API_KEY", "xai-api-key"),
+        xai_model=os.environ.get("XAI_MODEL", "grok-4.3"),
         resend_api_key=_secret("RESEND_API_KEY", "resend-api-key"),
         from_email=_required("FROM_EMAIL"),
         to_email=_required("TO_EMAIL"),
