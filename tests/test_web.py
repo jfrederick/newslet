@@ -99,6 +99,25 @@ def client(aws):
 
 
 # ---------------------------------------------------------------------------
+# Canonical host (www -> apex)
+# ---------------------------------------------------------------------------
+
+
+def test_www_host_redirects_to_apex(client):
+    """Requests to www.<domain> get a 301 to the bare apex over https,
+    preserving path and query so links and bookmarks survive."""
+    r = client.get("/emails?page=2", headers={"host": "www.dailyscoop.email"})
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://dailyscoop.email/emails?page=2"
+
+
+def test_apex_host_is_served_directly(client):
+    """The bare apex is served normally — no redirect (guards against a loop)."""
+    r = client.get("/login", headers={"host": "dailyscoop.email"})
+    assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # Product guide (public docs)
 # ---------------------------------------------------------------------------
 

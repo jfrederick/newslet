@@ -63,6 +63,25 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class _CanonicalHostMiddleware(BaseHTTPMiddleware):
+    """Redirect ``www.<domain>`` to the bare apex so the site has one
+    canonical host. Both names terminate TLS at the same API (see the
+    custom-domain resources in infra/template.yaml); this collapses them
+    to a single origin so links, cookies, and emailed URLs don't split."""
+
+    async def dispatch(self, request: Request, call_next):
+        host = request.url.hostname or ""
+        if host.startswith("www."):
+            target = request.url.replace(
+                scheme="https", hostname=host[4:], port=None
+            )
+            return RedirectResponse(url=str(target), status_code=301)
+        return await call_next(request)
+
+
+# Added before the security headers so that middleware stays outermost and
+# still decorates the 301 response.
+app.add_middleware(_CanonicalHostMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 
 # Reserved issues-table key for the standalone homepage aggregation (mirrors
