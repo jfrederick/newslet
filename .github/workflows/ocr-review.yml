@@ -88,16 +88,8 @@ jobs:
       - name: Install OpenCodeReview
         run: npm install -g @alibaba-group/open-code-review
 
-      - name: Configure OCR
+      - name: Configure OCR (non-credential settings)
         run: |
-          # Quote every interpolation so values with spaces survive intact.
-          # Skip the optional settings when their secret is empty so an
-          # empty value can't clobber OCR's own defaults.
-          ocr config set llm.url "${{ secrets.OCR_LLM_URL }}"
-          ocr config set llm.auth_token "${{ secrets.OCR_LLM_AUTH_TOKEN }}"
-          if [ -n "${{ secrets.OCR_LLM_MODEL }}" ]; then
-            ocr config set llm.model "${{ secrets.OCR_LLM_MODEL }}"
-          fi
           if [ -n "${{ secrets.OCR_LLM_USE_ANTHROPIC }}" ]; then
             ocr config set llm.use_anthropic "${{ secrets.OCR_LLM_USE_ANTHROPIC }}"
           fi
@@ -105,8 +97,19 @@ jobs:
 
       - name: Run OpenCodeReview
         id: review
+        env:
+          # OCR's native env vars (highest precedence). Note the token var is
+          # OCR_LLM_TOKEN, not OCR_LLM_AUTH_TOKEN.
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
         run: |
-          # Get base ref and head SHA from PR context (different for comment triggers)
+          # Fail fast with an actionable message instead of OCR's cryptic one.
+          if [ -z "$OCR_LLM_URL" ] || [ -z "$OCR_LLM_TOKEN" ]; then
+            echo "::error::OCR_LLM_URL / OCR_LLM_TOKEN are empty. Check the repo secret names (OCR_LLM_URL, OCR_LLM_AUTH_TOKEN) and note that fork PRs do not receive secrets." >&2
+            exit 1
+          fi
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_REF="${{ github.event.pull_request.base.ref }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -117,9 +120,6 @@ jobs:
 
           echo "Reviewing PR: ${HEAD_SHA} against origin/${BASE_REF}"
 
-          # Run OCR in range mode with JSON output.
-          # --audience agent keeps human progress output off stdout so the
-          # redirected file is pure JSON for the parse step below.
           ocr review \
             --from "origin/${BASE_REF}" \
             --to "${HEAD_SHA}" \
