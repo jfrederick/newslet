@@ -166,6 +166,29 @@ on the profile, high roams into related ancillary areas (never random).
 `max_searches`/`model` let the interactive subject box use a fast model and
 few rounds to fit the HTTP API's ~30s limit.
 
+### `newslet.x_grok`
+
+X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
+Agent Tools API on `POST /v1/responses`; the older Live Search API was retired
+2026-01-12). Returns `Article` candidates that compete with RSS/HN for the
+day's picks. The network edge is an injected `complete(payload, api_key) -> dict`
+(one Responses request → parsed JSON), so no new SDK dependency and tests stay
+offline.
+
+```python
+def fetch_x_articles(
+    query: str, *, max_results: int = 15, recent: bool = True,
+    api_key: str | None = None, model: str | None = None,
+    complete=None, now: datetime | None = None,
+) -> list[Article]: ...
+```
+
+Best-effort: returns `[]` when no `XAI_API_KEY` is configured (the source is
+simply disabled — no network call) and on any error/empty reply. Reuses
+`search_common.extract_json_object` for the model reply. Each post becomes an
+`Article` with `source="X"`, an engagement-rich `summary`
+(likes/reposts + text), and `published=now`.
+
 ### `newslet.newsletters`
 
 Pure parsing of inbound newsletter email into ranking candidates, plus
@@ -232,7 +255,9 @@ isolated send-now and `event={"home": true}` rebuilds the homepage aggregation
 (stored under `HOME_KEY="home"`, no email). Two EventBridge schedules drive it:
 the home rebuild at 09:45 UTC (`{"home": true}`) and the email digest at 10:00
 UTC. `run_digest` takes `max_picks`, `max_web`, and `web_variety` (daily reads
-them from `Config`; the homepage uses generous fixed counts).
+them from `Config`; the homepage uses generous fixed counts), and folds in the
+HN, subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
+seen-filtered — alongside the RSS candidates.
 
 ```python
 def handler(event: dict, context: object) -> dict: ...

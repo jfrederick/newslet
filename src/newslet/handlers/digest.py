@@ -17,7 +17,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from newslet import db, discovery, email_render, feeds, hn, rank, summarize, tune, websearch
+from newslet import (
+    db,
+    discovery,
+    email_render,
+    feeds,
+    hn,
+    rank,
+    summarize,
+    tune,
+    websearch,
+    x_grok,
+)
 from newslet.config import settings
 from newslet.contracts import (
     Article,
@@ -51,6 +62,10 @@ _DEFAULT_MAX_WEB = 5
 
 # How many HN front pages to pull into the ranking candidate pool.
 _HN_PAGES = 20
+
+# How many X (Twitter) posts to pull into the ranking candidate pool, when an
+# XAI_API_KEY is configured (the source is disabled and empty otherwise).
+_X_MAX_POSTS = 15
 
 # The web block uses a fast model with few search rounds: Opus with 3 rounds
 # spends its token budget on tool calls and never emits the final JSON, so the
@@ -133,6 +148,7 @@ def run_digest(
     hn_fn=None,
     websearch_fn=None,
     newsletters_fn=None,
+    x_fn=None,
     max_picks: int = _DEFAULT_MAX_PICKS,
     min_picks: int = 5,
     max_web: int = _DEFAULT_MAX_WEB,
@@ -145,8 +161,9 @@ def run_digest(
     Returns ``(issue, candidates)`` so callers can mark every fetched
     article seen (not just the picked ones) and avoid re-evaluating
     rejects on subsequent days.  Summarize, discovery, the Hacker News
-    source, and the web-search block are all best-effort: a failure in any
-    of them degrades to empty and never blocks the send.
+    source, the X (Twitter) source, and the web-search block are all
+    best-effort: a failure in any of them degrades to empty and never
+    blocks the send.
     """
     # Resolve at call time (not as defaults) so monkeypatching the module
     # attributes in tests is honoured.
@@ -155,6 +172,7 @@ def run_digest(
     hn_fn = hn_fn or hn.fetch_hn_articles
     websearch_fn = websearch_fn or websearch.search_web
     newsletters_fn = newsletters_fn or db.recent_inbox_articles
+    x_fn = x_fn or x_grok.fetch_x_articles
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -184,6 +202,21 @@ def run_digest(
         candidates = _dedupe_candidates(candidates + nl_candidates)
     except Exception:  # noqa: BLE001 - newsletters are best effort, never block
         log.exception("newsletter fetch failed; ranking without it")
+
+    # X (Twitter), via Grok Live Search: recent on-profile posts join the
+    # ranking pool like HN and newsletters. Same best-effort, seen-filtered
+    # shape; disabled (empty) when no XAI_API_KEY is configured, so it never
+    # blocks the send. Reuses the web block's profile distillation as the query.
+    try:
+        x_candidates = [
+            a
+            for a in x_fn(_web_search_query(profile.markdown), max_results=_X_MAX_POSTS)
+            if not is_seen(str(a.url))
+        ]
+        log.info("fetched %d X candidates", len(x_candidates))
+        candidates = _dedupe_candidates(candidates + x_candidates)
+    except Exception:  # noqa: BLE001 - X is best effort, never block the send
+        log.exception("X fetch failed; ranking without it")
 
     date = now.strftime("%Y-%m-%d")
     if not candidates:
@@ -506,6 +539,19 @@ def _fake_hn(pages: int = 0, **_) -> list[Article]:
     ]
 
 
+def _fake_x(query: str = "", **_) -> list[Article]:
+    """Deterministic, offline X (Twitter) candidates for --dry-run."""
+    return [
+        Article(
+            url="https://x.com/example/status/1700000000000000000",
+            title="A widely-shared post matching your interests",
+            summary="980 likes, 240 reposts on X (by @example).",
+            source="X",
+            published=datetime.now(UTC),
+        )
+    ]
+
+
 def _fake_newsletters(since: datetime, **_) -> list[Article]:
     """Deterministic, offline subscribed-newsletter candidates for --dry-run."""
     return [
@@ -585,6 +631,7 @@ def main(argv: list[str] | None = None) -> int:
         hn_fn=_fake_hn,
         websearch_fn=_fake_websearch,
         newsletters_fn=_fake_newsletters,
+        x_fn=_fake_x,
     )
 
     if not issue.picks:
