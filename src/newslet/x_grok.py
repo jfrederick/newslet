@@ -49,6 +49,13 @@ _USER_AGENT = "newslet/1.0 (+https://github.com/jfrederick/newslet)"
 # RSS window, with a day of slack so timezone boundaries don't drop anything.
 _RECENCY = timedelta(days=2)
 
+# Cap the response so a runaway reply can't burn tokens or stall the Lambda.
+# This budget covers the reasoning model's thinking + tool rounds + the final
+# JSON, so it is deliberately more generous than the websearch/discovery 2048:
+# too low and the model exhausts its budget reasoning and never emits the JSON
+# (the empty-result failure mode noted for the web block in digest.py).
+_MAX_OUTPUT_TOKENS = 8192
+
 # The x_search tool is agentic (no result-cap parameter), so the post count is
 # steered through the prompt and enforced when we slice the parsed output.
 _PROMPT = """\
@@ -101,11 +108,19 @@ def _output_text(response: dict) -> str | None:
     aggregate = response.get("output_text")
     if isinstance(aggregate, str) and aggregate.strip():
         return aggregate
+    output = response.get("output")
+    if not isinstance(output, list):
+        # An error object or other unexpected shape — degrade to empty rather
+        # than raising on a non-iterable.
+        return None
     parts: list[str] = []
-    for item in response.get("output", []) or []:
+    for item in output:
         if not isinstance(item, dict) or item.get("type") != "message":
             continue
-        for block in item.get("content", []) or []:
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
             if isinstance(block, dict) and block.get("type") in ("output_text", "text"):
                 text = block.get("text")
                 if isinstance(text, str):
@@ -195,6 +210,7 @@ def fetch_x_articles(
 
     payload = {
         "model": model,
+        "max_output_tokens": _MAX_OUTPUT_TOKENS,
         "input": [
             {
                 "role": "user",
