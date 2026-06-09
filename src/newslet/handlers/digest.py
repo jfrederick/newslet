@@ -88,6 +88,18 @@ def _web_search_query(profile_md: str) -> str:
     return base + (profile_md or "technology, science, and society")
 
 
+def _x_search_query(profile_md: str) -> str:
+    """The interests slot for the X source — just the profile, nothing more.
+
+    Unlike the web block, ``x_grok`` already supplies all the search framing
+    ("find recent high-signal posts from X matching the interests below"), so
+    this passes only the distilled interests. Reusing the web query here would
+    double the framing and waste tokens on "from across the open web" wording
+    that doesn't fit an X search.
+    """
+    return (profile_md or "").strip() or "technology, science, and society"
+
+
 def _build_issue(
     picks: list[Pick],
     date: str,
@@ -149,6 +161,8 @@ def run_digest(
     websearch_fn=None,
     newsletters_fn=None,
     x_fn=None,
+    x_enabled: bool = True,
+    max_x_posts: int = _X_MAX_POSTS,
     max_picks: int = _DEFAULT_MAX_PICKS,
     min_picks: int = 5,
     max_web: int = _DEFAULT_MAX_WEB,
@@ -203,20 +217,22 @@ def run_digest(
     except Exception:  # noqa: BLE001 - newsletters are best effort, never block
         log.exception("newsletter fetch failed; ranking without it")
 
-    # X (Twitter), via Grok Live Search: recent on-profile posts join the
+    # X (Twitter), via Grok's x_search tool: recent on-profile posts join the
     # ranking pool like HN and newsletters. Same best-effort, seen-filtered
-    # shape; disabled (empty) when no XAI_API_KEY is configured, so it never
-    # blocks the send. Reuses the web block's profile distillation as the query.
-    try:
-        x_candidates = [
-            a
-            for a in x_fn(_web_search_query(profile.markdown), max_results=_X_MAX_POSTS)
-            if not is_seen(str(a.url))
-        ]
-        log.info("fetched %d X candidates", len(x_candidates))
-        candidates = _dedupe_candidates(candidates + x_candidates)
-    except Exception:  # noqa: BLE001 - X is best effort, never block the send
-        log.exception("X fetch failed; ranking without it")
+    # shape. Gated by the admin toggle (``x_enabled``) and, inside x_grok, by
+    # the presence of an XAI_API_KEY — either off means an empty, non-blocking
+    # source.
+    if x_enabled:
+        try:
+            x_candidates = [
+                a
+                for a in x_fn(_x_search_query(profile.markdown), max_results=max_x_posts)
+                if not is_seen(str(a.url))
+            ]
+            log.info("fetched %d X candidates", len(x_candidates))
+            candidates = _dedupe_candidates(candidates + x_candidates)
+        except Exception:  # noqa: BLE001 - X is best effort, never block the send
+            log.exception("X fetch failed; ranking without it")
 
     date = now.strftime("%Y-%m-%d")
     if not candidates:
@@ -314,6 +330,8 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         max_picks=config.max_rss_articles,
         max_web=config.max_web_articles,
         web_variety=config.web_variety,
+        x_enabled=config.x_enabled,
+        max_x_posts=config.max_x_articles,
         now=now,
     )
 
@@ -390,6 +408,8 @@ def _run_home(s: Any) -> dict:
         min_picks=_HOME_MIN_PICKS,
         max_web=_HOME_WEB_ARTICLES,
         web_variety=config.web_variety,
+        x_enabled=config.x_enabled,
+        max_x_posts=config.max_x_articles,
         now=now,
     )
     issue = issue.model_copy(update={"date": HOME_KEY, "created_at": now})
