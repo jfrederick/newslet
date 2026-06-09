@@ -383,15 +383,22 @@ def save_config(
     max_rss_articles: int = Form(...),
     max_web_articles: int = Form(...),
     web_variety: int = Form(...),
+    # An unchecked HTML checkbox submits nothing, so absence means "off".
+    # New fields default-optional so older clients/tests posting the original
+    # three still validate.
+    x_enabled: bool = Form(default=False),
+    max_x_articles: int = Form(default=15),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
-    """Persist the daily-email article counts and the web-search variety dial."""
+    """Persist the daily-email article counts, web-search variety, and X source."""
     _require_admin(admin_token)
     try:
         cfg = Config(
             max_rss_articles=max_rss_articles,
             max_web_articles=max_web_articles,
             web_variety=web_variety,
+            x_enabled=x_enabled,
+            max_x_articles=max_x_articles,
         )
     except ValidationError as exc:
         raise HTTPException(

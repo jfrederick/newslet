@@ -168,6 +168,21 @@
             <span>on-topic</span><span>exploratory</span>
           </div>
         </div>
+        <div style="margin-top:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end;">
+          <label style="flex:1;min-width:200px;display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" name="x_enabled" value="true"
+                   {% if config.x_enabled %}checked{% endif %}>
+            <span>Pull posts from X (Twitter)
+              <span style="color:var(--muted);font-size:13px;">— needs an xAI API key; matched to your profile</span>
+            </span>
+          </label>
+          <label style="flex:1;min-width:160px;">
+            Max X posts
+            <input type="number" name="max_x_articles" min="1" max="30"
+                   value="{{ config.max_x_articles }}"
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;">
+          </label>
+        </div>
         <div class="save-row">
           <button type="submit" class="primary">Save settings</button>
         </div>
