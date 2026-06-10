@@ -8,7 +8,7 @@ from urllib.parse import quote, unquote
 
 import pytest
 
-from newslet import tokens
+from newslet import themes, tokens
 from newslet.config import settings
 from newslet.contracts import Discovery, Issue, Pick, WebArticle
 from newslet.email_render import render_email
@@ -299,3 +299,31 @@ def test_admin_link_trailing_slash_idempotent(stub_sign: None) -> None:
     assert html_slash == html_no_slash
     assert 'href="https://api/"' in html_no_slash
     assert "https://api//" not in html_no_slash
+
+
+def test_default_theme_is_classic(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, html = render_email(issue, BASE_URL)
+    classic = themes.THEMES["classic"].palette
+    assert f"background:{classic.bg}" in html
+    assert f"color:{classic.accent}" in html
+
+
+def test_theme_drives_inline_styles(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    phosphor = themes.THEMES["phosphor"]
+    _, html = render_email(issue, BASE_URL, theme=phosphor)
+    assert f"background:{phosphor.palette.bg}" in html
+    assert f"color:{phosphor.palette.accent}" in html
+    # The classic palette is gone entirely.
+    assert themes.THEMES["classic"].palette.bg not in html
+    assert '<meta name="color-scheme" content="dark">' in html
+
+
+def test_themed_email_keeps_signed_links(stub_sign: None) -> None:
+    """Theming changes presentation only — rate links are untouched."""
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, html = render_email(issue, BASE_URL, theme=themes.THEMES["dos"])
+    assert html.count("v=up") == 1
+    assert html.count("v=down") == 1
+    assert "t=STUBTOKEN" in html

@@ -206,6 +206,9 @@ def get_config() -> Config:
             # key to actually run) so existing installs pick it up.
             x_enabled=bool(item.get("x_enabled", True)),
             max_x_articles=int(item.get("max_x_articles", 15)),
+            # Pre-themes rows have no theme attribute; default to classic.
+            # An unknown stored name is fine too — themes.get falls back.
+            theme=str(item.get("theme", "classic")),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -222,6 +225,7 @@ def put_config(config: Config) -> Config:
             "web_variety": config.web_variety,
             "x_enabled": config.x_enabled,
             "max_x_articles": config.max_x_articles,
+            "theme": config.theme,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )

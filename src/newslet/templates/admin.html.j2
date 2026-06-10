@@ -5,36 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>daily scoop · admin</title>
 <style>
-  :root {
-    --bg: #f6f6f4;
-    --panel: #ffffff;
-    --fg: #1a1a1a;
-    --muted: #888;
-    --border: #e6e6e1;
-    --accent: #0b3d91;
-    --danger: #9a2a2a;
-    --danger-bg: #fbeeee;
-    --danger-border: #e8d4d4;
-    --input-bg: #fff;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #15151a;
-      --panel: #1d1d22;
-      --fg: #ececec;
-      --muted: #9a9aa3;
-      --border: #2c2c33;
-      --accent: #8ab4ff;
-      --danger: #ff8a8a;
-      --danger-bg: #2a1c1c;
-      --danger-border: #4a2a2a;
-      --input-bg: #15151a;
-    }
-  }
+  {{ theme_css }}
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-body);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
@@ -43,10 +18,10 @@
     display: flex; align-items: center; justify-content: space-between;
     padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
   }
-  .brand { font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand { font-family: var(--font-brand); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
   .logout { font-size: 13px; color: var(--muted); text-decoration: none; }
   .logout:hover { color: var(--fg); text-decoration: underline; }
-  section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin-bottom: 24px; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 24px; }
   h2 { margin: 0 0 16px 0; font-size: 18px; }
   .count { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 6px; }
   ul.feeds { list-style: none; padding: 0; margin: 0 0 20px 0; }
@@ -63,25 +38,25 @@
   button, input[type="submit"] {
     font: inherit; cursor: pointer; padding: 6px 12px;
     background: var(--panel); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
   }
   button:hover { border-color: var(--accent); }
   button.danger {
-    color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border);
+    color: var(--bad); background: var(--bad-bg); border-color: var(--bad-border);
   }
   button.primary {
-    color: #fff; background: var(--accent); border-color: var(--accent);
+    color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
   }
   .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 12px; border-top: 1px solid var(--border); }
   .add-form input[type="text"], .add-form input[type="url"] {
     flex: 1; min-width: 180px; padding: 8px 10px;
     background: var(--input-bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; font: inherit;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit;
   }
   textarea {
-    width: 100%; padding: 10px; font-family: ui-monospace, Menlo, Consolas, monospace;
+    width: 100%; padding: 10px; font-family: var(--font-mono);
     font-size: 14px; background: var(--input-bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; resize: vertical;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); resize: vertical;
   }
   .save-row { margin-top: 12px; }
   .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
@@ -106,7 +81,7 @@
         Last sent: <strong>{{ last_sent|e }}</strong>
       </div>
     {% elif recent_issues %}
-      <div style="font-size:13px;color:var(--warn,#a06000);margin:-8px 0 24px;">
+      <div style="font-size:13px;color:var(--warn);margin:-8px 0 24px;">
         Latest issue ({{ recent_issues[0].date|e }}) has not been delivered.
       </div>
     {% else %}
@@ -116,7 +91,7 @@
     {% endif %}
 
     {% if sent %}
-      <div style="font-size:13px;color:var(--accent);background:var(--panel);border:1px solid var(--accent);border-radius:6px;padding:10px 14px;margin:-8px 0 24px;">
+      <div style="font-size:13px;color:var(--accent);background:var(--panel);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:10px 14px;margin:-8px 0 24px;">
         Digest triggered — your email is on its way.
       </div>
     {% endif %}
@@ -135,7 +110,8 @@
     <section>
       <h2>Daily email settings</h2>
       <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
-        Controls the daily email only. The homepage stays a full, rich feed.
+        Article counts control the daily email only — the homepage stays a
+        full, rich feed. The theme applies everywhere.
       </p>
       <form method="POST" action="/api/config">
         <div style="display:flex;gap:20px;flex-wrap:wrap;">
@@ -143,13 +119,13 @@
             Max RSS / HN articles
             <input type="number" name="max_rss_articles" min="1" max="40"
                    value="{{ config.max_rss_articles }}"
-                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;">
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
           </label>
           <label style="flex:1;min-width:160px;">
             Max web-search articles
             <input type="number" name="max_web_articles" min="0" max="30"
                    value="{{ config.max_web_articles }}"
-                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;">
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
           </label>
         </div>
         <div style="margin-top:18px;">
@@ -180,7 +156,19 @@
             Max X posts
             <input type="number" name="max_x_articles" min="1" max="30"
                    value="{{ config.max_x_articles }}"
-                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;">
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
+          </label>
+        </div>
+        <div style="margin-top:18px;">
+          <label style="display:block;max-width:320px;">
+            Theme
+            <span style="color:var(--muted);font-size:13px;">— styles the web pages and the daily email</span>
+            <select name="theme"
+                    style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
+              {% for t in themes %}
+              <option value="{{ t.key|e }}"{% if t.key == config.theme %} selected{% endif %}>{{ t.label|e }}</option>
+              {% endfor %}
+            </select>
           </label>
         </div>
         <div class="save-row">
@@ -228,7 +216,7 @@
       </p>
 
       {% if not mail_domain %}
-      <div style="font-size:13px;color:var(--warn,#a06000);background:var(--danger-bg);border:1px solid var(--danger-border);border-radius:6px;padding:10px 14px;margin-bottom:14px;">
+      <div style="font-size:13px;color:var(--warn);background:var(--bad-bg);border:1px solid var(--bad-border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;">
         No inbound mail domain configured yet. Set <code>MAIL_DOMAIN</code> (and
         point its MX records at SES) to start generating addresses — see the
         README.
@@ -241,12 +229,12 @@
         <li>
           <div class="feed-info">
             <div class="feed-title">{{ (sub.source or "(unlabeled)")|e }}</div>
-            <div class="feed-url" style="font-family:ui-monospace,Menlo,Consolas,monospace;">{{ sub.address|e }}</div>
+            <div class="feed-url" style="font-family:var(--font-mono);">{{ sub.address|e }}</div>
             <div class="feed-added">
               {% if sub.status == "confirmed" %}
                 <span style="color:var(--accent);">✓ confirmed</span>
               {% else %}
-                <span style="color:var(--warn,#a06000);">⏳ pending confirmation</span>
+                <span style="color:var(--warn);">⏳ pending confirmation</span>
               {% endif %}
               · added {{ sub.created_at|e }}{% if sub.last_received_at %} · last mail {{ sub.last_received_at|e }}{% endif %}
             </div>

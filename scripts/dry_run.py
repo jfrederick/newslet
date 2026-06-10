@@ -23,7 +23,7 @@ os.environ.setdefault("ADMIN_TOKEN", "dry-run")
 os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
-from newslet import email_render  # noqa: E402
+from newslet import email_render, themes  # noqa: E402
 from newslet.contracts import Discovery, Issue, Pick, WebArticle  # noqa: E402
 
 FIXTURE_PICKS = [
@@ -124,7 +124,12 @@ def main() -> int:
             ),
         ],
     )
-    subject, html = email_render.render_email(issue, "https://api.example.com")
+    # Optional positional arg picks the theme, e.g. `dry_run.py phosphor`
+    # (themes.get falls back to classic on anything unknown).
+    theme = themes.get(sys.argv[1] if len(sys.argv) > 1 else None)
+    subject, html = email_render.render_email(
+        issue, "https://api.example.com", theme=theme
+    )
     out = Path(__file__).resolve().parent.parent / "out" / "email.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

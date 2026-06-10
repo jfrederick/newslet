@@ -35,7 +35,7 @@ import moto  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from newslet.config import settings  # noqa: E402
-from newslet.contracts import FeedbackRow, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import Config, FeedbackRow, Issue, Pick, WebArticle  # noqa: E402
 
 _SOURCES = ["The Verge", "Stratechery", "Hacker News", "Nature", "LessWrong", "Quanta"]
 
@@ -90,6 +90,12 @@ def main() -> int:
     with moto.mock_aws():
         ddb = boto3.resource("dynamodb", region_name="us-east-1")
         ddb.create_table(
+            TableName="newslet-profile",
+            KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
             TableName="newslet-issues",
             KeySchema=[{"AttributeName": "date", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "date", "AttributeType": "S"}],
@@ -122,6 +128,11 @@ def main() -> int:
 
         from newslet import db
         from newslet.handlers.web import app
+
+        # Optional positional arg picks the theme, e.g. `preview_read.py amber`
+        # (unknown names fall back to classic at render time).
+        if len(sys.argv) > 1:
+            db.put_config(Config(theme=sys.argv[1]))
 
         # The rich UX is the homepage, backed by the reserved "home" issue key.
         db.put_issue(_make_issue("home"), manual=True)

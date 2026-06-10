@@ -153,6 +153,11 @@ class Config(BaseModel):
       of the key, so the user can pause the paid source without removing it.
     - ``max_x_articles`` — how many X posts to pull into the ranking pool when
       the source is enabled.
+    - ``theme`` — visual theme for the web pages and the daily email. A plain
+      string (not a Literal) so this module stays decoupled from
+      ``newslet.themes``; consumers resolve it via ``themes.get``, which falls
+      back to the default on unknown names, and the admin endpoint validates
+      membership on write.
     """
 
     max_rss_articles: int = Field(default=10, ge=1, le=40)
@@ -160,3 +165,4 @@ class Config(BaseModel):
     web_variety: int = Field(default=30, ge=0, le=100)
     x_enabled: bool = Field(default=True)
     max_x_articles: int = Field(default=15, ge=1, le=30)
+    theme: str = Field(default="classic")

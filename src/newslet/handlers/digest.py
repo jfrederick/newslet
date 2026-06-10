@@ -25,6 +25,7 @@ from newslet import (
     hn,
     rank,
     summarize,
+    themes,
     tune,
     websearch,
     x_grok,
@@ -374,7 +375,9 @@ def _run_manual(s: Any) -> dict:
     issue = issue.model_copy(update={"date": key})
     db.put_issue(issue, manual=True)
 
-    subject, html = email_render.render_email(issue, s.public_base_url)
+    subject, html = email_render.render_email(
+        issue, s.public_base_url, theme=themes.get(db.get_config().theme)
+    )
     _send_email(subject, html)
     # Intentionally no mark_issue_sent / mark_seen here — see docstring.
     _tune_profile_after_send()
@@ -480,7 +483,9 @@ def handler(event: dict, context: Any) -> dict:
         issue, candidates = _fresh_issue()
         db.put_issue(issue)
 
-    subject, html = email_render.render_email(issue, s.public_base_url)
+    subject, html = email_render.render_email(
+        issue, s.public_base_url, theme=themes.get(db.get_config().theme)
+    )
     _send_email(subject, html)
     db.mark_issue_sent(issue.date)
 
@@ -625,6 +630,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feeds", default="feeds.txt", help="path to newline-delimited feed urls")
     parser.add_argument("--profile", default="profile.md", help="path to profile markdown")
     parser.add_argument("--out", default="out/email.html", help="output HTML path (dry-run)")
+    parser.add_argument(
+        "--theme",
+        default=themes.DEFAULT_THEME,
+        choices=sorted(themes.THEMES),
+        help="email theme to render (dry-run)",
+    )
     args = parser.parse_args(argv)
 
     if not args.dry_run:
@@ -658,7 +669,9 @@ def main(argv: list[str] | None = None) -> int:
         print("no picks today (no recent feed entries within 24h)")
         return 0
 
-    subject, html = email_render.render_email(issue, settings().public_base_url)
+    subject, html = email_render.render_email(
+        issue, settings().public_base_url, theme=themes.get(args.theme)
+    )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
