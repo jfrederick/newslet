@@ -18,12 +18,12 @@
     display: flex; align-items: center; justify-content: space-between;
     padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
   }
-  .brand { font-family: var(--font-brand); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  .logout { font-size: 13px; color: var(--muted); text-decoration: none; }
+  .brand { font-family: var(--font-brand); font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; }
+  .logout { font-size: 0.8125rem; color: var(--muted); text-decoration: none; }
   .logout:hover { color: var(--fg); text-decoration: underline; }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 24px; }
-  h2 { margin: 0 0 16px 0; font-size: 18px; }
-  .count { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 6px; }
+  h2 { margin: 0 0 16px 0; font-size: 1.125rem; }
+  .count { color: var(--muted); font-weight: 400; font-size: 0.875rem; margin-left: 6px; }
   ul.feeds { list-style: none; padding: 0; margin: 0 0 20px 0; }
   ul.feeds li {
     display: flex; align-items: center; justify-content: space-between;
@@ -32,8 +32,8 @@
   ul.feeds li:last-child { border-bottom: none; }
   .feed-info { min-width: 0; flex: 1; }
   .feed-title { font-weight: 600; word-break: break-word; }
-  .feed-url { font-size: 12px; color: var(--muted); word-break: break-all; margin-top: 2px; }
-  .feed-added { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .feed-url { font-size: 0.75rem; color: var(--muted); word-break: break-all; margin-top: 2px; }
+  .feed-added { font-size: 0.6875rem; color: var(--muted); margin-top: 2px; }
   form.inline { display: inline; margin: 0; }
   button, input[type="submit"] {
     font: inherit; cursor: pointer; padding: 6px 12px;
@@ -55,7 +55,7 @@
   }
   textarea {
     width: 100%; padding: 10px; font-family: var(--font-mono);
-    font-size: 14px; background: var(--input-bg); color: var(--fg);
+    font-size: 0.875rem; background: var(--input-bg); color: var(--fg);
     border: 1px solid var(--border); border-radius: var(--radius-sm); resize: vertical;
   }
   .save-row { margin-top: 12px; }
@@ -77,28 +77,28 @@
       </div>
     </header>
     {% if last_sent %}
-      <div style="font-size:13px;color:var(--muted);margin:-8px 0 24px;">
+      <div style="font-size: 0.8125rem;color:var(--muted);margin:-8px 0 24px;">
         Last sent: <strong>{{ last_sent|e }}</strong>
       </div>
     {% elif recent_issues %}
-      <div style="font-size:13px;color:var(--warn);margin:-8px 0 24px;">
+      <div style="font-size: 0.8125rem;color:var(--warn);margin:-8px 0 24px;">
         Latest issue ({{ recent_issues[0].date|e }}) has not been delivered.
       </div>
     {% else %}
-      <div style="font-size:13px;color:var(--muted);margin:-8px 0 24px;">
+      <div style="font-size: 0.8125rem;color:var(--muted);margin:-8px 0 24px;">
         No issues sent yet.
       </div>
     {% endif %}
 
     {% if sent %}
-      <div style="font-size:13px;color:var(--accent);background:var(--panel);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:10px 14px;margin:-8px 0 24px;">
+      <div style="font-size: 0.8125rem;color:var(--accent);background:var(--panel);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:10px 14px;margin:-8px 0 24px;">
         Digest triggered — your email is on its way.
       </div>
     {% endif %}
 
     <section>
       <h2>Send now</h2>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px;">
+      <p style="font-size: 0.8125rem;color:var(--muted);margin:0 0 12px;">
         Trigger a real digest right now. It sends with working rate links, but
         won't appear in recent issues or affect your daily schedule.
       </p>
@@ -109,7 +109,7 @@
 
     <section>
       <h2>Daily email settings</h2>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
+      <p style="font-size: 0.8125rem;color:var(--muted);margin:0 0 14px;">
         Article counts control the daily email only — the homepage stays a
         full, rich feed. The theme applies everywhere.
       </p>
@@ -131,7 +131,7 @@
         <div style="margin-top:18px;">
           <label>
             Web search variety
-            <span style="color:var(--muted);font-size:13px;">
+            <span style="color:var(--muted);font-size: 0.8125rem;">
               — <span id="variety-val">{{ config.web_variety }}</span>/100:
               low stays on your interests, high explores related, ancillary areas
             </span>
@@ -140,7 +140,7 @@
                    oninput="document.getElementById('variety-val').textContent=this.value"
                    style="display:block;width:100%;margin-top:8px;">
           </label>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);">
+          <div style="display:flex;justify-content:space-between;font-size: 0.6875rem;color:var(--muted);">
             <span>on-topic</span><span>exploratory</span>
           </div>
         </div>
@@ -149,7 +149,7 @@
             <input type="checkbox" name="x_enabled" value="true"
                    {% if config.x_enabled %}checked{% endif %}>
             <span>Pull posts from X (Twitter)
-              <span style="color:var(--muted);font-size:13px;">— needs an xAI API key; matched to your profile</span>
+              <span style="color:var(--muted);font-size: 0.8125rem;">— needs an xAI API key; matched to your profile</span>
             </span>
           </label>
           <label style="flex:1;min-width:160px;">
@@ -159,16 +159,29 @@
                    style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
           </label>
         </div>
-        <div style="margin-top:18px;">
-          <label style="display:block;max-width:320px;">
+        <div style="margin-top:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+          <label style="flex:1;min-width:200px;max-width:320px;display:block;">
             Theme
-            <span style="color:var(--muted);font-size:13px;">— styles the web pages and the daily email</span>
+            <span style="color:var(--muted);font-size: 0.8125rem;">— styles the web pages and the daily email</span>
             <select name="theme"
                     style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
               {% for t in themes %}
               <option value="{{ t.key|e }}"{% if t.key == config.theme %} selected{% endif %}>{{ t.label|e }}</option>
               {% endfor %}
             </select>
+          </label>
+          <label style="flex:1;min-width:200px;display:block;">
+            Text size
+            <span style="color:var(--muted);font-size: 0.8125rem;">
+              — <span id="textsize-val">{{ config.text_size }}</span>%, on the web pages and in the email
+            </span>
+            <input type="range" name="text_size" min="75" max="150" step="5"
+                   value="{{ config.text_size }}"
+                   oninput="document.getElementById('textsize-val').textContent=this.value"
+                   style="display:block;width:100%;margin-top:8px;">
+            <div style="display:flex;justify-content:space-between;font-size: 0.6875rem;color:var(--muted);">
+              <span>smaller</span><span>larger</span>
+            </div>
           </label>
         </div>
         <div class="save-row">
@@ -209,14 +222,14 @@
 
     <section>
       <h2>Newsletter subscriptions<span class="count">({{ subscriptions|length }})</span></h2>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
+      <p style="font-size: 0.8125rem;color:var(--muted);margin:0 0 14px;">
         Subscribe to email newsletters as a source. Generate an address, paste it
         into the newsletter's signup form, and daily scoop folds its links into the
         daily ranking. Double opt-in confirmations are followed automatically.
       </p>
 
       {% if not mail_domain %}
-      <div style="font-size:13px;color:var(--warn);background:var(--bad-bg);border:1px solid var(--bad-border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;">
+      <div style="font-size: 0.8125rem;color:var(--warn);background:var(--bad-bg);border:1px solid var(--bad-border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;">
         No inbound mail domain configured yet. Set <code>MAIL_DOMAIN</code> (and
         point its MX records at SES) to start generating addresses — see the
         README.

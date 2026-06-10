@@ -86,11 +86,14 @@ class Issue(BaseModel):
     created_at: datetime
     subject: str = ""
     intro: str = ""
-    # The theme the issue was (or will be) sent with, captured at build time
-    # so the /emails/{date} archive keeps showing the email as it was sent
-    # even after the admin switches themes. Defaults to classic, which is
-    # what every pre-themes issue actually shipped with.
+    # The theme and text size the issue was (or will be) sent with, captured
+    # at build time so the /emails/{date} archive keeps showing the email as
+    # it was sent even after the admin changes appearance settings. The
+    # defaults are what every pre-existing issue actually shipped with
+    # (classic at 100%), NOT the app's current defaults — historical
+    # accuracy, not preference.
     theme: str = "classic"
+    text_size: int = 100
     discoveries: list[Discovery] = Field(default_factory=list)
     # The richer web view shows these in a "from around the web" block in
     # addition to ``picks``; the email never renders them. Optional with a
@@ -162,7 +165,12 @@ class Config(BaseModel):
       string (not a Literal) so this module stays decoupled from
       ``newslet.themes``; consumers resolve it via ``themes.get``, which falls
       back to the default on unknown names, and the admin endpoint validates
-      membership on write.
+      membership on write. The default mirrors ``themes.DEFAULT_THEME``
+      (foundry).
+    - ``text_size`` — percent of the browser's default text size, applied to
+      the web pages (root ``font-size``; type is declared in ``rem``) and the
+      daily email (scaled inline ``px``). Bounds mirror
+      ``themes.TEXT_SIZE_MIN``/``MAX``.
     """
 
     max_rss_articles: int = Field(default=10, ge=1, le=40)
@@ -170,4 +178,5 @@ class Config(BaseModel):
     web_variety: int = Field(default=30, ge=0, le=100)
     x_enabled: bool = Field(default=True)
     max_x_articles: int = Field(default=15, ge=1, le=30)
-    theme: str = Field(default="classic")
+    theme: str = Field(default="foundry")
+    text_size: int = Field(default=100, ge=75, le=150)

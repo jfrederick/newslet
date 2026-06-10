@@ -231,11 +231,15 @@ swallowed so SES does not retry the whole batch.
 ### `newslet.themes`
 
 ```python
-DEFAULT_THEME = "classic"
-THEMES: dict[str, Theme]                      # classic, phosphor, amber, paper, dos, mono
-def get(name: str | None) -> Theme: ...       # lenient: unknown/empty → classic
+DEFAULT_THEME = "foundry"
+TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT = 75, 150, 100
+THEMES: dict[str, Theme]   # foundry, atelier, manuscript, observatory, meadow,
+                           # classic, phosphor, amber, paper, dos, mono
+def get(name: str | None) -> Theme: ...       # lenient: unknown/empty → foundry
 def list_themes() -> list[Theme]: ...         # display order, for the admin picker
-def css(theme: Theme) -> str: ...             # ":root { --bg: …; }" block for web pages
+def css(theme: Theme, text_size: int = 100) -> str: ...
+    # ":root { --bg: …; }" block for web pages + the root font-size (the
+    # text-size dial; templates declare type in rem so the page follows it)
 ```
 
 A `Theme` is a frozen bundle of code-defined design tokens (a `Palette` of
@@ -243,9 +247,10 @@ colors, font stacks, corner radii) — no user input ever flows into one, which
 is what makes interpolating tokens into CSS and inline styles safe. The web
 templates style against the CSS variables `css()` emits (the handler passes
 them pre-marked as `Markup`); the email template inlines the same tokens.
-"classic" reproduces the original look (with its `prefers-color-scheme` dark
-variant) and is the fallback everywhere; the other five are single-mode
-textmode-revival palettes.
+"foundry" (warm iron / molten ember, dual-mode like classic) is the default
+and the fallback for unknown names; its Claude-chat siblings (atelier,
+manuscript, observatory, meadow) and the single-mode textmode-revival set
+round out the catalogue, with "classic" preserving the original look.
 
 ### `newslet.email_render`
 
@@ -253,7 +258,8 @@ textmode-revival palettes.
 def render_email(
     issue: Issue,
     public_base_url: str,
-    theme: Theme | None = None,  # None → classic
+    theme: Theme | None = None,   # None → the app default (foundry)
+    text_size: int = 100,         # percent; scales every inline font-size
 ) -> tuple[str, str]:  # (subject, html)
     ...
 ```
@@ -261,10 +267,11 @@ def render_email(
 - Loads `templates/email.html.j2`; `theme` drives its inline styles (clients
   ignore stylesheet classes), changing presentation only — links and structure
   are theme-independent.
-- The digest stamps `Issue.theme` from config when it builds an issue and
-  renders sends with `themes.get(issue.theme)`; `/emails/{date}` does the
-  same, so the archive keeps showing the email as sent even after the admin
-  switches themes (pre-themes rows default to classic).
+- The digest stamps `Issue.theme` + `Issue.text_size` from config when it
+  builds an issue and renders sends from those stamps; `/emails/{date}` does
+  the same, so the archive keeps showing the email as sent even after the
+  admin changes appearance settings (legacy rows default to classic at 100%
+  — historical accuracy, not the current app default).
 - Renders all stored picks plus the `web_articles` block (both votable via
   `tokens.sign(url, issue.date)` → `{base}/rate?a=…&d=…&v=up|down&t=…`), plus
   discoveries. The digest stores exactly `Config.max_rss_articles` picks and
@@ -321,7 +328,7 @@ Routes:
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, theme?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key, else 400)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, theme?, text_size?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -341,7 +348,7 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts/`theme`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `discoveries_json`, `web_articles_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

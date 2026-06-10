@@ -114,19 +114,17 @@ def _interactive_search(query: str) -> list:
     )
 
 
-def _current_theme() -> themes.Theme:
-    """The admin-selected theme (lenient: unknown/unset → classic)."""
-    return themes.get(db.get_config().theme)
+def _theme_css(config: Config | None = None) -> Markup:
+    """The theme's ``:root`` variable block (plus the text-size dial) for a
+    template's stylesheet, from the stored admin config.
 
-
-def _theme_css(theme: themes.Theme | None = None) -> Markup:
-    """The theme's ``:root`` variable block for a template's stylesheet.
-
-    ``Markup`` because the CSS contains quotes in font stacks that HTML
-    autoescaping would mangle; every value is a code-defined constant from
-    ``newslet.themes`` — no user input flows in.
+    ``Markup`` because the CSS contains theme tokens that HTML autoescaping
+    would mangle; every value is a code-defined constant from
+    ``newslet.themes`` (the text size is clamped there) — no user input
+    flows in.
     """
-    return Markup(themes.css(theme or _current_theme()))
+    cfg = config or db.get_config()
+    return Markup(themes.css(themes.get(cfg.theme), cfg.text_size))
 
 
 def _is_https(request: Request) -> bool:
@@ -155,13 +153,13 @@ def _require_admin(admin_token: str | None) -> None:
 
 def _login_page(error: str = "") -> HTMLResponse:
     # Login renders pre-auth and must never be blocked by the config table,
-    # so any failure reading the stored theme falls back to the default.
+    # so any failure reading the stored appearance falls back to defaults.
     try:
-        theme = _current_theme()
+        theme_css = _theme_css()
     except Exception:  # noqa: BLE001 - auth must stay reachable
-        theme = themes.get(None)
+        theme_css = Markup(themes.css(themes.get(None)))
     html = _TEMPLATES.get_template("login.html.j2").render(
-        error=error, theme_css=_theme_css(theme)
+        error=error, theme_css=theme_css
     )
     return HTMLResponse(html)
 
@@ -364,7 +362,7 @@ def admin_index(
         for s in db.list_subscriptions()
     ]
     html = _TEMPLATES.get_template("admin.html.j2").render(
-        theme_css=_theme_css(themes.get(config.theme)),
+        theme_css=_theme_css(config),
         themes=themes.list_themes(),
         feeds=feeds_rows,
         profile_md=profile.markdown,
@@ -436,10 +434,11 @@ def save_config(
     x_enabled: bool = Form(default=False),
     max_x_articles: int = Form(default=15),
     theme: str = Form(default=themes.DEFAULT_THEME),
+    text_size: int = Form(default=themes.TEXT_SIZE_DEFAULT),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
-    and the app theme."""
+    and the app appearance (theme + text size)."""
     _require_admin(admin_token)
     # Strict on write (the read path is the lenient one): reject names the
     # picker could never have sent.
@@ -453,6 +452,7 @@ def save_config(
             x_enabled=x_enabled,
             max_x_articles=max_x_articles,
             theme=theme,
+            text_size=text_size,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -733,11 +733,16 @@ def view_email(
     issue = db.get_issue(date)
     if not issue:
         raise HTTPException(status_code=404, detail="no issue for that date")
-    # The issue's stamped send-time theme, not the current config — switching
-    # themes must not restyle the as-sent archive (pre-themes rows default to
-    # classic, which is what they shipped with).
+    # The issue's stamped send-time appearance, not the current config —
+    # changing the theme or text size must not restyle the as-sent archive
+    # (pre-themes rows default to classic at 100%, what they shipped with).
+    # themes.get falls back to the app default for *unknown* names; the
+    # explicit "classic" stamp on legacy rows is what keeps them accurate.
     _, html = email_render.render_email(
-        issue, _base_url(request), theme=themes.get(issue.theme)
+        issue,
+        _base_url(request),
+        theme=themes.get(issue.theme),
+        text_size=issue.text_size,
     )
     return HTMLResponse(html)
 
