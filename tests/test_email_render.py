@@ -307,6 +307,9 @@ def test_default_theme_is_classic(stub_sign: None) -> None:
     classic = themes.THEMES["classic"].palette
     assert f"background:{classic.bg}" in html
     assert f"color:{classic.accent}" in html
+    # Classic renders light-only inline styles, so it must not advertise a
+    # color scheme (the pre-themes email had no such meta either).
+    assert "color-scheme" not in html
 
 
 def test_theme_drives_inline_styles(stub_sign: None) -> None:

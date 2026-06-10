@@ -1017,15 +1017,44 @@ def test_unknown_stored_theme_falls_back_to_classic(client):
     assert f"--bg: {themes.THEMES['classic'].palette.bg};" in r.text
 
 
-def test_email_archive_view_uses_selected_theme(client):
-    from newslet import themes
+def test_email_archive_keeps_send_time_theme(client):
+    """The archive shows the email as sent: the issue's stamped theme wins,
+    even after the admin switches the app theme."""
+    from datetime import UTC, datetime
+
+    from newslet import db, themes
+    from newslet.contracts import Issue
 
     client.cookies.set("admin_token", "supersecret")
-    _save_config(client, theme="dos")
-    _seed_issue("2026-05-22")
+    db.put_issue(
+        Issue(date="2026-05-22", picks=[], created_at=datetime.now(UTC), theme="dos")
+    )
+    _save_config(client, theme="amber")
     r = client.get("/emails/2026-05-22")
     assert r.status_code == 200
     assert f"background:{themes.THEMES['dos'].palette.bg}" in r.text
+    assert themes.THEMES["amber"].palette.bg not in r.text
+
+
+def test_email_archive_legacy_issue_renders_classic(client):
+    """Pre-themes issues (no stored theme) archive as classic regardless of
+    the current admin theme — that's what they actually shipped with."""
+    import boto3
+
+    from newslet import themes
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("2026-05-23")
+    # Simulate a pre-themes row: strip the stored theme attribute.
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-issues"
+    ).update_item(
+        Key={"date": "2026-05-23"}, UpdateExpression="REMOVE theme"
+    )
+    _save_config(client, theme="phosphor")
+    r = client.get("/emails/2026-05-23")
+    assert r.status_code == 200
+    assert f"background:{themes.THEMES['classic'].palette.bg}" in r.text
 
 
 def test_login_page_survives_config_read_failure(client, monkeypatch):

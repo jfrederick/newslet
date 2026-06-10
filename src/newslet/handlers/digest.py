@@ -323,7 +323,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     config = db.get_config()
     # Recency window for ranking; tuning reads its own wider window.
     feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
-    return run_digest(
+    issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
         profile=profile,
         feedback=feedback,
@@ -335,6 +335,10 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         max_x_posts=config.max_x_articles,
         now=now,
     )
+    # Stamp the theme the issue will be sent with, so the stored row keeps
+    # the /emails/{date} archive faithful to the as-sent look even after
+    # the admin switches themes.
+    return issue.model_copy(update={"theme": config.theme}), candidates
 
 
 def _tune_profile_after_send() -> None:
@@ -376,7 +380,7 @@ def _run_manual(s: Any) -> dict:
     db.put_issue(issue, manual=True)
 
     subject, html = email_render.render_email(
-        issue, s.public_base_url, theme=themes.get(db.get_config().theme)
+        issue, s.public_base_url, theme=themes.get(issue.theme)
     )
     _send_email(subject, html)
     # Intentionally no mark_issue_sent / mark_seen here — see docstring.
@@ -483,8 +487,11 @@ def handler(event: dict, context: Any) -> dict:
         issue, candidates = _fresh_issue()
         db.put_issue(issue)
 
+    # Render with the issue's stamped theme (not a live config read) so a
+    # retry that reuses a stored partial issue sends the same look it was
+    # built with — and matches what the archive will show.
     subject, html = email_render.render_email(
-        issue, s.public_base_url, theme=themes.get(db.get_config().theme)
+        issue, s.public_base_url, theme=themes.get(issue.theme)
     )
     _send_email(subject, html)
     db.mark_issue_sent(issue.date)

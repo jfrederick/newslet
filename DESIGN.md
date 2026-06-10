@@ -261,6 +261,10 @@ def render_email(
 - Loads `templates/email.html.j2`; `theme` drives its inline styles (clients
   ignore stylesheet classes), changing presentation only — links and structure
   are theme-independent.
+- The digest stamps `Issue.theme` from config when it builds an issue and
+  renders sends with `themes.get(issue.theme)`; `/emails/{date}` does the
+  same, so the archive keeps showing the email as sent even after the admin
+  switches themes (pre-themes rows default to classic).
 - Renders all stored picks plus the `web_articles` block (both votable via
   `tokens.sign(url, issue.date)` → `{base}/rate?a=…&d=…&v=up|down&t=…`), plus
   discoveries. The digest stores exactly `Config.max_rss_articles` picks and
@@ -337,7 +341,7 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts/`theme`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `discoveries_json`, `web_articles_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `discoveries_json`, `web_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

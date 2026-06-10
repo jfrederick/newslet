@@ -733,8 +733,11 @@ def view_email(
     issue = db.get_issue(date)
     if not issue:
         raise HTTPException(status_code=404, detail="no issue for that date")
+    # The issue's stamped send-time theme, not the current config — switching
+    # themes must not restyle the as-sent archive (pre-themes rows default to
+    # classic, which is what they shipped with).
     _, html = email_render.render_email(
-        issue, _base_url(request), theme=_current_theme()
+        issue, _base_url(request), theme=themes.get(issue.theme)
     )
     return HTMLResponse(html)
 

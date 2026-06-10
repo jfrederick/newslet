@@ -278,6 +278,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         # web view re-renders the same web_articles block.
         "subject": issue.subject,
         "intro": issue.intro,
+        "theme": issue.theme,
         "discoveries_json": discoveries_json,
         "web_articles_json": web_articles_json,
     }
@@ -332,6 +333,8 @@ def get_issue(date: str) -> Issue | None:
             "created_at": datetime.fromisoformat(item["created_at"]),
             "subject": item.get("subject", ""),
             "intro": item.get("intro", ""),
+            # Pre-themes rows carry no theme; they were sent with classic.
+            "theme": item.get("theme", "classic"),
             "discoveries": discoveries,
             "web_articles": web_articles,
         }

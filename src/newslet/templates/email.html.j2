@@ -3,8 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{#- The email body only ever inlines the primary palette, so only single-mode
+    themes declare a scheme (keeping a dark terminal theme from being
+    auto-inverted by dark-mode clients). A dual-mode theme (classic) renders
+    light-only here; omitting the meta preserves the pre-themes client
+    behavior rather than advertising dark support the email doesn't have. -#}
+{% if t.dark_palette is none %}
 <meta name="color-scheme" content="{{ t.color_scheme }}">
 <meta name="supported-color-schemes" content="{{ t.color_scheme }}">
+{% endif %}
 <title>daily scoop · {{ date|e }}</title>
 </head>
 <body style="margin:0; padding:0; background:{{ p.bg }}; font-family:{{ t.font_body }}; color:{{ p.fg }}; -webkit-text-size-adjust:100%;">

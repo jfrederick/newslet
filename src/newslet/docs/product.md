@@ -539,7 +539,9 @@ or bad row. Themes live in `newslet.themes` as named token sets (colors, font
 stacks, corner radii); web pages consume them as CSS variables and the email
 template inlines the same tokens, so one admin choice restyles both surfaces.
 An unknown stored theme name falls back to Classic rather than breaking a page
-or a send. "Send now" (`/api/send-now`) async-invokes the digest Lambda with
+or a send. Each issue stores the theme it was sent with, so the sent-email
+archive keeps showing past emails as they actually looked even after you
+switch themes. "Send now" (`/api/send-now`) async-invokes the digest Lambda with
 `{"manual": true}`; that manual run is a faithful fetch → rank → send → tune
 with a live feedback loop, but it stores under a synthetic
 `manual-<timestamp>-<rand>` key, ignores the daily idempotency gate, and never

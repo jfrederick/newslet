@@ -683,3 +683,41 @@ def test_inbox_recent_dedupes_across_emails(dynamo: None) -> None:
 
     arts = db.recent_inbox_articles(datetime(2026, 6, 1, tzinfo=UTC), now=now)
     assert len(arts) == 1
+
+
+def test_issue_theme_roundtrip(dynamo: None) -> None:
+    """The send-time theme persists with the issue (as-sent archive)."""
+    from newslet import db
+
+    db.put_issue(
+        Issue(date="2026-06-09", picks=[], created_at=datetime.now(UTC), theme="dos")
+    )
+    got = db.get_issue("2026-06-09")
+    assert got is not None
+    assert got.theme == "dos"
+
+
+def test_get_issue_defaults_theme_for_legacy_rows(dynamo: None) -> None:
+    """Pre-themes rows (no theme attribute) load as classic — what they
+    actually shipped with."""
+    from newslet import db
+
+    db._t_issues().put_item(
+        Item={
+            "date": "2026-05-02",
+            "picks_json": "[]",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    got = db.get_issue("2026-05-02")
+    assert got is not None
+    assert got.theme == "classic"
+
+
+def test_config_theme_roundtrip(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import Config
+
+    assert db.get_config().theme == "classic"  # default on a missing row
+    db.put_config(Config(theme="paper"))
+    assert db.get_config().theme == "paper"

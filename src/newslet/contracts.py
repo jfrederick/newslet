@@ -86,6 +86,11 @@ class Issue(BaseModel):
     created_at: datetime
     subject: str = ""
     intro: str = ""
+    # The theme the issue was (or will be) sent with, captured at build time
+    # so the /emails/{date} archive keeps showing the email as it was sent
+    # even after the admin switches themes. Defaults to classic, which is
+    # what every pre-themes issue actually shipped with.
+    theme: str = "classic"
     discoveries: list[Discovery] = Field(default_factory=list)
     # The richer web view shows these in a "from around the web" block in
     # addition to ``picks``; the email never renders them. Optional with a
