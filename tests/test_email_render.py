@@ -301,14 +301,14 @@ def test_admin_link_trailing_slash_idempotent(stub_sign: None) -> None:
     assert "https://api//" not in html_no_slash
 
 
-def test_default_theme_is_classic(stub_sign: None) -> None:
+def test_default_theme_is_foundry(stub_sign: None) -> None:
     issue = _issue([_pick("https://a.example.com/1", "T", "B")])
     _, html = render_email(issue, BASE_URL)
-    classic = themes.THEMES["classic"].palette
-    assert f"background:{classic.bg}" in html
-    assert f"color:{classic.accent}" in html
-    # Classic renders light-only inline styles, so it must not advertise a
-    # color scheme (the pre-themes email had no such meta either).
+    foundry = themes.THEMES["foundry"].palette
+    assert f"background:{foundry.bg}" in html
+    assert f"color:{foundry.accent}" in html
+    # Dual-mode themes render light-only inline styles, so they must not
+    # advertise a color scheme (the pre-themes email had no such meta either).
     assert "color-scheme" not in html
 
 
@@ -318,8 +318,8 @@ def test_theme_drives_inline_styles(stub_sign: None) -> None:
     _, html = render_email(issue, BASE_URL, theme=phosphor)
     assert f"background:{phosphor.palette.bg}" in html
     assert f"color:{phosphor.palette.accent}" in html
-    # The classic palette is gone entirely.
-    assert themes.THEMES["classic"].palette.bg not in html
+    # The default (foundry) palette is gone entirely.
+    assert themes.THEMES["foundry"].palette.bg not in html
     assert '<meta name="color-scheme" content="dark">' in html
 
 
@@ -330,3 +330,15 @@ def test_themed_email_keeps_signed_links(stub_sign: None) -> None:
     assert html.count("v=up") == 1
     assert html.count("v=down") == 1
     assert "t=STUBTOKEN" in html
+
+
+def test_text_size_scales_inline_font_sizes(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, html = render_email(issue, BASE_URL)
+    assert "font-size:17px" in html  # 100% renders the design sizes verbatim
+    _, html = render_email(issue, BASE_URL, text_size=125)
+    assert "font-size:21px" in html  # round(17 * 1.25)
+    assert "font-size:17px" not in html
+    # Out-of-range values are clamped, not applied raw.
+    _, html = render_email(issue, BASE_URL, text_size=10_000)
+    assert "font-size:26px" in html  # round(17 * 1.5)

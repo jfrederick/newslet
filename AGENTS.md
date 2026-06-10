@@ -75,7 +75,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
 | `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link; theme-aware inline styles) |
-| `themes.py` | named visual themes (color/font/radius tokens) for web + email; `get()` is lenient, `css()` emits the `:root` vars the web templates style against |
+| `themes.py` | named visual themes (color/font/radius tokens) for web + email — the Claude-chat family (Foundry default, Atelier, Manuscript, Observatory, Meadow), Classic, and the textmode set; `get()` is lenient, `css()` emits the `:root` vars (incl. the text-size root `font-size`) the web templates style against |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
 | `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
 | `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`) |
@@ -134,11 +134,17 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
   `max_web_articles`, `web_variety` (0–100 exploration dial for
   `websearch.search_web`), `x_enabled` (X source on/off; also needs
-  `XAI_API_KEY`), `max_x_articles` (X posts pulled into the pool), and `theme`
+  `XAI_API_KEY`), `max_x_articles` (X posts pulled into the pool), `theme`
   (visual theme for the web pages *and* the daily email; resolve names via
-  `themes.get`, which falls back to classic on unknown values). Read
+  `themes.get`, which falls back to the default, Foundry, on unknown values),
+  and `text_size` (75–150% dial; web pages scale via the root `font-size` —
+  templates declare type in `rem` — and the email via scaled inline px). Read
   leniently (defaults on a missing/bad row; the X source has no per-account
-  config — relevance comes from the profile, like HN/web).
+  config — relevance comes from the profile, like HN/web). Issues stamp the
+  appearance (`Issue.theme`/`text_size`) they were sent with so the
+  `/emails/{date}` archive stays as-sent; legacy issue rows default to
+  classic at 100% (historical accuracy), while a missing *config* defaults
+  to Foundry.
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model

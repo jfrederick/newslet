@@ -690,11 +690,13 @@ def test_issue_theme_roundtrip(dynamo: None) -> None:
     from newslet import db
 
     db.put_issue(
-        Issue(date="2026-06-09", picks=[], created_at=datetime.now(UTC), theme="dos")
+        Issue(date="2026-06-09", picks=[], created_at=datetime.now(UTC),
+              theme="dos", text_size=130)
     )
     got = db.get_issue("2026-06-09")
     assert got is not None
     assert got.theme == "dos"
+    assert got.text_size == 130
 
 
 def test_get_issue_defaults_theme_for_legacy_rows(dynamo: None) -> None:
@@ -711,13 +713,18 @@ def test_get_issue_defaults_theme_for_legacy_rows(dynamo: None) -> None:
     )
     got = db.get_issue("2026-05-02")
     assert got is not None
+    # Historical accuracy, not the current app default: legacy rows shipped
+    # with the classic look at 100%.
     assert got.theme == "classic"
+    assert got.text_size == 100
 
 
 def test_config_theme_roundtrip(dynamo: None) -> None:
     from newslet import db
     from newslet.contracts import Config
 
-    assert db.get_config().theme == "classic"  # default on a missing row
-    db.put_config(Config(theme="paper"))
+    assert db.get_config().theme == "foundry"  # default on a missing row
+    assert db.get_config().text_size == 100
+    db.put_config(Config(theme="paper", text_size=120))
     assert db.get_config().theme == "paper"
+    assert db.get_config().text_size == 120
