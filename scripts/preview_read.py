@@ -130,7 +130,7 @@ def main() -> int:
         from newslet.handlers.web import app
 
         # Optional positional arg picks the theme, e.g. `preview_read.py amber`
-        # (unknown names fall back to classic at render time).
+        # (unknown names fall back to the default, foundry, at render time).
         if len(sys.argv) > 1:
             db.put_config(Config(theme=sys.argv[1]))
 

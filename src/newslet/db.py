@@ -102,6 +102,14 @@ def _hash_url(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()
 
 
+def _int_or(value: Any, default: int) -> int:
+    """Lenient int coercion for persisted attributes (bad value → default)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Feeds
 # ---------------------------------------------------------------------------
@@ -340,9 +348,11 @@ def get_issue(date: str) -> Issue | None:
             "intro": item.get("intro", ""),
             # Pre-themes rows carry no theme/text_size; they were sent with
             # classic at 100% — keep the archive historically accurate (do
-            # NOT default these to the app's current defaults).
+            # NOT default these to the app's current defaults). Lenient like
+            # the other optional fields: one garbled appearance attribute
+            # must not make the whole issue unreadable.
             "theme": item.get("theme", "classic"),
-            "text_size": int(item.get("text_size", 100)),
+            "text_size": _int_or(item.get("text_size"), 100),
             "discoveries": discoveries,
             "web_articles": web_articles,
         }

@@ -125,7 +125,7 @@ def main() -> int:
         ],
     )
     # Optional positional arg picks the theme, e.g. `dry_run.py phosphor`
-    # (themes.get falls back to classic on anything unknown).
+    # (themes.get falls back to the default, foundry, on anything unknown).
     theme = themes.get(sys.argv[1] if len(sys.argv) > 1 else None)
     subject, html = email_render.render_email(
         issue, "https://api.example.com", theme=theme

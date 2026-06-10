@@ -728,3 +728,23 @@ def test_config_theme_roundtrip(dynamo: None) -> None:
     db.put_config(Config(theme="paper", text_size=120))
     assert db.get_config().theme == "paper"
     assert db.get_config().text_size == 120
+
+
+def test_get_issue_tolerates_malformed_text_size(dynamo: None) -> None:
+    """A garbled appearance attribute must not make the issue unreadable
+    (lenient on read, like the other optional persisted fields)."""
+    from newslet import db
+
+    db._t_issues().put_item(
+        Item={
+            "date": "2026-05-03",
+            "picks_json": "[]",
+            "created_at": datetime.now(UTC).isoformat(),
+            "theme": "dos",
+            "text_size": "",
+        }
+    )
+    got = db.get_issue("2026-05-03")
+    assert got is not None
+    assert got.theme == "dos"
+    assert got.text_size == 100
