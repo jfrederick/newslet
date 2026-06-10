@@ -303,7 +303,7 @@ def _send_email(subject: str, html: str) -> None:
     resend.api_key = s.resend_api_key
     resend.Emails.send(
         {
-            "from": f"dailyscoop <{s.from_email}>",
+            "from": f"daily scoop <{s.from_email}>",
             "to": [s.to_email],
             "subject": subject,
             "html": html,
@@ -530,7 +530,7 @@ def _fake_summarize(picks: list[Pick], **_) -> tuple[str, str]:
     if not picks:
         return ("", "")
     intro = f"{len(picks)} stories today, led by {picks[0].title}."
-    return (f"dailyscoop · {picks[0].title}", intro)
+    return (f"daily scoop · {picks[0].title}", intro)
 
 
 def _fake_discoveries(profile_md: str, feed_domains: list[str], **_) -> list[Discovery]:
