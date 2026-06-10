@@ -17,6 +17,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from pydantic import HttpUrl, ValidationError
 
+from newslet import themes
 from newslet.config import settings
 from newslet.contracts import (
     Article,
@@ -99,6 +100,14 @@ def _t_inbox() -> Any:
 
 def _hash_url(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()
+
+
+def _int_or(value: Any, default: int) -> int:
+    """Lenient int coercion for persisted attributes (bad value → default)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +215,11 @@ def get_config() -> Config:
             # key to actually run) so existing installs pick it up.
             x_enabled=bool(item.get("x_enabled", True)),
             max_x_articles=int(item.get("max_x_articles", 15)),
-            # Pre-themes rows have no theme attribute; default to classic.
-            # An unknown stored name is fine too — themes.get falls back.
-            theme=str(item.get("theme", "classic")),
+            # Pre-themes rows have no theme attribute; default to the app
+            # default (foundry). An unknown stored name is fine too —
+            # themes.get falls back.
+            theme=str(item.get("theme", themes.DEFAULT_THEME)),
+            text_size=int(item.get("text_size", 100)),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -226,6 +237,7 @@ def put_config(config: Config) -> Config:
             "x_enabled": config.x_enabled,
             "max_x_articles": config.max_x_articles,
             "theme": config.theme,
+            "text_size": config.text_size,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )
@@ -279,6 +291,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "subject": issue.subject,
         "intro": issue.intro,
         "theme": issue.theme,
+        "text_size": issue.text_size,
         "discoveries_json": discoveries_json,
         "web_articles_json": web_articles_json,
     }
@@ -333,8 +346,13 @@ def get_issue(date: str) -> Issue | None:
             "created_at": datetime.fromisoformat(item["created_at"]),
             "subject": item.get("subject", ""),
             "intro": item.get("intro", ""),
-            # Pre-themes rows carry no theme; they were sent with classic.
+            # Pre-themes rows carry no theme/text_size; they were sent with
+            # classic at 100% — keep the archive historically accurate (do
+            # NOT default these to the app's current defaults). Lenient like
+            # the other optional fields: one garbled appearance attribute
+            # must not make the whole issue unreadable.
             "theme": item.get("theme", "classic"),
+            "text_size": _int_or(item.get("text_size"), 100),
             "discoveries": discoveries,
             "web_articles": web_articles,
         }

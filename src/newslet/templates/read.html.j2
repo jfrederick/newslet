@@ -17,17 +17,17 @@
     display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 14px 0; flex-wrap: wrap;
   }
-  .brand { font-family: var(--font-brand); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  .navlinks { font-size: 13px; }
+  .brand { font-family: var(--font-brand); font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; }
+  .navlinks { font-size: 0.8125rem; }
   .navlinks a { color: var(--muted); text-decoration: none; margin-left: 14px; }
   .navlinks a:hover { color: var(--fg); text-decoration: underline; }
 
   .lede { margin: 26px 0 8px; }
-  .dateline { font-size: 13px; font-weight: 600; text-transform: uppercase;
+  .dateline { font-size: 0.8125rem; font-weight: 600; text-transform: uppercase;
     letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; }
-  .lede h1 { font-family: var(--font-brand); font-size: 26px; line-height: 1.22; margin: 0 0 8px; }
-  .lede p { color: var(--fg); margin: 0; font-size: 16px; }
-  .count { color: var(--muted); font-size: 13px; }
+  .lede h1 { font-family: var(--font-brand); font-size: 1.625rem; line-height: 1.22; margin: 0 0 8px; }
+  .lede p { color: var(--fg); margin: 0; font-size: 1rem; }
+  .count { color: var(--muted); font-size: 0.8125rem; }
 
   .btn { font: inherit; cursor: pointer; padding: 8px 14px; border-radius: var(--radius-sm);
     border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font-weight: 600; }
@@ -36,14 +36,14 @@
   /* Research / "textbook" box */
   .research { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 20px 0; }
   .research label { font-weight: 600; display: block; margin-bottom: 8px; }
-  .research .hint { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .research .hint { color: var(--muted); font-weight: 400; font-size: 0.8125rem; }
   .research form { display: flex; gap: 8px; flex-wrap: wrap; }
   .research input[type=text] {
     flex: 1; min-width: 220px; padding: 10px 12px; font: inherit;
     background: var(--input-bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius-sm);
   }
 
-  h2.section { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  h2.section { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
     margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 
   .grid { display: grid; gap: 12px; }
@@ -53,20 +53,20 @@
   .card.voted-up { border-color: var(--ok-border); box-shadow: inset 3px 0 0 var(--ok); }
   .card.removing { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0;
     margin-top: 0; margin-bottom: 0; transform: translateX(-14px); overflow: hidden; }
-  .card h3 { font-size: 17px; line-height: 1.35; margin: 0 0 6px; }
+  .card h3 { font-size: 1.0625rem; line-height: 1.35; margin: 0 0 6px; }
   .card h3 a { color: var(--fg); text-decoration: none; }
   .card h3 a:hover { color: var(--accent); text-decoration: underline; }
-  .meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 0.75rem; color: var(--muted); margin-bottom: 8px; }
   .src { font-weight: 600; }
   .src.hn { color: var(--hn); }
   .badge { background: var(--chip); border-radius: 999px; padding: 1px 8px; }
   .meta a { color: var(--muted); text-decoration: none; }
   .meta a:hover { text-decoration: underline; color: var(--fg); }
-  .blurb { font-size: 15px; color: var(--fg); margin: 0 0 10px; }
+  .blurb { font-size: 0.9375rem; color: var(--fg); margin: 0 0 10px; }
   .blurb:empty { display: none; }
 
   .actions { display: flex; gap: 8px; }
-  .vote { font: inherit; cursor: pointer; padding: 6px 14px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 16px; line-height: 1; }
+  .vote { font: inherit; cursor: pointer; padding: 6px 14px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 1rem; line-height: 1; }
   .vote.up { color: var(--ok); background: var(--ok-bg); border: 1px solid var(--ok-border); }
   .vote.down { color: var(--bad); background: var(--bad-bg); border: 1px solid var(--bad-border); }
   .vote[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 1px; }
@@ -74,7 +74,7 @@
 
   .empty { color: var(--muted); padding: 10px 0; }
   .banner { background: var(--accent-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 20px 0; }
-  .spinner { display: none; color: var(--muted); font-size: 14px; padding: 8px 0; }
+  .spinner { display: none; color: var(--muted); font-size: 0.875rem; padding: 8px 0; }
 </style>
 </head>
 <body>

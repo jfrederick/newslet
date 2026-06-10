@@ -38,14 +38,24 @@ def render_email(
     issue: Issue,
     public_base_url: str,
     theme: themes.Theme | None = None,
+    text_size: int = 100,
 ) -> tuple[str, str]:
     """Return ``(subject, html)`` for one issue.
 
     ``theme`` styles the email via inline-style tokens (email clients ignore
-    stylesheet classes); ``None`` renders the classic default, so callers
-    without a config in hand (tests, old call sites) are unchanged.
+    stylesheet classes); ``None`` renders the app default. ``text_size``
+    (percent) scales every inline ``font-size`` — the email analogue of the
+    web pages' root font-size dial.
     """
     theme = theme or themes.get(None)
+    text_size = min(
+        max(int(text_size), themes.TEXT_SIZE_MIN), themes.TEXT_SIZE_MAX
+    )
+
+    def fs(base_px: int) -> str:
+        """Scale a design-time px size by the text-size dial."""
+        return f"{round(base_px * text_size / 100)}px"
+
     display_date = _display_date(issue.date)
     subject = issue.subject or f"daily scoop — {display_date}"
     base = public_base_url.rstrip("/")
@@ -118,6 +128,7 @@ def render_email(
     html = _ENV.get_template("email.html.j2").render(
         t=theme,
         p=theme.palette,
+        fs=fs,
         date=display_date,
         picks=ctx_picks,
         web_articles=ctx_web,

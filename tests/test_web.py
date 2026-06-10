@@ -960,8 +960,9 @@ def test_config_save_persists_theme(client):
     assert 'value="phosphor" selected' in r.text
 
 
-def test_config_theme_defaults_to_classic_when_absent(client):
-    """A pre-themes client posting only the original fields keeps classic."""
+def test_config_theme_defaults_when_absent(client):
+    """A pre-themes client posting only the original fields gets the app
+    defaults (foundry at 100%)."""
     from newslet import db
 
     client.cookies.set("admin_token", "supersecret")
@@ -970,7 +971,8 @@ def test_config_theme_defaults_to_classic_when_absent(client):
         data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
     )
     assert r.status_code == 303
-    assert db.get_config().theme == "classic"
+    assert db.get_config().theme == "foundry"
+    assert db.get_config().text_size == 100
 
 
 def test_config_rejects_unknown_theme(client):
@@ -991,17 +993,18 @@ def test_pages_render_selected_theme(client):
         assert f"--bg: {amber_bg};" in r.text, path
 
 
-def test_default_pages_render_classic_theme(client):
+def test_default_pages_render_foundry_theme(client):
     from newslet import themes
 
     client.cookies.set("admin_token", "supersecret")
     r = client.get("/admin")
-    assert f"--bg: {themes.THEMES['classic'].palette.bg};" in r.text
-    # Classic keeps its automatic dark-mode variant.
+    assert f"--bg: {themes.THEMES['foundry'].palette.bg};" in r.text
+    # Foundry keeps an automatic dark-mode variant, and text size is 100%.
     assert "@media (prefers-color-scheme: dark)" in r.text
+    assert "font-size: 100%;" in r.text
 
 
-def test_unknown_stored_theme_falls_back_to_classic(client):
+def test_unknown_stored_theme_falls_back_to_default(client):
     """A stored theme name this build doesn't know must not break pages."""
     import boto3
 
@@ -1014,7 +1017,7 @@ def test_unknown_stored_theme_falls_back_to_classic(client):
 
     r = client.get("/")
     assert r.status_code == 200
-    assert f"--bg: {themes.THEMES['classic'].palette.bg};" in r.text
+    assert f"--bg: {themes.THEMES['foundry'].palette.bg};" in r.text
 
 
 def test_email_archive_keeps_send_time_theme(client):
@@ -1070,3 +1073,46 @@ def test_login_page_survives_config_read_failure(client, monkeypatch):
     r = client.get("/login")
     assert r.status_code == 200
     assert "Admin token" in r.text
+
+
+def test_config_save_persists_text_size(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = _save_config(client, text_size="125")
+    assert r.status_code == 303
+    assert db.get_config().text_size == 125
+
+    # The admin page shows the slider at the saved value and scales itself.
+    r = client.get("/admin")
+    assert 'name="text_size"' in r.text
+    assert 'id="textsize-val">125</span>' in r.text
+    assert "font-size: 125%;" in r.text
+
+
+def test_config_rejects_out_of_range_text_size(client):
+    client.cookies.set("admin_token", "supersecret")
+    assert _save_config(client, text_size="200").status_code == 400
+    assert _save_config(client, text_size="10").status_code == 400
+
+
+def test_email_archive_keeps_send_time_text_size(client):
+    """Like the theme, the text size is frozen into the as-sent archive."""
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import Issue, Pick
+
+    client.cookies.set("admin_token", "supersecret")
+    db.put_issue(
+        Issue(
+            date="2026-05-24",
+            picks=[Pick(url="https://ex.com/a", title="T", blurb="b")],
+            created_at=datetime.now(UTC),
+            text_size=130,
+        )
+    )
+    _save_config(client, text_size="75")
+    r = client.get("/emails/2026-05-24")
+    assert r.status_code == 200
+    assert "font-size:22px" in r.text  # round(17 * 1.30), not 17 * 0.75
