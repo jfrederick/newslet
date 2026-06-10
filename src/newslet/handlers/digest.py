@@ -25,6 +25,7 @@ from newslet import (
     hn,
     rank,
     summarize,
+    themes,
     tune,
     websearch,
     x_grok,
@@ -322,7 +323,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     config = db.get_config()
     # Recency window for ranking; tuning reads its own wider window.
     feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
-    return run_digest(
+    issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
         profile=profile,
         feedback=feedback,
@@ -334,6 +335,10 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         max_x_posts=config.max_x_articles,
         now=now,
     )
+    # Stamp the theme the issue will be sent with, so the stored row keeps
+    # the /emails/{date} archive faithful to the as-sent look even after
+    # the admin switches themes.
+    return issue.model_copy(update={"theme": config.theme}), candidates
 
 
 def _tune_profile_after_send() -> None:
@@ -374,7 +379,9 @@ def _run_manual(s: Any) -> dict:
     issue = issue.model_copy(update={"date": key})
     db.put_issue(issue, manual=True)
 
-    subject, html = email_render.render_email(issue, s.public_base_url)
+    subject, html = email_render.render_email(
+        issue, s.public_base_url, theme=themes.get(issue.theme)
+    )
     _send_email(subject, html)
     # Intentionally no mark_issue_sent / mark_seen here — see docstring.
     _tune_profile_after_send()
@@ -480,7 +487,12 @@ def handler(event: dict, context: Any) -> dict:
         issue, candidates = _fresh_issue()
         db.put_issue(issue)
 
-    subject, html = email_render.render_email(issue, s.public_base_url)
+    # Render with the issue's stamped theme (not a live config read) so a
+    # retry that reuses a stored partial issue sends the same look it was
+    # built with — and matches what the archive will show.
+    subject, html = email_render.render_email(
+        issue, s.public_base_url, theme=themes.get(issue.theme)
+    )
     _send_email(subject, html)
     db.mark_issue_sent(issue.date)
 
@@ -625,6 +637,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feeds", default="feeds.txt", help="path to newline-delimited feed urls")
     parser.add_argument("--profile", default="profile.md", help="path to profile markdown")
     parser.add_argument("--out", default="out/email.html", help="output HTML path (dry-run)")
+    parser.add_argument(
+        "--theme",
+        default=themes.DEFAULT_THEME,
+        choices=sorted(themes.THEMES),
+        help="email theme to render (dry-run)",
+    )
     args = parser.parse_args(argv)
 
     if not args.dry_run:
@@ -658,7 +676,9 @@ def main(argv: list[str] | None = None) -> int:
         print("no picks today (no recent feed entries within 24h)")
         return 0
 
-    subject, html = email_render.render_email(issue, settings().public_base_url)
+    subject, html = email_render.render_email(
+        issue, settings().public_base_url, theme=themes.get(args.theme)
+    )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

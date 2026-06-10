@@ -228,17 +228,43 @@ the recipient to a `Subscription`, and either auto-follows a confirmation link
 (`put_inbox_email` + `touch_subscription`). One record's failure is logged and
 swallowed so SES does not retry the whole batch.
 
+### `newslet.themes`
+
+```python
+DEFAULT_THEME = "classic"
+THEMES: dict[str, Theme]                      # classic, phosphor, amber, paper, dos, mono
+def get(name: str | None) -> Theme: ...       # lenient: unknown/empty → classic
+def list_themes() -> list[Theme]: ...         # display order, for the admin picker
+def css(theme: Theme) -> str: ...             # ":root { --bg: …; }" block for web pages
+```
+
+A `Theme` is a frozen bundle of code-defined design tokens (a `Palette` of
+colors, font stacks, corner radii) — no user input ever flows into one, which
+is what makes interpolating tokens into CSS and inline styles safe. The web
+templates style against the CSS variables `css()` emits (the handler passes
+them pre-marked as `Markup`); the email template inlines the same tokens.
+"classic" reproduces the original look (with its `prefers-color-scheme` dark
+variant) and is the fallback everywhere; the other five are single-mode
+textmode-revival palettes.
+
 ### `newslet.email_render`
 
 ```python
 def render_email(
     issue: Issue,
     public_base_url: str,
+    theme: Theme | None = None,  # None → classic
 ) -> tuple[str, str]:  # (subject, html)
     ...
 ```
 
-- Loads `templates/email.html.j2`.
+- Loads `templates/email.html.j2`; `theme` drives its inline styles (clients
+  ignore stylesheet classes), changing presentation only — links and structure
+  are theme-independent.
+- The digest stamps `Issue.theme` from config when it builds an issue and
+  renders sends with `themes.get(issue.theme)`; `/emails/{date}` does the
+  same, so the archive keeps showing the email as sent even after the admin
+  switches themes (pre-themes rows default to classic).
 - Renders all stored picks plus the `web_articles` block (both votable via
   `tokens.sign(url, issue.date)` → `{base}/rate?a=…&d=…&v=up|down&t=…`), plus
   discoveries. The digest stores exactly `Config.max_rss_articles` picks and
@@ -290,12 +316,12 @@ Routes:
   downvote removes the article), and a subject-search box. No refresh button —
   it auto-regenerates when the stored edition is missing or not from today.
   Optional `?q=` server-renders a web search. Requires the `admin_token` cookie.
-- `GET /admin` — admin UI (feeds, profile, daily-email settings, send now)
+- `GET /admin` — admin UI (feeds, profile, daily-email settings, theme picker, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, theme?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -313,9 +339,9 @@ Routes:
 | Table | PK | SK | Other attrs | TTL |
 |---|---|---|---|---|
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
-| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts, `updated_at` | no |
+| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts/`theme`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `discoveries_json`, `web_articles_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `discoveries_json`, `web_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

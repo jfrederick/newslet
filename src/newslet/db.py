@@ -206,6 +206,9 @@ def get_config() -> Config:
             # key to actually run) so existing installs pick it up.
             x_enabled=bool(item.get("x_enabled", True)),
             max_x_articles=int(item.get("max_x_articles", 15)),
+            # Pre-themes rows have no theme attribute; default to classic.
+            # An unknown stored name is fine too — themes.get falls back.
+            theme=str(item.get("theme", "classic")),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -222,6 +225,7 @@ def put_config(config: Config) -> Config:
             "web_variety": config.web_variety,
             "x_enabled": config.x_enabled,
             "max_x_articles": config.max_x_articles,
+            "theme": config.theme,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )
@@ -274,6 +278,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         # web view re-renders the same web_articles block.
         "subject": issue.subject,
         "intro": issue.intro,
+        "theme": issue.theme,
         "discoveries_json": discoveries_json,
         "web_articles_json": web_articles_json,
     }
@@ -328,6 +333,8 @@ def get_issue(date: str) -> Issue | None:
             "created_at": datetime.fromisoformat(item["created_at"]),
             "subject": item.get("subject", ""),
             "intro": item.get("intro", ""),
+            # Pre-themes rows carry no theme; they were sent with classic.
+            "theme": item.get("theme", "classic"),
             "discoveries": discoveries,
             "web_articles": web_articles,
         }

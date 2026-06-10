@@ -18,10 +18,11 @@ from fastapi import Cookie, FastAPI, Form, HTTPException, Query, Request, Respon
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from mangum import Mangum
+from markupsafe import Markup
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from newslet import db, email_render, hn, newsletters, tokens, websearch
+from newslet import db, email_render, hn, newsletters, themes, tokens, websearch
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -113,6 +114,21 @@ def _interactive_search(query: str) -> list:
     )
 
 
+def _current_theme() -> themes.Theme:
+    """The admin-selected theme (lenient: unknown/unset → classic)."""
+    return themes.get(db.get_config().theme)
+
+
+def _theme_css(theme: themes.Theme | None = None) -> Markup:
+    """The theme's ``:root`` variable block for a template's stylesheet.
+
+    ``Markup`` because the CSS contains quotes in font stacks that HTML
+    autoescaping would mangle; every value is a code-defined constant from
+    ``newslet.themes`` — no user input flows in.
+    """
+    return Markup(themes.css(theme or _current_theme()))
+
+
 def _is_https(request: Request) -> bool:
     """Detect whether the original client connection was HTTPS.
 
@@ -138,7 +154,15 @@ def _require_admin(admin_token: str | None) -> None:
 
 
 def _login_page(error: str = "") -> HTMLResponse:
-    html = _TEMPLATES.get_template("login.html.j2").render(error=error)
+    # Login renders pre-auth and must never be blocked by the config table,
+    # so any failure reading the stored theme falls back to the default.
+    try:
+        theme = _current_theme()
+    except Exception:  # noqa: BLE001 - auth must stay reachable
+        theme = themes.get(None)
+    html = _TEMPLATES.get_template("login.html.j2").render(
+        error=error, theme_css=_theme_css(theme)
+    )
     return HTMLResponse(html)
 
 
@@ -282,6 +306,7 @@ def home(
             )
 
     html = _TEMPLATES.get_template("read.html.j2").render(
+        theme_css=_theme_css(),
         vote_key=_HOME_KEY,
         date_header=now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y"),
         subject=subject,
@@ -339,6 +364,8 @@ def admin_index(
         for s in db.list_subscriptions()
     ]
     html = _TEMPLATES.get_template("admin.html.j2").render(
+        theme_css=_theme_css(themes.get(config.theme)),
+        themes=themes.list_themes(),
         feeds=feeds_rows,
         profile_md=profile.markdown,
         config=config,
@@ -355,6 +382,7 @@ def admin_index(
 def emails_index(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
     _require_admin(admin_token)
     html = _TEMPLATES.get_template("emails.html.j2").render(
+        theme_css=_theme_css(),
         issues=db.list_issues(limit=60),
     )
     return HTMLResponse(html)
@@ -407,10 +435,16 @@ def save_config(
     # three still validate.
     x_enabled: bool = Form(default=False),
     max_x_articles: int = Form(default=15),
+    theme: str = Form(default=themes.DEFAULT_THEME),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
-    """Persist the daily-email article counts, web-search variety, and X source."""
+    """Persist the daily-email article counts, web-search variety, X source,
+    and the app theme."""
     _require_admin(admin_token)
+    # Strict on write (the read path is the lenient one): reject names the
+    # picker could never have sent.
+    if theme not in themes.THEMES:
+        raise HTTPException(status_code=400, detail="unknown theme")
     try:
         cfg = Config(
             max_rss_articles=max_rss_articles,
@@ -418,6 +452,7 @@ def save_config(
             web_variety=web_variety,
             x_enabled=x_enabled,
             max_x_articles=max_x_articles,
+            theme=theme,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -698,7 +733,12 @@ def view_email(
     issue = db.get_issue(date)
     if not issue:
         raise HTTPException(status_code=404, detail="no issue for that date")
-    _, html = email_render.render_email(issue, _base_url(request))
+    # The issue's stamped send-time theme, not the current config — switching
+    # themes must not restyle the as-sent archive (pre-themes rows default to
+    # classic, which is what they shipped with).
+    _, html = email_render.render_email(
+        issue, _base_url(request), theme=themes.get(issue.theme)
+    )
     return HTMLResponse(html)
 
 

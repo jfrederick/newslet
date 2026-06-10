@@ -3,21 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{#- The email body only ever inlines the primary palette, so only single-mode
+    themes declare a scheme (keeping a dark terminal theme from being
+    auto-inverted by dark-mode clients). A dual-mode theme (classic) renders
+    light-only here; omitting the meta preserves the pre-themes client
+    behavior rather than advertising dark support the email doesn't have. -#}
+{% if t.dark_palette is none %}
+<meta name="color-scheme" content="{{ t.color_scheme }}">
+<meta name="supported-color-schemes" content="{{ t.color_scheme }}">
+{% endif %}
 <title>daily scoop · {{ date|e }}</title>
 </head>
-<body style="margin:0; padding:0; background:#f6f6f4; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#1a1a1a; -webkit-text-size-adjust:100%;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f6f4;">
+<body style="margin:0; padding:0; background:{{ p.bg }}; font-family:{{ t.font_body }}; color:{{ p.fg }}; -webkit-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{{ p.bg }};">
     <tr>
       <td align="center" style="padding:24px 12px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px; background:#ffffff; border:1px solid #e6e6e1; border-radius:6px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px; background:{{ p.panel }}; border:1px solid {{ p.border }}; border-radius:{{ t.radius_sm }};">
           <tr>
-            <td style="padding:24px 24px 12px 24px; border-bottom:1px solid #efefea;">
+            <td style="padding:24px 24px 12px 24px; border-bottom:1px solid {{ p.border_soft }};">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td style="font-family:Georgia,'Times New Roman',serif; font-size:24px; font-weight:700; letter-spacing:-0.01em; color:#111;">
+                  <td style="font-family:{{ t.font_brand }}; font-size:24px; font-weight:700; letter-spacing:-0.01em; color:{{ p.fg }};">
                     daily scoop
                   </td>
-                  <td align="right" style="font-size:13px; color:#888;">
+                  <td align="right" style="font-size:13px; color:{{ p.muted }};">
                     {{ date|e }}
                   </td>
                 </tr>
@@ -27,7 +36,7 @@
 
           {% if intro %}
           <tr>
-            <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec; font-size:15px; line-height:1.55; color:#333;">
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }}; font-size:15px; line-height:1.55; color:{{ p.fg }};">
               {{ intro|e }}
             </td>
           </tr>
@@ -35,23 +44,23 @@
 
           {% for pick in picks %}
           <tr>
-            <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec;">
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="vertical-align:top; padding-right:12px;">
                     <div style="font-size:17px; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
-                      <a href="{{ pick.url|e }}" target="_blank" rel="noopener noreferrer" style="color:#0b3d91; text-decoration:none;">{{ pick.title|e }}</a>
+                      <a href="{{ pick.url|e }}" target="_blank" rel="noopener noreferrer" style="color:{{ p.accent }}; text-decoration:none;">{{ pick.title|e }}</a>
                     </div>
-                    <div style="font-size:12px; color:#888; margin:0 0 8px 0;">
+                    <div style="font-size:12px; color:{{ p.muted }}; margin:0 0 8px 0;">
                       {{ pick.source|e }}
                     </div>
-                    <div style="font-size:15px; line-height:1.5; color:#222; margin:0;">
+                    <div style="font-size:15px; line-height:1.5; color:{{ p.fg }}; margin:0;">
                       {{ pick.blurb|e }}
                     </div>
                   </td>
                   <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
-                    <a href="{{ pick.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#1a7a3a; background:#eef7ef; border:1px solid #d4e8d8; border-radius:4px; text-decoration:none;">+</a>
-                    <a href="{{ pick.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#9a2a2a; background:#fbeeee; border:1px solid #e8d4d4; border-radius:4px; text-decoration:none;">&#8722;</a>
+                    <a href="{{ pick.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:18px; line-height:1; color:{{ p.ok }}; background:{{ p.ok_bg }}; border:1px solid {{ p.ok_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">+</a>
+                    <a href="{{ pick.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:18px; line-height:1; color:{{ p.bad }}; background:{{ p.bad_bg }}; border:1px solid {{ p.bad_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">&#8722;</a>
                   </td>
                 </tr>
               </table>
@@ -61,33 +70,33 @@
 
           {% if web_articles %}
           <tr>
-            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid #f1f1ec;">
-              <div style="font-family:Georgia,'Times New Roman',serif; font-size:15px; font-weight:700; color:#111; margin:0;">
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <div style="font-family:{{ t.font_brand }}; font-size:15px; font-weight:700; color:{{ p.fg }}; margin:0;">
                 From around the web
               </div>
             </td>
           </tr>
           {% for w in web_articles %}
           <tr>
-            <td style="padding:20px 24px; border-bottom:1px solid #f1f1ec;">
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="vertical-align:top; padding-right:12px;">
                     <div style="font-size:17px; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
-                      <a href="{{ w.url|e }}" target="_blank" rel="noopener noreferrer" style="color:#0b3d91; text-decoration:none;">{{ w.title|e }}</a>
+                      <a href="{{ w.url|e }}" target="_blank" rel="noopener noreferrer" style="color:{{ p.accent }}; text-decoration:none;">{{ w.title|e }}</a>
                     </div>
-                    <div style="font-size:12px; color:#888; margin:0 0 8px 0;">
-                      {% if w.source %}{{ w.source|e }}{% endif %}{% if w.points is not none %} &middot; &#9650; {{ w.points }}{% endif %}{% if w.comments is not none %} &middot; {{ w.comments }} comments{% endif %}{% if w.comments_url %} &middot; <a href="{{ w.comments_url|e }}" target="_blank" rel="noopener noreferrer" style="color:#888;">discussion</a>{% endif %}
+                    <div style="font-size:12px; color:{{ p.muted }}; margin:0 0 8px 0;">
+                      {% if w.source %}{{ w.source|e }}{% endif %}{% if w.points is not none %} &middot; &#9650; {{ w.points }}{% endif %}{% if w.comments is not none %} &middot; {{ w.comments }} comments{% endif %}{% if w.comments_url %} &middot; <a href="{{ w.comments_url|e }}" target="_blank" rel="noopener noreferrer" style="color:{{ p.muted }};">discussion</a>{% endif %}
                     </div>
                     {% if w.blurb %}
-                    <div style="font-size:15px; line-height:1.5; color:#222; margin:0;">
+                    <div style="font-size:15px; line-height:1.5; color:{{ p.fg }}; margin:0;">
                       {{ w.blurb|e }}
                     </div>
                     {% endif %}
                   </td>
                   <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
-                    <a href="{{ w.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#1a7a3a; background:#eef7ef; border:1px solid #d4e8d8; border-radius:4px; text-decoration:none;">+</a>
-                    <a href="{{ w.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:Menlo,Consolas,monospace; font-size:18px; line-height:1; color:#9a2a2a; background:#fbeeee; border:1px solid #e8d4d4; border-radius:4px; text-decoration:none;">&#8722;</a>
+                    <a href="{{ w.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:18px; line-height:1; color:{{ p.ok }}; background:{{ p.ok_bg }}; border:1px solid {{ p.ok_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">+</a>
+                    <a href="{{ w.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:18px; line-height:1; color:{{ p.bad }}; background:{{ p.bad_bg }}; border:1px solid {{ p.bad_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">&#8722;</a>
                   </td>
                 </tr>
               </table>
@@ -98,31 +107,31 @@
 
           {% if discoveries %}
           <tr>
-            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid #f1f1ec;">
-              <div style="font-family:Georgia,'Times New Roman',serif; font-size:15px; font-weight:700; color:#111; margin:0;">
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <div style="font-family:{{ t.font_brand }}; font-size:15px; font-weight:700; color:{{ p.fg }}; margin:0;">
                 Sources you don&rsquo;t follow yet
               </div>
             </td>
           </tr>
           {% for disc in discoveries %}
           <tr>
-            <td style="padding:16px 24px; border-bottom:1px solid #f1f1ec;">
+            <td style="padding:16px 24px; border-bottom:1px solid {{ p.border_soft }};">
               <div style="font-size:16px; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
-                <a href="{{ disc.url|e }}" target="_blank" rel="noopener noreferrer" style="color:#0b3d91; text-decoration:none;">{{ disc.title|e }}</a>
+                <a href="{{ disc.url|e }}" target="_blank" rel="noopener noreferrer" style="color:{{ p.accent }}; text-decoration:none;">{{ disc.title|e }}</a>
               </div>
               {% if disc.source %}
-              <div style="font-size:12px; color:#888; margin:0 0 8px 0;">
+              <div style="font-size:12px; color:{{ p.muted }}; margin:0 0 8px 0;">
                 {{ disc.source|e }}
               </div>
               {% endif %}
               {% if disc.reason %}
-              <div style="font-size:14px; line-height:1.5; color:#444; margin:0 0 10px 0;">
+              <div style="font-size:14px; line-height:1.5; color:{{ p.fg }}; margin:0 0 10px 0;">
                 {{ disc.reason|e }}
               </div>
               {% endif %}
               {% if disc.subscribe_link %}
               <div style="margin:0;">
-                <a href="{{ disc.subscribe_link|e }}" style="display:inline-block; padding:6px 12px; font-size:13px; font-weight:600; color:#0b3d91; background:#eef2fb; border:1px solid #d4ddf0; border-radius:4px; text-decoration:none;">+ Subscribe</a>
+                <a href="{{ disc.subscribe_link|e }}" style="display:inline-block; padding:6px 12px; font-size:13px; font-weight:600; color:{{ p.accent }}; background:{{ p.accent_bg }}; border:1px solid {{ p.border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">+ Subscribe</a>
               </div>
               {% endif %}
             </td>
@@ -131,17 +140,17 @@
           {% endif %}
 
           <tr>
-            <td align="center" style="padding:22px 24px; border-bottom:1px solid #f1f1ec;">
-              <a href="{{ home_url|e }}" style="display:inline-block; padding:11px 20px; font-size:15px; font-weight:600; color:#ffffff; background:#0b3d91; border-radius:6px; text-decoration:none;">Open daily scoop &rarr;</a>
-              <div style="font-size:12px; color:#999; margin-top:8px;">More stories, a live Hacker News feed, and subject search on the web.</div>
+            <td align="center" style="padding:22px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <a href="{{ home_url|e }}" style="display:inline-block; padding:11px 20px; font-size:15px; font-weight:600; color:{{ p.accent_fg }}; background:{{ p.accent }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">Open daily scoop &rarr;</a>
+              <div style="font-size:12px; color:{{ p.muted }}; margin-top:8px;">More stories, a live Hacker News feed, and subject search on the web.</div>
             </td>
           </tr>
 
           <tr>
-            <td align="center" style="padding:16px 24px 24px 24px; font-size:11px; color:#aaa;">
+            <td align="center" style="padding:16px 24px 24px 24px; font-size:11px; color:{{ p.muted }};">
               daily scoop · {{ picks|length }} picks today
               <br>
-              <a href="{{ home_url|e }}" style="color:#888; text-decoration:underline;">daily scoop</a>
+              <a href="{{ home_url|e }}" style="color:{{ p.muted }}; text-decoration:underline;">daily scoop</a>
             </td>
           </tr>
         </table>
