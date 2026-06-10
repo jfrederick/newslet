@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dailyscoop · admin</title>
+<title>daily scoop · admin</title>
 <style>
   :root {
     --bg: #f6f6f4;
@@ -90,7 +90,7 @@
 <body>
   <div class="wrap">
     <header class="top">
-      <div class="brand">dailyscoop · admin</div>
+      <div class="brand">daily scoop · admin</div>
       <div>
         <a class="logout" href="/">home</a>
         &nbsp;·&nbsp;
@@ -223,7 +223,7 @@
       <h2>Newsletter subscriptions<span class="count">({{ subscriptions|length }})</span></h2>
       <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
         Subscribe to email newsletters as a source. Generate an address, paste it
-        into the newsletter's signup form, and dailyscoop folds its links into the
+        into the newsletter's signup form, and daily scoop folds its links into the
         daily ranking. Double opt-in confirmations are followed automatically.
       </p>
 
@@ -271,7 +271,7 @@
     <section>
       <h2>Profile</h2>
       <form method="POST" action="/api/profile">
-        <textarea name="markdown" rows="12" placeholder="Tell dailyscoop about your interests in plain text or Markdown.">{{ profile_md|e }}</textarea>
+        <textarea name="markdown" rows="12" placeholder="Tell daily scoop about your interests in plain text or Markdown.">{{ profile_md|e }}</textarea>
         <div class="save-row">
           <button type="submit" class="primary">Save</button>
         </div>
