@@ -508,6 +508,9 @@ The admin console is your control panel. From one page you manage everything:
 - **Daily email settings** — how many ranked stories the email carries, how
   many web results it adds, and the variety dial for how far the web search
   roams.
+- **Theme** — six visual themes (Classic plus five textmode-revival looks:
+  Phosphor, Amber, Paper, DOS, and Monochrome) that restyle the web pages and
+  the daily email together.
 - **Newsletter subscriptions** — mint addresses for email newsletters and see
   whether each is pending or confirmed.
 - **Send now** — trigger a real email immediately, for when you don't want to
@@ -531,8 +534,14 @@ but it stays out of the regular schedule and your recent-issues list.
 
 The console is `GET /admin` in the web Lambda. Settings persist through
 `/api/config` as a `Config` model (`max_rss_articles` 1–40, `max_web_articles`
-0–30, `web_variety` 0–100), read leniently with defaults on a missing or bad
-row. "Send now" (`/api/send-now`) async-invokes the digest Lambda with
+0–30, `web_variety` 0–100, `theme`), read leniently with defaults on a missing
+or bad row. Themes live in `newslet.themes` as named token sets (colors, font
+stacks, corner radii); web pages consume them as CSS variables and the email
+template inlines the same tokens, so one admin choice restyles both surfaces.
+An unknown stored theme name falls back to Classic rather than breaking a page
+or a send. Each issue stores the theme it was sent with, so the sent-email
+archive keeps showing past emails as they actually looked even after you
+switch themes. "Send now" (`/api/send-now`) async-invokes the digest Lambda with
 `{"manual": true}`; that manual run is a faithful fetch → rank → send → tune
 with a live feedback loop, but it stores under a synthetic
 `manual-<timestamp>-<rand>` key, ignores the daily idempotency gate, and never

@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from newslet import tokens
+from newslet import themes, tokens
 from newslet.contracts import Issue
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -34,8 +34,18 @@ def _display_date(date: str) -> str:
     return date
 
 
-def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
-    """Return ``(subject, html)`` for one issue."""
+def render_email(
+    issue: Issue,
+    public_base_url: str,
+    theme: themes.Theme | None = None,
+) -> tuple[str, str]:
+    """Return ``(subject, html)`` for one issue.
+
+    ``theme`` styles the email via inline-style tokens (email clients ignore
+    stylesheet classes); ``None`` renders the classic default, so callers
+    without a config in hand (tests, old call sites) are unchanged.
+    """
+    theme = theme or themes.get(None)
     display_date = _display_date(issue.date)
     subject = issue.subject or f"daily scoop — {display_date}"
     base = public_base_url.rstrip("/")
@@ -106,6 +116,8 @@ def render_email(issue: Issue, public_base_url: str) -> tuple[str, str]:
         )
 
     html = _ENV.get_template("email.html.j2").render(
+        t=theme,
+        p=theme.palette,
         date=display_date,
         picks=ctx_picks,
         web_articles=ctx_web,

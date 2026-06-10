@@ -927,3 +927,146 @@ def test_home_status_reports_freshness(client):
     r = client.get("/api/home/status")
     assert r.json()["ready"] is True
     assert r.json()["created_at"]
+
+
+# ---------------------------------------------------------------------------
+# Themes
+# ---------------------------------------------------------------------------
+
+
+def _save_config(client, **overrides):
+    data = {
+        "max_rss_articles": "10",
+        "max_web_articles": "5",
+        "web_variety": "30",
+        "x_enabled": "true",
+        "max_x_articles": "15",
+    }
+    data.update(overrides)
+    return client.post("/api/config", data=data)
+
+
+def test_config_save_persists_theme(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = _save_config(client, theme="phosphor")
+    assert r.status_code == 303
+    assert db.get_config().theme == "phosphor"
+
+    # The admin picker shows the saved theme selected.
+    r = client.get("/admin")
+    assert 'name="theme"' in r.text
+    assert 'value="phosphor" selected' in r.text
+
+
+def test_config_theme_defaults_to_classic_when_absent(client):
+    """A pre-themes client posting only the original fields keeps classic."""
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().theme == "classic"
+
+
+def test_config_rejects_unknown_theme(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = _save_config(client, theme="vaporwave")
+    assert r.status_code == 400
+
+
+def test_pages_render_selected_theme(client):
+    from newslet import themes
+
+    client.cookies.set("admin_token", "supersecret")
+    _save_config(client, theme="amber")
+    amber_bg = themes.THEMES["amber"].palette.bg
+    for path in ("/", "/admin", "/emails", "/login"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert f"--bg: {amber_bg};" in r.text, path
+
+
+def test_default_pages_render_classic_theme(client):
+    from newslet import themes
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/admin")
+    assert f"--bg: {themes.THEMES['classic'].palette.bg};" in r.text
+    # Classic keeps its automatic dark-mode variant.
+    assert "@media (prefers-color-scheme: dark)" in r.text
+
+
+def test_unknown_stored_theme_falls_back_to_classic(client):
+    """A stored theme name this build doesn't know must not break pages."""
+    import boto3
+
+    from newslet import themes
+
+    client.cookies.set("admin_token", "supersecret")
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-profile"
+    ).put_item(Item={"id": "config", "theme": "from-the-future"})
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert f"--bg: {themes.THEMES['classic'].palette.bg};" in r.text
+
+
+def test_email_archive_keeps_send_time_theme(client):
+    """The archive shows the email as sent: the issue's stamped theme wins,
+    even after the admin switches the app theme."""
+    from datetime import UTC, datetime
+
+    from newslet import db, themes
+    from newslet.contracts import Issue
+
+    client.cookies.set("admin_token", "supersecret")
+    db.put_issue(
+        Issue(date="2026-05-22", picks=[], created_at=datetime.now(UTC), theme="dos")
+    )
+    _save_config(client, theme="amber")
+    r = client.get("/emails/2026-05-22")
+    assert r.status_code == 200
+    assert f"background:{themes.THEMES['dos'].palette.bg}" in r.text
+    assert themes.THEMES["amber"].palette.bg not in r.text
+
+
+def test_email_archive_legacy_issue_renders_classic(client):
+    """Pre-themes issues (no stored theme) archive as classic regardless of
+    the current admin theme — that's what they actually shipped with."""
+    import boto3
+
+    from newslet import themes
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("2026-05-23")
+    # Simulate a pre-themes row: strip the stored theme attribute.
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-issues"
+    ).update_item(
+        Key={"date": "2026-05-23"}, UpdateExpression="REMOVE theme"
+    )
+    _save_config(client, theme="phosphor")
+    r = client.get("/emails/2026-05-23")
+    assert r.status_code == 200
+    assert f"background:{themes.THEMES['classic'].palette.bg}" in r.text
+
+
+def test_login_page_survives_config_read_failure(client, monkeypatch):
+    """Login must stay reachable even if the theme lookup blows up."""
+    from newslet import db
+    from newslet.handlers import web as web_handler
+
+    def boom():
+        raise RuntimeError("dynamo down")
+
+    monkeypatch.setattr(db, "get_config", boom)
+    assert web_handler.db.get_config is boom
+    r = client.get("/login")
+    assert r.status_code == 200
+    assert "Admin token" in r.text
