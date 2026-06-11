@@ -145,6 +145,13 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   `/emails/{date}` archive stays as-sent; legacy issue rows default to
   classic at 100% (historical accuracy), while a missing *config* defaults
   to Foundry.
+- **Ranking is grounded to the candidate pool:** `rank.rank` keeps only picks
+  whose URL was one of the candidates it was handed, dropping any the model
+  invents. This is a freshness guard, not just hygiene — an ungrounded pick
+  (a plausible story the model recalls from training) would bypass every
+  upstream recency filter (the 24h RSS window, HN's recency cap) and surface
+  stale content in the email and on the homepage. Preserve this when changing
+  the rank output path.
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model
