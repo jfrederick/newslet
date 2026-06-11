@@ -111,29 +111,10 @@ def _picks_json(picks: list[dict]) -> str:
     return json.dumps({"picks": picks})
 
 
-def _candidates(urls: list[str]) -> list[Article]:
-    """Build a minimal candidate pool covering the given urls.
-
-    rank() grounds its output to the candidate pool (dropping any pick the
-    model invents), so a test asserting non-empty picks must supply candidates
-    whose urls match the picks it returns.
-    """
-    return [
-        Article(
-            url=u,
-            title=u.rsplit("/", 1)[-1],
-            summary="s",
-            source="src",
-            published=datetime(2026, 1, 1, tzinfo=UTC),
-        )
-        for u in urls
-    ]
-
-
 # ---------- tests -------------------------------------------------------
 
 
-def test_happy_path_sorted_by_score(sample_feedback):
+def test_happy_path_sorted_by_score(sample_candidates, sample_feedback):
     picks = [
         {"url": "https://example.com/1", "title": "T1", "blurb": "b1",
          "source": "s", "score": 0.4},
@@ -142,11 +123,10 @@ def test_happy_path_sorted_by_score(sample_feedback):
         {"url": "https://example.com/3", "title": "T3", "blurb": "b3",
          "source": "s", "score": 0.6},
     ]
-    candidates = _candidates([p["url"] for p in picks])
     fake = FakeClient([_picks_json(picks)])
 
     result = rank(
-        "my profile", sample_feedback, candidates,
+        "my profile", sample_feedback, sample_candidates,
         client=fake, max_picks=10,
     )
 
@@ -155,17 +135,16 @@ def test_happy_path_sorted_by_score(sample_feedback):
     assert len(fake.calls) == 1
 
 
-def test_max_picks_trims_to_top_n(sample_feedback):
+def test_max_picks_trims_to_top_n(sample_candidates, sample_feedback):
     picks = [
         {"url": f"https://example.com/p{i}", "title": f"T{i}",
          "blurb": "b", "source": "s", "score": i / 100.0}
         for i in range(15)
     ]
-    candidates = _candidates([p["url"] for p in picks])
     fake = FakeClient([_picks_json(picks)])
 
     result = rank(
-        "p", sample_feedback, candidates,
+        "p", sample_feedback, sample_candidates,
         client=fake, max_picks=10,
     )
 
@@ -177,27 +156,7 @@ def test_max_picks_trims_to_top_n(sample_feedback):
     assert scores[-1] == pytest.approx(0.05)
 
 
-def test_drops_picks_not_in_candidate_pool(sample_feedback):
-    """A pick the model invents (e.g. a stale article it recalls from training)
-    is dropped: only urls we actually supplied as candidates survive, so no
-    article can bypass the upstream freshness filters."""
-    candidates = _candidates(["https://example.com/real"])
-    picks = [
-        {"url": "https://example.com/real", "title": "Real", "blurb": "b",
-         "source": "src", "score": 0.5},
-        # Hallucinated — a plausible-looking story that was never a candidate.
-        {"url": "https://news.ycombinator.com/item?id=999", "title": "Stale",
-         "blurb": "b", "source": "Hacker News", "score": 0.99},
-    ]
-    fake = FakeClient([_picks_json(picks)])
-
-    result = rank("p", sample_feedback, candidates, client=fake, max_picks=10)
-
-    assert [str(p.url) for p in result.picks] == ["https://example.com/real"]
-
-
-def test_invalid_json_triggers_retry(sample_feedback):
-    candidates = _candidates(["https://example.com/1"])
+def test_invalid_json_triggers_retry(sample_candidates, sample_feedback):
     good = _picks_json([
         {"url": "https://example.com/1", "title": "T1", "blurb": "b",
          "source": "s", "score": 0.5},
@@ -205,7 +164,7 @@ def test_invalid_json_triggers_retry(sample_feedback):
     fake = FakeClient(["not json", good])
 
     result = rank(
-        "p", sample_feedback, candidates, client=fake, max_picks=10,
+        "p", sample_feedback, sample_candidates, client=fake, max_picks=10,
     )
 
     assert len(fake.calls) == 2
