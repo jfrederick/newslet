@@ -161,11 +161,15 @@ def rank(
     # only picks whose URL is one we actually supplied.
     candidate_urls = {str(c.url) for c in candidates}
     grounded = [p for p in parsed.picks if str(p.url) in candidate_urls]
-    dropped = len(parsed.picks) - len(grounded)
+    dropped = [p for p in parsed.picks if str(p.url) not in candidate_urls]
     if dropped:
+        # Log the offending URLs, not just a count: when a stale article does
+        # leak through the model, this line names it so the next forensic pass
+        # is immediate rather than a repro.
         log.warning(
-            "rank: dropped %d ungrounded pick(s) not present in the candidate pool",
-            dropped,
+            "rank: dropped %d ungrounded pick(s) not in the candidate pool: %s",
+            len(dropped),
+            [str(p.url) for p in dropped],
         )
 
     top = sorted(grounded, key=lambda p: p.score, reverse=True)[:max_picks]
