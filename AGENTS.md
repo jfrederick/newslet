@@ -68,13 +68,13 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `search_common.py` | shared Claude `web_search` primitives (tool def, last-text-block, JSON extraction, host key) used by `discovery` + `websearch` |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
-| `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
+| `x_grok.py` | X (Twitter) posts via xAI Grok `x_search` tool (Responses API), injected `complete`; stored on the issue (the email's "From X" section + the web X tab) and converted into ranking candidates; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
-| `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link; theme-aware inline styles) |
+| `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block + "From X" section; generic homepage link; theme-aware inline styles) |
 | `themes.py` | named visual themes (color/font/radius tokens) for web + email — the Claude-chat family (Foundry default, Atelier, Manuscript, Observatory, Meadow), Classic, and the textmode set; `get()` is lenient, `css()` emits the `:root` vars (incl. the text-size root `font-size`) the web templates style against |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
 | `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
@@ -93,7 +93,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 - **Best-effort enrichment:** summarize, discovery, the Hacker News source
   (`hn.fetch_hn_articles`), the web-search block (`websearch.search_web`), the
   subscribed-newsletter source (`db.recent_inbox_articles`), and the X source
-  (`x_grok.fetch_x_articles`) must never block a send — they degrade to empty
+  (`x_grok.fetch_x_posts`) must never block a send — they degrade to empty
   on any failure. Keep new enrichment steps in the same `try/except → empty`
   shape, and make their network edge injectable (HN takes a `fetch` callable;
   websearch a `client`; X a `complete` callable; `run_digest` takes

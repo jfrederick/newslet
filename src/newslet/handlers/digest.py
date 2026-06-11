@@ -40,6 +40,7 @@ from newslet.contracts import (
     Profile,
     RankResponse,
     WebArticle,
+    XPost,
 )
 
 log = logging.getLogger(__name__)
@@ -109,6 +110,7 @@ def _build_issue(
     intro: str = "",
     discoveries: list[Discovery] | None = None,
     web_articles: list[WebArticle] | None = None,
+    x_posts: list[XPost] | None = None,
 ) -> Issue:
     return Issue(
         date=date,
@@ -118,6 +120,7 @@ def _build_issue(
         intro=intro,
         discoveries=discoveries or [],
         web_articles=web_articles or [],
+        x_posts=x_posts or [],
     )
 
 
@@ -187,7 +190,7 @@ def run_digest(
     hn_fn = hn_fn or hn.fetch_hn_articles
     websearch_fn = websearch_fn or websearch.search_web
     newsletters_fn = newsletters_fn or db.recent_inbox_articles
-    x_fn = x_fn or x_grok.fetch_x_articles
+    x_fn = x_fn or x_grok.fetch_x_posts
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -218,22 +221,28 @@ def run_digest(
     except Exception:  # noqa: BLE001 - newsletters are best effort, never block
         log.exception("newsletter fetch failed; ranking without it")
 
-    # X (Twitter), via Grok's x_search tool: recent on-profile posts join the
-    # ranking pool like HN and newsletters. Same best-effort, seen-filtered
-    # shape. Gated by the admin toggle (``x_enabled``) and, inside x_grok, by
-    # the presence of an XAI_API_KEY — either off means an empty, non-blocking
-    # source.
+    # X (Twitter), via Grok's x_search tool: recent on-profile posts. They are
+    # kept on the issue (the email's "From X" section, the web view's X tab) —
+    # so X posts always appear when the source returns any — and also join the
+    # ranking pool like HN and newsletters, so a strong post can still win a
+    # pick slot. Same best-effort, seen-filtered shape. Gated by the admin
+    # toggle (``x_enabled``) and, inside x_grok, by the presence of an
+    # XAI_API_KEY — either off means an empty, non-blocking source.
+    x_posts: list[XPost] = []
     if x_enabled:
         try:
-            x_candidates = [
-                a
-                for a in x_fn(_x_search_query(profile.markdown), max_results=max_x_posts)
-                if not is_seen(str(a.url))
+            x_posts = [
+                p
+                for p in x_fn(_x_search_query(profile.markdown), max_results=max_x_posts)
+                if not is_seen(str(p.url))
             ]
-            log.info("fetched %d X candidates", len(x_candidates))
-            candidates = _dedupe_candidates(candidates + x_candidates)
+            log.info("fetched %d X candidates", len(x_posts))
+            candidates = _dedupe_candidates(
+                candidates + x_grok.as_articles(x_posts, now=now)
+            )
         except Exception:  # noqa: BLE001 - X is best effort, never block the send
             log.exception("X fetch failed; ranking without it")
+            x_posts = []
 
     date = now.strftime("%Y-%m-%d")
     if not candidates:
@@ -293,6 +302,7 @@ def run_digest(
         intro=intro,
         discoveries=discoveries,
         web_articles=web_articles,
+        x_posts=x_posts,
     )
     return issue, candidates
 
@@ -580,15 +590,16 @@ def _fake_hn(pages: int = 0, **_) -> list[Article]:
     ]
 
 
-def _fake_x(query: str = "", **_) -> list[Article]:
-    """Deterministic, offline X (Twitter) candidates for --dry-run."""
+def _fake_x(query: str = "", **_) -> list[XPost]:
+    """Deterministic, offline X (Twitter) posts for --dry-run."""
     return [
-        Article(
+        XPost(
             url="https://x.com/example/status/1700000000000000000",
             title="A widely-shared post matching your interests",
-            summary="980 likes, 240 reposts on X (by @example).",
-            source="X",
-            published=datetime.now(UTC),
+            text="A widely-shared post matching your interests",
+            author="example",
+            likes=980,
+            reposts=240,
         )
     ]
 

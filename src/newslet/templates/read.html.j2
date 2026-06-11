@@ -33,6 +33,15 @@
     border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font-weight: 600; }
   .btn:disabled { opacity: .6; cursor: progress; }
 
+  /* Source tabs: Everything vs. just X posts */
+  .tabs { display: flex; gap: 6px; margin: 18px 0 0; border-bottom: 1px solid var(--border); }
+  .tab { font: inherit; cursor: pointer; padding: 8px 14px; border: none; background: none;
+    color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab:hover { color: var(--fg); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-hidden { display: none !important; }
+  body.only-x .research { display: none; }
+
   /* Research / "textbook" box */
   .research { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 20px 0; }
   .research label { font-weight: 600; display: block; margin-bottom: 8px; }
@@ -85,7 +94,10 @@
   <h3><a href="{{ c.url|e }}" target="_blank" rel="noopener noreferrer">{{ c.title|e }}</a></h3>
   <div class="meta">
     {% if c.source %}<span class="src{% if c.source == 'Hacker News' %} hn{% endif %}">{{ c.source|e }}</span>{% endif %}
+    {% if c.author %}<span>@{{ c.author|e }}</span>{% endif %}
     {% if c.points is not none %}<span class="badge">▲ {{ c.points }}</span>{% endif %}
+    {% if c.likes is not none %}<span class="badge">♥ {{ c.likes }}</span>{% endif %}
+    {% if c.reposts is not none %}<span class="badge">↻ {{ c.reposts }}</span>{% endif %}
     {% if c.comments is not none %}<span class="badge">💬 {{ c.comments }}</span>{% endif %}
     {% if c.comments_url %}<a href="{{ c.comments_url|e }}" target="_blank" rel="noopener noreferrer">discussion ↗</a>{% endif %}
   </div>
@@ -116,18 +128,37 @@
 
   <div class="spinner" id="prep-spinner">Preparing today's edition — this takes about a minute…</div>
 
+  <nav class="tabs" role="tablist" aria-label="Filter by source">
+    <button class="tab" role="tab" data-tab="all" aria-selected="true">Everything</button>
+    <button class="tab" role="tab" data-tab="x" aria-selected="false">X posts</button>
+  </nav>
+  <div class="empty tab-hidden" id="tab-empty">No X posts in today's edition.</div>
+
   {% if picks %}
+  <section class="sec">
   <h2 class="section">Ranked picks</h2>
   <div class="grid" id="picks-grid">
     {% for c in picks %}{{ card(c) }}{% endfor %}
   </div>
+  </section>
   {% endif %}
 
   {% if web_articles %}
+  <section class="sec">
   <h2 class="section">From around the web</h2>
   <div class="grid" id="web-grid">
     {% for c in web_articles %}{{ card(c) }}{% endfor %}
   </div>
+  </section>
+  {% endif %}
+
+  {% if x_posts %}
+  <section class="sec">
+  <h2 class="section">From X</h2>
+  <div class="grid" id="x-grid">
+    {% for c in x_posts %}{{ card(c) }}{% endfor %}
+  </div>
+  </section>
   {% endif %}
 
   <!-- Research desk: type a subject, the web search hones in -->
@@ -294,6 +325,36 @@
   }
 
   wireVotes(document);
+
+  // ---- Source tabs: "Everything" vs. just X posts ----
+  // The X tab filters by data-source across every section, so an X post
+  // that won a ranked-pick slot shows up there alongside the From X grid.
+  function applyTabFilter() {
+    var onlyX = document.body.classList.contains("only-x");
+    var visible = 0;
+    document.querySelectorAll("section.sec").forEach(function (sec) {
+      var any = false;
+      sec.querySelectorAll(".card").forEach(function (card) {
+        var show = !onlyX || card.getAttribute("data-source") === "X";
+        card.classList.toggle("tab-hidden", !show);
+        if (show) any = true;
+      });
+      sec.classList.toggle("tab-hidden", !any);
+      if (any) visible += 1;
+    });
+    document.getElementById("tab-empty")
+      .classList.toggle("tab-hidden", !(onlyX && visible === 0));
+  }
+  var tabs = document.querySelectorAll(".tab");
+  tabs.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      tabs.forEach(function (b) {
+        b.setAttribute("aria-selected", b === btn ? "true" : "false");
+      });
+      document.body.classList.toggle("only-x", btn.getAttribute("data-tab") === "x");
+      applyTabFilter();
+    });
+  });
 
   // Kick off generation when the stored edition is missing or stale.
   if ({{ 'true' if stale else 'false' }}) autoRefresh();

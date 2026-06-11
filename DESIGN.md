@@ -168,26 +168,32 @@ few rounds to fit the HTTP API's ~30s limit.
 
 ### `newslet.x_grok`
 
-X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
-Agent Tools API on `POST /v1/responses`; the older Live Search API was retired
-2026-01-12). Returns `Article` candidates that compete with RSS/HN for the
-day's picks. The network edge is an injected `complete(payload, api_key) -> dict`
-(one Responses request → parsed JSON), so no new SDK dependency and tests stay
-offline.
+X (Twitter) via xAI's Grok **`x_search` tool** (the Agent Tools API on
+`POST /v1/responses`; the older Live Search API was retired 2026-01-12).
+Returns `XPost`s that the digest both stores on the issue (the email's
+"From X" section, the web view's X tab — so X posts always appear when the
+source returns any) and converts into ranking-pool `Article` candidates that
+compete with RSS/HN for the day's picks. The network edge is an injected
+`complete(payload, api_key) -> dict` (one Responses request → parsed JSON),
+so no new SDK dependency and tests stay offline.
 
 ```python
-def fetch_x_articles(
+def fetch_x_posts(
     query: str, *, max_results: int = 15, recent: bool = True,
     api_key: str | None = None, model: str | None = None,
     complete=None, now: datetime | None = None,
-) -> list[Article]: ...
+) -> list[XPost]: ...
+def as_articles(posts: list[XPost], *, now: datetime | None = None) -> list[Article]: ...
+def fetch_x_articles(query: str, *, now=None, **kwargs) -> list[Article]: ...
+    # fetch_x_posts + as_articles, for callers that only want candidates
 ```
 
 Best-effort: returns `[]` when no `XAI_API_KEY` is configured (the source is
 simply disabled — no network call) and on any error/empty reply. Reuses
-`search_common.extract_json_object` for the model reply. Each post becomes an
-`Article` with `source="X"`, an engagement-rich `summary`
-(likes/reposts + text), and `published=now`.
+`search_common.extract_json_object` for the model reply. Each post keeps its
+display fields (`title` derived from the text, full `text`, `author`,
+`likes`/`reposts`); `as_articles` maps them to `source="X"` candidates with an
+engagement-rich `summary` (likes/reposts + text) and `published=now`.
 
 ### `newslet.newsletters`
 
@@ -272,10 +278,14 @@ def render_email(
   the same, so the archive keeps showing the email as sent even after the
   admin changes appearance settings (legacy rows default to classic at 100%
   — historical accuracy, not the current app default).
-- Renders all stored picks plus the `web_articles` block (both votable via
-  `tokens.sign(url, issue.date)` → `{base}/rate?a=…&d=…&v=up|down&t=…`), plus
-  discoveries. The digest stores exactly `Config.max_rss_articles` picks and
-  `Config.max_web_articles` web articles, so the email length follows config.
+- Renders all stored picks plus the `web_articles` block and the `x_posts`
+  "From X" section (all votable via `tokens.sign(url, issue.date)` →
+  `{base}/rate?a=…&d=…&v=up|down&t=…`), plus discoveries. An X post whose URL
+  also won a ranked-pick slot is skipped in the From X section (it would be
+  the identical item twice). The digest stores exactly
+  `Config.max_rss_articles` picks, `Config.max_web_articles` web articles,
+  and up to `Config.max_x_articles` X posts, so the email length follows
+  config.
 - Footer links generically to the homepage (`{base}/`).
 - Subject: `f"newslet — {issue.date}"` unless the issue carries one.
 
@@ -290,8 +300,11 @@ the home rebuild at 09:45 UTC (`{"home": true}`) and the email digest at 10:00
 UTC. `run_digest` takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and
 `max_x_posts` (daily reads them from `Config`; the homepage uses generous fixed
 counts but honours the same X toggle), and folds in the HN,
-subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
-seen-filtered — alongside the RSS candidates.
+subscribed-newsletter, and X (`x_fn`, returning `XPost`s) sources — each
+best-effort and seen-filtered — alongside the RSS candidates. The fetched X
+posts are stored on the issue (`Issue.x_posts`) for the email's "From X"
+section and the web view's X tab, in addition to joining the ranking pool via
+`x_grok.as_articles`.
 
 ```python
 def handler(event: dict, context: object) -> dict: ...
@@ -320,9 +333,11 @@ Routes:
   (`newslet/docs/product.md`), served as `text/markdown` for the viewer to fetch
 - `GET /` — the homepage: rich reading UX (`read.html.j2`) over the stored
   `"home"` aggregation, with a today's-date header, +/- voting (upvote sticky,
-  downvote removes the article), and a subject-search box. No refresh button —
-  it auto-regenerates when the stored edition is missing or not from today.
-  Optional `?q=` server-renders a web search. Requires the `admin_token` cookie.
+  downvote removes the article), a "From X" section, source tabs
+  (Everything / X posts — the X tab filters cards by `data-source` across all
+  sections), and a subject-search box. No refresh button — it auto-regenerates
+  when the stored edition is missing or not from today. Optional `?q=`
+  server-renders a web search. Requires the `admin_token` cookie.
 - `GET /admin` — admin UI (feeds, profile, daily-email settings, theme picker, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
@@ -348,7 +363,7 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts/`theme`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `x_posts_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

@@ -30,6 +30,7 @@ from newslet.contracts import (
     Profile,
     Subscription,
     WebArticle,
+    XPost,
 )
 
 log = logging.getLogger(__name__)
@@ -281,6 +282,9 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
     web_articles_json = json.dumps(
         [json.loads(w.model_dump_json()) for w in issue.web_articles]
     )
+    x_posts_json = json.dumps(
+        [json.loads(x.model_dump_json()) for x in issue.x_posts]
+    )
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
@@ -294,6 +298,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "text_size": issue.text_size,
         "discoveries_json": discoveries_json,
         "web_articles_json": web_articles_json,
+        "x_posts_json": x_posts_json,
     }
     if manual:
         # Manual ("send now") issues are stored so /rate title lookup and
@@ -339,6 +344,17 @@ def get_issue(date: str) -> Issue | None:
             log.warning(
                 "skipping bad web_article in issue %s: %s", item.get("date"), exc
             )
+    # x_posts is optional like web_articles (added later); lenient for the
+    # same reason — one bad post must not make the whole issue unreadable.
+    x_posts_raw = json.loads(item.get("x_posts_json", "[]"))
+    x_posts = []
+    for x in x_posts_raw:
+        try:
+            x_posts.append(XPost.model_validate(x))
+        except ValidationError as exc:
+            log.warning(
+                "skipping bad x_post in issue %s: %s", item.get("date"), exc
+            )
     return Issue.model_validate(
         {
             "date": item["date"],
@@ -355,6 +371,7 @@ def get_issue(date: str) -> Issue | None:
             "text_size": _int_or(item.get("text_size"), 100),
             "discoveries": discoveries,
             "web_articles": web_articles,
+            "x_posts": x_posts,
         }
     )
 

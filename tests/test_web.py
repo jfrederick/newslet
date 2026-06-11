@@ -550,11 +550,11 @@ def test_admin_index_flashes_after_send(client):
 
 
 def _seed_issue(key):
-    """Seed an issue (picks + web articles) under ``key`` (a date or 'home')."""
+    """Seed an issue (picks + web + X posts) under ``key`` (a date or 'home')."""
     from datetime import UTC, datetime
 
     from newslet import db
-    from newslet.contracts import Issue, Pick, WebArticle
+    from newslet.contracts import Issue, Pick, WebArticle, XPost
 
     db.put_issue(
         Issue(
@@ -575,6 +575,10 @@ def _seed_issue(key):
                            title="HN Rich", blurb="hb", source="Hacker News",
                            points=222, comments=33,
                            comments_url="https://news.ycombinator.com/item?id=9"),
+            ],
+            x_posts=[
+                XPost(url="https://x.com/alice/status/1", title="X Hot Take",
+                      text="X Hot Take", author="alice", likes=98, reposts=12),
             ],
         )
     )
@@ -620,6 +624,64 @@ def test_homepage_downvoted_article_disappears(client):
     assert r.status_code == 200
     # The downvoted article is gone; the others remain.
     assert "Beta Pick" not in r.text
+    assert "Alpha Pick" in r.text
+
+
+def test_homepage_x_posts_section_and_tab(client):
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("home")
+    r = client.get("/")
+    assert r.status_code == 200
+    # The From X section renders the seeded post with its engagement meta.
+    assert "From X" in r.text
+    assert "X Hot Take" in r.text
+    assert "@alice" in r.text
+    assert "♥ 98" in r.text
+    assert "↻ 12" in r.text
+    # The tab control for viewing just X posts is present.
+    assert 'data-tab="x"' in r.text
+    assert 'data-tab="all"' in r.text
+
+
+def test_homepage_x_post_deduped_when_also_a_pick(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import Issue, Pick, XPost
+
+    client.cookies.set("admin_token", "supersecret")
+    db.put_issue(
+        Issue(
+            date="home",
+            picks=[Pick(url="https://x.com/alice/status/1", title="Picked Post",
+                        blurb="b", source="X", score=0.9)],
+            created_at=datetime.now(UTC),
+            x_posts=[XPost(url="https://x.com/alice/status/1",
+                           title="Picked Post", text="Picked Post",
+                           author="alice")],
+        )
+    )
+    r = client.get("/")
+    assert r.status_code == 200
+    # The post renders once (as the ranked pick), not again in From X.
+    assert r.text.count('data-url="https://x.com/alice/status/1"') == 1
+
+
+def test_homepage_downvoted_x_post_disappears(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import FeedbackRow
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("home")
+    db.put_feedback(
+        FeedbackRow(article_url="https://x.com/alice/status/1", title="X Hot Take",
+                    rating="down", ts=datetime.now(UTC), issue_date="home")
+    )
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "X Hot Take" not in r.text
     assert "Alpha Pick" in r.text
 
 

@@ -186,3 +186,54 @@ def test_recent_false_omits_date_range(env):
     complete = _fake_complete(_reply(_post("https://x.com/a/status/1")))
     x_grok.fetch_x_articles("topic", complete=complete, recent=False)
     assert "from_date" not in complete.calls[0]["payload"]["tools"][0]
+
+
+def test_fetch_x_posts_returns_post_shape(env):
+    """fetch_x_posts keeps the display fields (author/likes/reposts/text)."""
+    complete = _fake_complete(
+        _reply(_post("https://x.com/a/status/1", author="@alice",
+                     text="Big news", likes=980, reposts=240))
+    )
+    out = x_grok.fetch_x_posts("AI policy", complete=complete)
+    assert len(out) == 1
+    post = out[0]
+    assert str(post.url) == "https://x.com/a/status/1"
+    assert post.title == "Big news"
+    assert post.text == "Big news"
+    assert post.author == "alice"  # leading @ stripped
+    assert post.likes == 980
+    assert post.reposts == 240
+
+
+def test_fetch_x_posts_tolerates_missing_engagement(env):
+    complete = _fake_complete(
+        _reply({"url": "https://x.com/a/status/1", "text": "t"})
+    )
+    out = x_grok.fetch_x_posts("topic", complete=complete)
+    assert out[0].likes is None
+    assert out[0].reposts is None
+
+
+def test_fetch_x_posts_truncates_long_text_into_title(env):
+    text = "word " * 40
+    complete = _fake_complete(
+        _reply(_post("https://x.com/a/status/1", text=text.strip()))
+    )
+    out = x_grok.fetch_x_posts("topic", complete=complete)
+    assert out[0].title.endswith("…")
+    assert len(out[0].title) == 101
+    assert out[0].text == text.strip()
+
+
+def test_as_articles_converts_for_the_ranking_pool(env):
+    complete = _fake_complete(
+        _reply(_post("https://x.com/a/status/1", author="@alice",
+                     text="Big news", likes=100, reposts=10))
+    )
+    posts = x_grok.fetch_x_posts("topic", complete=complete)
+    arts = x_grok.as_articles(posts)
+    assert len(arts) == 1
+    assert arts[0].source == "X"
+    assert arts[0].title == "Big news"
+    assert "100 likes, 10 reposts" in arts[0].summary
+    assert "@alice" in arts[0].summary

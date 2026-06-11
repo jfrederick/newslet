@@ -24,7 +24,7 @@ os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
 from newslet import email_render, themes  # noqa: E402
-from newslet.contracts import Discovery, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import Discovery, Issue, Pick, WebArticle, XPost  # noqa: E402
 
 FIXTURE_PICKS = [
     Pick(
@@ -74,6 +74,29 @@ FIXTURE_PICKS = [
 ]
 
 
+FIXTURE_X_POSTS = [
+    XPost(
+        url="https://x.com/karpathy/status/1700000000000000001",
+        title="The most underrated trick in training small models is just better data "
+              "curation. A thread on what actually moved t…",
+        text="The most underrated trick in training small models is just better data "
+             "curation. A thread on what actually moved the needle for us across "
+             "five recent runs.",
+        author="karpathy",
+        likes=12400,
+        reposts=2100,
+    ),
+    XPost(
+        url="https://x.com/patio11/status/1700000000000000002",
+        title="Banks are not databases, part 47.",
+        text="Banks are not databases, part 47.",
+        author="patio11",
+        likes=3300,
+        reposts=410,
+    ),
+]
+
+
 FIXTURE_DISCOVERIES = [
     Discovery(
         url="https://www.quantamagazine.org/example/a-new-proof-in-additive-combinatorics",
@@ -104,6 +127,7 @@ def main() -> int:
             "Postgres 19's async I/O."
         ),
         discoveries=FIXTURE_DISCOVERIES,
+        x_posts=FIXTURE_X_POSTS,
         # Only a couple here; the web view is where these (plus the rest of the
         # ranked picks) really live. Their presence makes the email's "Read all
         # on the web" link render.

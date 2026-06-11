@@ -105,6 +105,43 @@
           {% endfor %}
           {% endif %}
 
+          {% if x_posts %}
+          <tr>
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <div style="font-family:{{ t.font_brand }}; font-size:{{ fs(15) }}; font-weight:700; color:{{ p.fg }}; margin:0;">
+                From X
+              </div>
+            </td>
+          </tr>
+          {% for x in x_posts %}
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px;">
+                    <div style="font-size:{{ fs(17) }}; line-height:1.35; font-weight:600; margin:0 0 4px 0;">
+                      <a href="{{ x.url|e }}" target="_blank" rel="noopener noreferrer" style="color:{{ p.accent }}; text-decoration:none;">{{ x.title|e }}</a>
+                    </div>
+                    <div style="font-size:{{ fs(12) }}; color:{{ p.muted }}; margin:0 0 8px 0;">
+                      {% if x.author %}@{{ x.author|e }}{% else %}X{% endif %}{% if x.likes is not none %} &middot; {{ x.likes }} likes{% endif %}{% if x.reposts is not none %} &middot; {{ x.reposts }} reposts{% endif %}
+                    </div>
+                    {% if x.text %}
+                    <div style="font-size:{{ fs(15) }}; line-height:1.5; color:{{ p.fg }}; margin:0;">
+                      {{ x.text|e }}
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
+                    <a href="{{ x.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:{{ fs(18) }}; line-height:1; color:{{ p.ok }}; background:{{ p.ok_bg }}; border:1px solid {{ p.ok_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">+</a>
+                    <a href="{{ x.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:{{ fs(18) }}; line-height:1; color:{{ p.bad }}; background:{{ p.bad_bg }}; border:1px solid {{ p.bad_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">&#8722;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+
           {% if discoveries %}
           <tr>
             <td style="padding:20px 24px 8px 24px; border-bottom:1px solid {{ p.border_soft }};">

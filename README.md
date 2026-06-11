@@ -15,10 +15,12 @@ ancillary areas.
 
 You can optionally add **X (Twitter)** as a source without paying for X's
 API: if you set an xAI API key, newslet asks **Grok's `x_search` tool** for
-recent posts matching your profile and folds them into the daily ranking
-pool alongside RSS and Hacker News. It's billed per-use by xAI (cents a
-day), so you skip X's flat paid-API floor. The source stays dormant until a
-key is configured (see [Optional: X (Twitter) via Grok](#optional-x-twitter-via-grok)).
+recent posts matching your profile. They get their own **"From X" section**
+in the email (and an X tab on the homepage), and they also join the daily
+ranking pool alongside RSS and Hacker News so a standout post can win a top
+pick. It's billed per-use by xAI (cents a day), so you skip X's flat
+paid-API floor. The source stays dormant until a key is configured (see
+[Optional: X (Twitter) via Grok](#optional-x-twitter-via-grok)).
 
 You can also **subscribe to existing email newsletters** as a source: the
 admin UI mints a working inbound address you paste into any newsletter's
@@ -187,11 +189,12 @@ the crons in `infra/template.yaml` if you want different times of day
 
 ### Optional: X (Twitter) via Grok
 
-newslet can pull recent, on-profile posts from X into the daily ranking
-pool — without paying for X's API. It goes through **xAI's Grok `x_search`
-tool** (the Agent Tools API), which reads X as a search source and bills
-per-use (a daily digest's handful of posts costs cents), so you avoid X's
-flat paid-API floor and any scraping.
+newslet can pull recent, on-profile posts from X — without paying for X's
+API. They appear as the email's "From X" section (and the homepage's X tab)
+and also join the daily ranking pool. It goes through **xAI's Grok
+`x_search` tool** (the Agent Tools API), which reads X as a search source
+and bills per-use (a daily digest's handful of posts costs cents), so you
+avoid X's flat paid-API floor and any scraping.
 
 It's off until you add a key. To enable it:
 
@@ -211,11 +214,14 @@ stays empty and the digest runs exactly as before.
 **What it pulls:** there's no list of accounts to follow — the X source is
 driven by your **profile** (the same interests text the admin UI uses for
 everything else). Grok searches recent X posts and returns the ones that
-best match your profile; they then compete in the daily ranking like any
-other source. The admin **Daily email settings** has two X controls: a
-**"Pull posts from X"** toggle (on by default once a key exists; turn it off
-to pause the paid source without deleting the key) and **Max X posts** (how
-many to pull into the ranking pool, default 15).
+best match your profile. Every fetched post lands in the email's **"From X"
+section** (votable like everything else), and each also competes in the
+daily ranking like any other source — a post that wins a top pick is shown
+there instead of being repeated in the section. The admin **Daily email
+settings** has two X controls: a **"Pull posts from X"** toggle (on by
+default once a key exists; turn it off to pause the paid source without
+deleting the key) and **Max X posts** (how many to fetch — it caps both the
+ranking-pool contribution and the From X section, default 15).
 
 ### Optional: subscribing to newsletters
 
@@ -309,7 +315,7 @@ resolve a lockfile.
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
 - `src/newslet/search_common.py` — shared Claude `web_search` primitives (tool def, JSON extraction, host key) for `discovery` + `websearch`
 - `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
-- `src/newslet/x_grok.py` — X (Twitter) ranking candidates via xAI Grok Live Search (optional; on when `XAI_API_KEY` is set)
+- `src/newslet/x_grok.py` — X (Twitter) posts via xAI Grok `x_search` (the email's "From X" section + ranking candidates; on when `XAI_API_KEY` is set)
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers
 - `src/newslet/rank.py` — Anthropic call with prompt caching

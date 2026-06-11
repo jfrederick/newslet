@@ -105,6 +105,32 @@ def render_email(
             }
         )
 
+    # The "From X" section: every post the X source fetched for this issue,
+    # votable like picks. A post that also won a ranked-pick slot is skipped
+    # here — unlike the web block's acceptable pick overlap, an X post that
+    # repeats would be the *identical* item twice in one email.
+    pick_urls = {c["url"] for c in ctx_picks}
+    ctx_x = []
+    for x in issue.x_posts:
+        url_str = str(x.url)
+        if url_str in pick_urls:
+            continue
+        up_link, down_link = _rate_links(url_str)
+        ctx_x.append(
+            {
+                "url": url_str,
+                "title": x.title,
+                # Show the full text only when the title had to truncate it;
+                # otherwise the body would just repeat the headline.
+                "text": x.text if x.text and x.text != x.title else "",
+                "author": x.author,
+                "likes": x.likes,
+                "reposts": x.reposts,
+                "up_link": up_link,
+                "down_link": down_link,
+            }
+        )
+
     ctx_discoveries = []
     for d in issue.discoveries:
         feed_str = str(d.feed_url)
@@ -132,6 +158,7 @@ def render_email(
         date=display_date,
         picks=ctx_picks,
         web_articles=ctx_web,
+        x_posts=ctx_x,
         intro=issue.intro,
         discoveries=ctx_discoveries,
         # Generic link to the newslet homepage (the rich, browse-everything

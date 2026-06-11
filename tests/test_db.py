@@ -10,7 +10,15 @@ import moto
 import pytest
 
 from newslet.config import settings
-from newslet.contracts import Article, Discovery, FeedbackRow, Issue, Pick, WebArticle
+from newslet.contracts import (
+    Article,
+    Discovery,
+    FeedbackRow,
+    Issue,
+    Pick,
+    WebArticle,
+    XPost,
+)
 
 
 @pytest.fixture
@@ -266,6 +274,48 @@ def test_issue_round_trips_web_articles(dynamo: None) -> None:
     assert got.web_articles[0].source == "Hacker News"
     # The second has no engagement data and still round-trips.
     assert got.web_articles[1].points is None
+
+
+def test_issue_round_trips_x_posts(dynamo: None) -> None:
+    """x_posts (with engagement metadata) survive a put/get round trip."""
+    from newslet import db
+
+    issue = Issue(
+        date="2026-05-20",
+        picks=[],
+        created_at=datetime.now(UTC),
+        x_posts=[
+            XPost(url="https://x.com/alice/status/1", title="Hot take",
+                  text="Hot take", author="alice", likes=980, reposts=240),
+            XPost(url="https://x.com/bob/status/2", title="@bob on X"),
+        ],
+    )
+    db.put_issue(issue)
+    got = db.get_issue("2026-05-20")
+
+    assert got is not None
+    assert len(got.x_posts) == 2
+    assert got.x_posts[0].author == "alice"
+    assert got.x_posts[0].likes == 980
+    assert got.x_posts[0].reposts == 240
+    # The second has no engagement data and still round-trips.
+    assert got.x_posts[1].likes is None
+
+
+def test_get_issue_tolerates_legacy_issue_without_x_posts(dynamo: None) -> None:
+    """An issue persisted before x_posts existed still loads."""
+    from newslet import db
+
+    db._t_issues().put_item(
+        Item={
+            "date": "2026-05-02",
+            "picks_json": "[]",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    got = db.get_issue("2026-05-02")
+    assert got is not None
+    assert got.x_posts == []
 
 
 def test_get_issue_tolerates_legacy_issue_without_web_articles(dynamo: None) -> None:

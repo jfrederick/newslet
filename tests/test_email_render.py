@@ -10,7 +10,7 @@ import pytest
 
 from newslet import themes, tokens
 from newslet.config import settings
-from newslet.contracts import Discovery, Issue, Pick, WebArticle
+from newslet.contracts import Discovery, Issue, Pick, WebArticle, XPost
 from newslet.email_render import render_email
 
 BASE_URL = "https://api.example.test"
@@ -342,3 +342,78 @@ def test_text_size_scales_inline_font_sizes(stub_sign: None) -> None:
     # Out-of-range values are clamped, not applied raw.
     _, html = render_email(issue, BASE_URL, text_size=10_000)
     assert "font-size:26px" in html  # round(17 * 1.5)
+
+
+def test_x_posts_section_renders_with_vote_links(stub_sign: None) -> None:
+    issue = Issue(
+        date=DATE,
+        picks=[_pick("https://a.example.com/1", "AlphaTitle", "B")],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        x_posts=[
+            XPost(
+                url="https://x.com/alice/status/1",
+                title="A sharp take on compilers",
+                text="A sharp take on compilers",
+                author="alice",
+                likes=980,
+                reposts=240,
+            ),
+        ],
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "From X" in html
+    assert "A sharp take on compilers" in html
+    assert "https://x.com/alice/status/1" in html
+    assert "@alice" in html
+    assert "980 likes" in html
+    assert "240 reposts" in html
+    # X posts are votable from the email via the same signed /rate links.
+    encoded = quote("https://x.com/alice/status/1", safe="")
+    assert (f"a={encoded}".replace("&", "&amp;") in html) or (f"a={encoded}" in html)
+    assert html.count("v=up") == 2  # one for the pick, one for the X post
+    assert html.count("v=down") == 2
+
+
+def test_x_posts_section_omitted_when_empty(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "AlphaTitle", "B")])
+    _, html = render_email(issue, BASE_URL)
+    assert "From X" not in html
+
+
+def test_x_post_that_won_a_pick_slot_is_not_repeated(stub_sign: None) -> None:
+    """An X post that the ranker picked appears once (as the pick), not twice."""
+    issue = Issue(
+        date=DATE,
+        picks=[
+            Pick(url="https://x.com/alice/status/1", title="Picked post",
+                 blurb="b", source="X", score=0.9),
+        ],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        x_posts=[
+            XPost(url="https://x.com/alice/status/1", title="Picked post",
+                  text="Picked post", author="alice"),
+        ],
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "From X" not in html  # the only X post was deduped into the picks
+    assert html.count("https://x.com/alice/status/1") >= 1
+    assert html.count("v=up") == 1
+
+
+def test_x_post_full_text_shown_only_when_title_truncates(stub_sign: None) -> None:
+    long_text = "word " * 40  # > 100 chars, so the title truncates
+    long_text = long_text.strip()
+    issue = Issue(
+        date=DATE,
+        picks=[],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        x_posts=[
+            XPost(url="https://x.com/a/status/1", title=long_text[:100] + "…",
+                  text=long_text, author="a"),
+            XPost(url="https://x.com/a/status/2", title="Short post",
+                  text="Short post", author="a"),
+        ],
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert long_text in html  # full text rendered for the truncated one
+    assert html.count("Short post") == 1  # not repeated as body text

@@ -39,7 +39,9 @@ and the admin console tells you which ones you can change yourself.
 
 Once a day, daily scoop sends you one email: a short, ranked list of stories it
 thinks you'll want, each with a one-line note on why it made the cut, plus a
-couple of sources you don't follow yet that might be worth adding.
+couple of sources you don't follow yet that might be worth adding. If you've
+connected X (Twitter), the email also carries a "From X" section with the
+recent posts that matched your interests.
 
 The email is the point of the whole product. It is meant to be read in a few
 minutes over coffee and then closed. Every story carries a thumbs-up and a
@@ -73,9 +75,10 @@ The send is idempotent on a `sent_at` marker rather than mere existence of the
 day's record, so if delivery half-fails (the issue is stored but the email
 provider is down), the next scheduled retry recovers cleanly instead of
 skipping the day or sending an empty issue. The body length follows your
-`max_rss_articles` and `max_web_articles` settings. Every enrichment step
-(summary, discoveries, the web block) is best-effort: any one of them can fail
-and the email still goes out, just without that piece.
+`max_rss_articles`, `max_web_articles`, and `max_x_articles` settings. Every
+enrichment step (summary, discoveries, the web block, the X source) is
+best-effort: any one of them can fail and the email still goes out, just
+without that piece.
 
 :::
 
@@ -223,8 +226,9 @@ story of the day wins regardless of where it came from. You don't manage a
 separate inbox per source; they compete on equal footing for a place in your
 email.
 
-The sources are: your RSS feeds, Hacker News, the open web, and any email
-newsletters you've pointed at daily scoop. Each is covered below.
+The sources are: your RSS feeds, Hacker News, the open web, any email
+newsletters you've pointed at daily scoop, and — optionally — X (Twitter).
+Each is covered below.
 
 :::tier little
 
@@ -239,7 +243,8 @@ ranked together, and the best rise to the top.
 
 `digest.run_digest()` assembles the candidate pool: RSS via `feeds.fetch_recent`
 (a 24-hour `since` window plus an injected `is_seen` check), Hacker News via
-`hn.fetch_hn_articles`, and newsletter links via `db.recent_inbox_articles`.
+`hn.fetch_hn_articles`, newsletter links via `db.recent_inbox_articles`, and X
+posts via `x_grok.fetch_x_posts`.
 The pool is de-duplicated by URL (HN and an RSS feed often carry the same link),
 and every non-RSS source is best-effort and seen-filtered, so a source outage
 can't block the send or resurface yesterday's stories. A shared seen-store with
@@ -386,6 +391,46 @@ switched on once by hand after deploy.
 
 :::
 
+### X (Twitter)
+
+If you give daily scoop an xAI API key, it also pulls recent posts from X that
+match your interests. There is no list of accounts to follow — the search is
+driven by your profile, the same interests text everything else uses.
+
+The posts you get appear in two places. Every fetched post lands in the
+email's own **"From X" section** (and the homepage's X tab), so the day's
+posts always reach you. Each post also competes in the main ranking, so an
+exceptional one can win a spot among the top picks — in which case it shows
+up there instead of being repeated in the section.
+
+The admin console has two controls: a toggle to pause the source (it's a paid,
+per-use API) and a cap on how many posts to fetch each day.
+
+:::tier little
+
+X's own API has no usable free tier, so daily scoop goes through xAI's Grok,
+which can search X directly and bills per use — a day's worth of posts costs
+cents. With no key configured the source simply stays off and everything else
+works as before. Posts you've already been shown are filtered out the same way
+stories are, and a thumbs-down on a post teaches the ranker just like any
+other vote.
+
+:::
+
+:::tier medium
+
+`x_grok.fetch_x_posts()` calls xAI's Responses API with the server-side
+`x_search` tool and a profile-distilled query, parsing the reply into `XPost`
+objects (text, author, likes, reposts). The digest stores them on the issue
+(`Issue.x_posts`, rendered as the email's "From X" section and the homepage's
+X tab) and converts them via `x_grok.as_articles()` into `source="X"`
+candidates for the ranking pool. The source is best-effort and seen-filtered
+like HN and newsletters: no `XAI_API_KEY`, an API failure, or the admin
+toggle being off all degrade to an empty source without blocking the send.
+`max_x_articles` (default 15) caps both the fetch and the section length.
+
+:::
+
 ### Discoveries — sources you don't follow yet
 
 At the bottom of the email, daily scoop sometimes suggests a source you don't
@@ -428,10 +473,12 @@ concern: the homepage skips them entirely.
 The email is the short list. The homepage is the long one — a richer place to
 browse when you want more than the morning's handful.
 
-It shows a large, ranked spread of stories plus an open-web block, each as a
-card you can vote on. A thumbs-up sticks; a thumbs-down makes the story vanish
-from the page for good. There's a date header so you always know how fresh the
-page is, and a research box (covered next) for chasing a topic on demand.
+It shows a large, ranked spread of stories plus an open-web block and a
+"From X" section, each as a card you can vote on. A thumbs-up sticks; a
+thumbs-down makes the story vanish from the page for good. Tabs at the top
+let you switch between everything and just the X posts. There's a date header
+so you always know how fresh the page is, and a research box (covered next)
+for chasing a topic on demand.
 
 There is no refresh button, on purpose. The homepage rebuilds itself every
 morning, a little before the email goes out, and if you visit and the page
@@ -453,8 +500,10 @@ edition is ready, and reloads itself.
 The homepage (`GET /`, `read.html.j2`) renders a standalone aggregation stored
 under the reserved issue key `"home"`, built by the digest's home mode
 (`_run_home`) with generous fixed counts (around 40 ranked picks and 20 web
-articles). Unlike the daily email it ignores the seen-store (it's a browse
-surface, not a deduped feed) and skips discovery. A scheduled EventBridge rule
+articles, plus the X posts when that source is on). Unlike the daily email it
+ignores the seen-store (it's a browse surface, not a deduped feed) and skips
+discovery. The "X posts" tab filters cards by source across every section, so
+an X post that won a ranked-pick slot shows there too. A scheduled EventBridge rule
 rebuilds it daily at **09:45 UTC**, 15 minutes before the email. On demand, when
 the stored edition is missing or not from today, the client posts to
 `/api/home/refresh` (an async digest `{"home": true}` invoke), polls

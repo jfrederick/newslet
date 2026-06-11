@@ -10,12 +10,13 @@ This replaces xAI's older "Live Search" API (``search_parameters`` on
 ``/v1/chat/completions``), which xAI retired on 2026-01-12 — those requests now
 return ``410 Gone``. See https://docs.x.ai/developers/tools/x-search.
 
-Shape mirrors the other ranking-pool sources (:mod:`newslet.hn`,
-:mod:`newslet.newsletters`): :func:`fetch_x_articles` returns ``list[Article]``
-that joins the digest's candidate pool, so X posts compete with RSS/HN for the
-day's picks. Like those sources it carries no admin knob — it is simply on
-whenever an ``XAI_API_KEY`` is configured and degrades to an empty list
-otherwise.
+:func:`fetch_x_posts` returns ``list[XPost]`` — the digest stores them on the
+issue (the email's "From X" section, the web view's X tab) *and* feeds them to
+the ranking pool via :func:`as_articles`, so X posts both always appear and
+compete with RSS/HN for the day's picks. :func:`fetch_x_articles` is the thin
+fetch-and-convert composition of the two for callers that only want ranking
+candidates. The source is on whenever an ``XAI_API_KEY`` is configured and
+degrades to an empty list otherwise.
 
 Best-effort throughout: a missing key, a network/parse error, or an empty reply
 yields ``[]`` rather than raising — X must never block a send. The network edge
@@ -34,7 +35,7 @@ from urllib.request import Request, urlopen
 from pydantic import ValidationError
 
 from .config import settings
-from .contracts import Article
+from .contracts import Article, XPost
 from .search_common import extract_json_object  # shared JSON-from-model-reply helper
 
 logger = logging.getLogger(__name__)
@@ -128,51 +129,78 @@ def _output_text(response: dict) -> str | None:
     return "\n".join(parts) if parts else None
 
 
-def _summary_for(post: dict) -> str:
+def _summary_for(post: XPost) -> str:
     """A ranking-useful one-liner: engagement signal plus the post text."""
-    author = str(post.get("author") or "?").lstrip("@")
-    likes = post.get("likes") or 0
-    reposts = post.get("reposts") or 0
-    head = f"{likes} likes, {reposts} reposts on X (by @{author})."
-    text = " ".join(str(post.get("text") or "").split())
-    if text:
+    head = (
+        f"{post.likes or 0} likes, {post.reposts or 0} reposts on X "
+        f"(by @{post.author or '?'})."
+    )
+    if post.text:
+        text = post.text
         head += " " + (text[:240] + "…" if len(text) > 240 else text)
     return head
 
 
-def _title_for(post: dict) -> str:
+def _title_for(text: str, author: str) -> str:
     """Posts have no title; derive a readable one from the text or handle."""
-    text = " ".join(str(post.get("text") or "").split())
     if text:
         return text[:100] + "…" if len(text) > 100 else text
-    author = str(post.get("author") or "").lstrip("@")
     return f"@{author} on X" if author else "Post on X"
 
 
-def _post_to_article(post: dict, *, now: datetime) -> Article | None:
-    """Build a ranking :class:`Article` from one Grok post object.
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
-    Returns ``None`` (and logs) if the post lacks a usable url. ``published``
-    defaults to ``now`` — Grok rarely returns a reliable timestamp, and the
-    ranker uses the engagement-rich ``summary``, not the date.
+
+def _to_xpost(post: dict) -> XPost | None:
+    """Build an :class:`XPost` from one raw Grok post object.
+
+    Returns ``None`` (and logs) if the post lacks a usable url or fails
+    validation — one garbled post must not sink the batch.
     """
     url = post.get("url")
     if not isinstance(url, str) or not url.strip():
         return None
+    text = " ".join(str(post.get("text") or "").split())
+    author = str(post.get("author") or "").lstrip("@")
     try:
-        return Article(
+        return XPost(
             url=url.strip(),
-            title=_title_for(post),
-            summary=_summary_for(post),
-            source="X",
-            published=now,
+            title=_title_for(text, author),
+            text=text,
+            author=author,
+            likes=_int_or_none(post.get("likes")),
+            reposts=_int_or_none(post.get("reposts")),
         )
     except ValidationError as exc:
-        logger.info("x: skipping unrankable post %s: %s", url, exc)
+        logger.info("x: skipping unusable post %s: %s", url, exc)
         return None
 
 
-def fetch_x_articles(
+def as_articles(posts: list[XPost], *, now: datetime | None = None) -> list[Article]:
+    """Convert posts into ranking-pool :class:`Article` candidates.
+
+    ``published`` defaults to ``now`` — Grok rarely returns a reliable
+    timestamp, and the ranker uses the engagement-rich ``summary``, not the
+    date.
+    """
+    now = now or datetime.now(UTC)
+    return [
+        Article(
+            url=p.url,
+            title=p.title,
+            summary=_summary_for(p),
+            source="X",
+            published=now,
+        )
+        for p in posts
+    ]
+
+
+def fetch_x_posts(
     query: str,
     *,
     max_results: int = 15,
@@ -181,8 +209,8 @@ def fetch_x_articles(
     model: str | None = None,
     complete: Callable[[dict, str], dict] | None = None,
     now: datetime | None = None,
-) -> list[Article]:
-    """Return recent on-profile X posts as ranking candidates, best-effort.
+) -> list[XPost]:
+    """Return recent on-profile X posts, best-effort.
 
     ``query`` is a profile-distilled request (the digest reuses the same
     distillation as the web-search block). ``api_key``/``model`` default to the
@@ -244,19 +272,33 @@ def fetch_x_articles(
 
     raw = payload_out.get("posts", []) if isinstance(payload_out, dict) else []
 
-    out: list[Article] = []
+    out: list[XPost] = []
     seen_urls: set[str] = set()
     for item in raw:
         if not isinstance(item, dict):
             continue
-        article = _post_to_article(item, now=now)
-        if article is None:
+        post = _to_xpost(item)
+        if post is None:
             continue
-        key = str(article.url)
+        key = str(post.url)
         if key in seen_urls:
             continue
         seen_urls.add(key)
-        out.append(article)
+        out.append(post)
         if len(out) >= max_results:
             break
     return out
+
+
+def fetch_x_articles(
+    query: str,
+    *,
+    now: datetime | None = None,
+    **kwargs,
+) -> list[Article]:
+    """Fetch posts and convert them straight to ranking candidates.
+
+    Convenience composition of :func:`fetch_x_posts` + :func:`as_articles`
+    for callers that don't need the stored-post shape.
+    """
+    return as_articles(fetch_x_posts(query, now=now, **kwargs), now=now)

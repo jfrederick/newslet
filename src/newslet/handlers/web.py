@@ -232,8 +232,8 @@ def product_guide_markdown() -> Response:
 # ---------------------------------------------------------------------------
 
 
-def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
-    """Build (pick_cards, web_cards, total) with sticky vote state.
+def _home_cards(issue) -> tuple[list[dict], list[dict], list[dict], int]:
+    """Build (pick_cards, web_cards, x_cards, total) with sticky vote state.
 
     Articles already downvoted are dropped entirely — a downvote makes an
     article disappear from the page (and stay gone on reload).
@@ -257,7 +257,22 @@ def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
         for w in issue.web_articles
         if votes.get(str(w.url)) != "down"
     ]
-    return pick_cards, web_cards, len(pick_cards) + len(web_cards)
+    # The "From X" section. A post that also won a ranked-pick slot is
+    # skipped (it would be the identical item twice); the X tab still shows
+    # it because the tab filters by source across every section.
+    pick_urls = {str(p.url) for p in issue.picks}
+    x_cards = [
+        _article_card(
+            url=x.url, title=x.title,
+            # Repeat the text only where the title had to truncate it.
+            blurb=x.text if x.text and x.text != x.title else "",
+            source="X", score=None, rating=votes.get(str(x.url), ""),
+            author=x.author, likes=x.likes, reposts=x.reposts,
+        )
+        for x in issue.x_posts
+        if str(x.url) not in pick_urls and votes.get(str(x.url)) != "down"
+    ]
+    return pick_cards, web_cards, x_cards, len(pick_cards) + len(web_cards) + len(x_cards)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -278,11 +293,12 @@ def home(
 
     pick_cards: list[dict] = []
     web_cards: list[dict] = []
+    x_cards: list[dict] = []
     total = 0
     subject = intro = ""
     created_iso = ""
     if issue is not None:
-        pick_cards, web_cards, total = _home_cards(issue)
+        pick_cards, web_cards, x_cards, total = _home_cards(issue)
         subject, intro = issue.subject, issue.intro
         created_iso = issue.created_at.isoformat()
 
@@ -311,6 +327,7 @@ def home(
         intro=intro,
         picks=pick_cards,
         web_articles=web_cards,
+        x_posts=x_cards,
         total=total,
         has_content=issue is not None,
         stale=stale,
@@ -693,13 +710,18 @@ def _vote_lookup(issue) -> dict[str, str]:
     One batched read so the rich view can render sticky +/- state — making
     the *effect* of a vote visible after it is cast.
     """
-    urls = [str(p.url) for p in issue.picks] + [str(w.url) for w in issue.web_articles]
+    urls = (
+        [str(p.url) for p in issue.picks]
+        + [str(w.url) for w in issue.web_articles]
+        + [str(x.url) for x in issue.x_posts]
+    )
     return db.feedback_ratings(urls, issue.date)
 
 
 def _article_card(*, url, title, blurb, source, score, rating,
-                  points=None, comments=None, comments_url="") -> dict:
-    """Normalize a pick or web article into the template's card shape."""
+                  points=None, comments=None, comments_url="",
+                  author="", likes=None, reposts=None) -> dict:
+    """Normalize a pick, web article, or X post into the template's card shape."""
     return {
         "url": str(url),
         "title": title,
@@ -710,6 +732,9 @@ def _article_card(*, url, title, blurb, source, score, rating,
         "points": points,
         "comments": comments,
         "comments_url": comments_url or "",
+        "author": author or "",
+        "likes": likes,
+        "reposts": reposts,
     }
 
 

@@ -2,7 +2,8 @@
 
 Seeds a moto-backed DynamoDB with a realistic issue (40 ranked picks + 20
 "from around the web" articles, including Hacker News items with engagement
-metadata), drives the real FastAPI app through a TestClient, and writes the
+metadata, + 8 "From X" posts so the X tab has content), drives the real
+FastAPI app through a TestClient, and writes the
 rendered page so you can eyeball the layout — the web-view analogue of
 ``scripts/dry_run.py`` for the email.
 """
@@ -35,7 +36,14 @@ import moto  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from newslet.config import settings  # noqa: E402
-from newslet.contracts import Config, FeedbackRow, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import (  # noqa: E402
+    Config,
+    FeedbackRow,
+    Issue,
+    Pick,
+    WebArticle,
+    XPost,
+)
 
 _SOURCES = ["The Verge", "Stratechery", "Hacker News", "Nature", "LessWrong", "Quanta"]
 
@@ -72,6 +80,22 @@ def _make_issue(date: str) -> Issue:
                 ),
             )
         )
+    x_posts = []
+    for i in range(8):
+        text = (
+            f"X post #{i + 1}: a substantive take on something in your profile, "
+            "with just enough detail to be worth the click."
+        )
+        x_posts.append(
+            XPost(
+                url=f"https://x.com/poster{i}/status/{1700000000000000000 + i}",
+                title=text if len(text) <= 100 else text[:100] + "…",
+                text=text,
+                author=f"poster{i}",
+                likes=2400 - i * 150,
+                reposts=380 - i * 30,
+            )
+        )
     return Issue(
         date=date,
         picks=picks,
@@ -82,6 +106,7 @@ def _make_issue(date: str) -> Issue:
             "pulled live from the open web. Vote to tune tomorrow's ranking."
         ),
         web_articles=web,
+        x_posts=x_posts,
     )
 
 

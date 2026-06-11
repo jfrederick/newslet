@@ -197,7 +197,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     monkeypatch.setattr(hn_mod, "fetch_hn_articles", lambda *a, **k: [])
     monkeypatch.setattr(websearch_mod, "search_web", lambda *a, **k: [])
     # The X source reaches xAI in production; stub to an offline empty too.
-    monkeypatch.setattr(x_grok_mod, "fetch_x_articles", lambda *a, **k: [])
+    monkeypatch.setattr(x_grok_mod, "fetch_x_posts", lambda *a, **k: [])
 
 
 def test_full_pipeline_handler_end_to_end(aws, monkeypatch):
@@ -491,7 +491,7 @@ def test_handler_sends_even_with_zero_picks(aws, monkeypatch):
     # means none — otherwise a source could fill the pool and force a rank call.
     monkeypatch.setattr(hn, "fetch_hn_articles", lambda *a, **k: [])
     monkeypatch.setattr(websearch, "search_web", lambda *a, **k: [])
-    monkeypatch.setattr(x_grok, "fetch_x_articles", lambda *a, **k: [])
+    monkeypatch.setattr(x_grok, "fetch_x_posts", lambda *a, **k: [])
 
     sent: list[dict] = []
     monkeypatch.setattr(digest, "_send_email", lambda s, h: sent.append({"s": s, "h": h}))
@@ -660,19 +660,20 @@ def test_run_digest_merges_subscribed_newsletters(env, monkeypatch):
 
 
 def test_run_digest_merges_x_posts(env, monkeypatch):
-    """X posts join the ranking pool, best-effort and seen-filtered like HN."""
+    """X posts join the ranking pool, best-effort and seen-filtered like HN —
+    and the fresh ones are stored on the issue for the From X section."""
     from newslet import feeds
-    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.contracts import Article, Pick, Profile, RankResponse, XPost
     from newslet.handlers import digest
 
     rss = Article(url="https://feed.example/rss-1", title="RSS One", summary="s",
                   source="Feed", published=datetime.now(UTC))
     monkeypatch.setattr(feeds, "fetch_recent", lambda *a, **k: [rss])
 
-    x_fresh = Article(url="https://x.com/a/status/1", title="Fresh Post", summary="",
-                      source="X", published=datetime.now(UTC))
-    x_seen = Article(url="https://x.com/a/status/2", title="Old Post", summary="",
-                     source="X", published=datetime.now(UTC))
+    x_fresh = XPost(url="https://x.com/a/status/1", title="Fresh Post",
+                    text="Fresh Post", author="a", likes=10, reposts=2)
+    x_seen = XPost(url="https://x.com/a/status/2", title="Old Post",
+                   text="Old Post", author="a")
 
     seen_candidates: list[list[str]] = []
 
@@ -702,12 +703,14 @@ def test_run_digest_merges_x_posts(env, monkeypatch):
     assert "https://x.com/a/status/1" in pool
     assert "https://x.com/a/status/2" not in pool
     assert "https://feed.example/rss-1" in pool
+    # The fresh post is also stored on the issue for the From X section.
+    assert [str(x.url) for x in issue.x_posts] == ["https://x.com/a/status/1"]
 
 
 def test_run_digest_skips_x_when_disabled(env, monkeypatch):
     """x_enabled=False must not call the X source at all."""
     from newslet import feeds
-    from newslet.contracts import Article, Pick, Profile, RankResponse
+    from newslet.contracts import Article, Pick, Profile, RankResponse, XPost
     from newslet.handlers import digest
 
     rss = Article(url="https://feed.example/rss-1", title="RSS One", summary="s",
@@ -718,8 +721,8 @@ def test_run_digest_skips_x_when_disabled(env, monkeypatch):
 
     def fake_x(*_a, **_k):
         called["x"] += 1
-        return [Article(url="https://x.com/a/status/1", title="X", summary="",
-                        source="X", published=datetime.now(UTC))]
+        return [XPost(url="https://x.com/a/status/1", title="X", text="X",
+                      author="a")]
 
     pools: list[list[str]] = []
 

@@ -63,6 +63,25 @@ class WebArticle(BaseModel):
     comments_url: str = ""
 
 
+class XPost(BaseModel):
+    """One X (Twitter) post surfaced by the Grok ``x_search`` source.
+
+    Stored on the :class:`Issue` so the email's "From X" section and the web
+    view's X tab show the posts the source actually fetched — regardless of
+    whether any of them won a ranked-pick slot. ``title`` is a display title
+    derived from the post text (posts have no titles); ``text`` keeps the
+    full post body for when the title had to be truncated. Engagement fields
+    are optional because Grok does not always return them.
+    """
+
+    url: HttpUrl
+    title: str
+    text: str = ""
+    author: str = Field(default="", description="Bare handle, no leading @")
+    likes: int | None = None
+    reposts: int | None = None
+
+
 class Discovery(BaseModel):
     """A new candidate source/article surfaced outside the user's feeds.
 
@@ -99,6 +118,11 @@ class Issue(BaseModel):
     # addition to ``picks``; the email never renders them. Optional with a
     # default so issues persisted before this field existed still load.
     web_articles: list[WebArticle] = Field(default_factory=list)
+    # Every X post the source fetched for this issue. Rendered as the email's
+    # "From X" section and the web view's X tab, so X posts appear even when
+    # none out-rank the RSS/HN pool. Optional like web_articles so issues
+    # persisted before this field existed still load.
+    x_posts: list[XPost] = Field(default_factory=list)
 
 
 class FeedbackRow(BaseModel):
@@ -159,8 +183,10 @@ class Config(BaseModel):
     - ``x_enabled`` — whether the X (Twitter) source runs. It also requires an
       ``XAI_API_KEY`` to be configured; turning this off disables X regardless
       of the key, so the user can pause the paid source without removing it.
-    - ``max_x_articles`` — how many X posts to pull into the ranking pool when
-      the source is enabled.
+    - ``max_x_articles`` — how many X posts to fetch when the source is
+      enabled. They join the ranking pool *and* are stored on the issue as its
+      "From X" section, so this also caps that section's length in the email
+      and the web view's X tab.
     - ``theme`` — visual theme for the web pages and the daily email. A plain
       string (not a Literal) so this module stays decoupled from
       ``newslet.themes``; consumers resolve it via ``themes.get``, which falls
