@@ -9,12 +9,15 @@ candidate list can change daily without invalidating the cache.
 from __future__ import annotations
 
 import json
+import logging
 
 import anthropic
 from pydantic import ValidationError
 
 from .config import settings
 from .contracts import Article, FeedbackRow, RankResponse
+
+log = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You rank candidate news articles for a personalized daily email digest.
@@ -151,5 +154,19 @@ def rank(
         except ValidationError:
             raise first_err from None
 
-    top = sorted(parsed.picks, key=lambda p: p.score, reverse=True)[:max_picks]
+    # Ground the picks to the candidate pool. The model can otherwise echo an
+    # article from its own training data — a plausible-looking but *stale* story
+    # that was never in today's fetched candidates — which would bypass every
+    # upstream freshness filter (the 24h RSS window, HN's recency cap). Keep
+    # only picks whose URL is one we actually supplied.
+    candidate_urls = {str(c.url) for c in candidates}
+    grounded = [p for p in parsed.picks if str(p.url) in candidate_urls]
+    dropped = len(parsed.picks) - len(grounded)
+    if dropped:
+        log.warning(
+            "rank: dropped %d ungrounded pick(s) not present in the candidate pool",
+            dropped,
+        )
+
+    top = sorted(grounded, key=lambda p: p.score, reverse=True)[:max_picks]
     return RankResponse(picks=top)
