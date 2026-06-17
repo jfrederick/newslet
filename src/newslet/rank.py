@@ -51,6 +51,26 @@ def _build_system_prompt(min_picks: int, max_picks: int) -> str:
     return _SYSTEM_PROMPT.format(min_picks=min_picks, max_picks=max_picks)
 
 
+# Each pick serializes to a JSON object with a url, title, one-sentence blurb,
+# source, and score. ``max_tokens`` must hold the whole array or the reply is
+# truncated into invalid JSON — which fails to parse, fails the retry the same
+# way, and raises, aborting the caller. The daily email asks for ~10 picks (fits
+# 4096), but the homepage asks for 25-40 (see digest._HOME_RANK_PICKS), so a
+# fixed 4096 silently broke the homepage rebuild. Size the budget to the request
+# instead: a generous per-pick allowance (long URLs + pretty-printed JSON
+# inflate it), a floor that preserves the email's behavior, and a cap that stays
+# under the SDK's non-streaming timeout guard (~16k).
+_RANK_TOKENS_PER_PICK = 300
+_RANK_MIN_OUTPUT_TOKENS = 4096
+_RANK_MAX_OUTPUT_TOKENS = 16000
+
+
+def _rank_output_tokens(max_picks: int) -> int:
+    """Output-token budget scaled to the requested pick count."""
+    budget = 1024 + max_picks * _RANK_TOKENS_PER_PICK
+    return max(_RANK_MIN_OUTPUT_TOKENS, min(_RANK_MAX_OUTPUT_TOKENS, budget))
+
+
 def _build_stable_block(profile_md: str, feedback: list[FeedbackRow]) -> str:
     """Format the profile + feedback into the cache-stable user block."""
     lines = ["# User profile", profile_md.strip(), "", "# Recent feedback"]
@@ -105,6 +125,7 @@ def rank(
     system_prompt = _build_system_prompt(min_picks, max_picks)
     stable_block = _build_stable_block(profile_md, feedback)
     candidates_block = _format_candidates(candidates)
+    output_tokens = _rank_output_tokens(max_picks)
 
     messages: list[dict] = [
         {
@@ -123,10 +144,18 @@ def rank(
     model = settings().claude_model
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=output_tokens,
         system=system_prompt,
         messages=messages,
     )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        # Truncated mid-array → the JSON below won't parse. Name it: this was the
+        # silent cause of stale homepage rebuilds when the budget was fixed.
+        log.warning(
+            "rank: hit max_tokens (%d) for max_picks=%d; reply likely truncated",
+            output_tokens,
+            max_picks,
+        )
     text = response.content[0].text
 
     try:
@@ -144,7 +173,7 @@ def rank(
         )
         retry = client.messages.create(
             model=model,
-            max_tokens=4096,
+            max_tokens=output_tokens,
             system=system_prompt,
             messages=messages,
         )

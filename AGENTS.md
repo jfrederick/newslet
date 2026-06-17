@@ -152,6 +152,15 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   upstream recency filter (the 24h RSS window, HN's recency cap) and surface
   stale content in the email and on the homepage. Preserve this when changing
   the rank output path.
+- **Rank output budget scales with pick count:** `rank.rank` sizes the
+  Anthropic call's `max_tokens` to `max_picks` (`rank._rank_output_tokens`), not
+  a fixed value. The homepage asks for far more picks than the email
+  (`digest._HOME_RANK_PICKS` is 40 vs. the email's ~10); a fixed budget that fit
+  the email truncated the homepage's reply into invalid JSON, which fails to
+  parse, fails the retry the same way, and raises — and because the rank call in
+  `run_digest` isn't best-effort, that aborted the whole homepage rebuild, so it
+  silently stopped refreshing. Keep the budget proportional to `max_picks` if
+  you change either the rank call or the homepage pick counts.
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model

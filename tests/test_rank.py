@@ -284,3 +284,32 @@ def test_system_prompt_states_min_picks(sample_candidates, sample_feedback):
     assert "at least 5" in system
     # The JSON schema braces must survive .format() intact.
     assert '"picks"' in system
+
+
+def test_output_token_budget_scales_with_max_picks(
+    sample_candidates, sample_feedback
+):
+    """A large pick request (the homepage asks for dozens) gets a bigger
+    ``max_tokens`` than a small one (the daily email asks for ~10).
+
+    Regression: a fixed 4096-token budget truncated the homepage's 25-40-pick
+    reply into invalid JSON, which failed to parse, failed the retry the same
+    way, and raised — aborting the homepage rebuild so it never refreshed.
+    """
+    small = FakeClient([_picks_json([])])
+    rank("p", sample_feedback, sample_candidates, client=small, max_picks=10)
+    small_budget = small.calls[0]["max_tokens"]
+
+    large = FakeClient([_picks_json([])])
+    rank("p", sample_feedback, sample_candidates, client=large, max_picks=40)
+    large_budget = large.calls[0]["max_tokens"]
+
+    assert large_budget > small_budget
+    # 40 picks (~300 tokens each) must not be capped at the old fixed 4096.
+    assert large_budget >= 40 * 300
+    # The retry must use the same generous budget, not fall back to a small one.
+    retry = FakeClient(["not json", _picks_json([])])
+    rank("p", sample_feedback, _candidates(["https://example.com/1"]),
+         client=retry, max_picks=40)
+    assert retry.calls[0]["max_tokens"] == retry.calls[1]["max_tokens"]
+    assert retry.calls[1]["max_tokens"] >= 40 * 300
