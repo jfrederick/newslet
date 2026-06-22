@@ -78,6 +78,53 @@ class Discovery(BaseModel):
     feed_url: HttpUrl = Field(description="RSS/Atom feed for the source")
 
 
+class XPost(BaseModel):
+    """One recent post shown on an account's discovery card.
+
+    A teaser, not a ranking candidate: it carries the post text and optional
+    engagement signal so the discover page can show *why* an account is worth
+    following. ``posted_at`` is best-effort (Grok rarely returns a reliable
+    timestamp); when present it lets the discovery filter drop posts outside
+    the recency window.
+    """
+
+    url: HttpUrl
+    text: str = ""
+    posted_at: datetime | None = None
+    likes: int | None = None
+    reposts: int | None = None
+
+
+class XAccount(BaseModel):
+    """An X (Twitter) account surfaced on the discover page.
+
+    ``handle`` is the bare username (no leading ``@``), lowercased so it is a
+    stable identity for dedup and for matching against the followed-accounts
+    set. ``posts`` carries the 1–3 recent teaser posts; discovery drops any
+    account with no recent post, so the list is non-empty in practice.
+    """
+
+    handle: str = Field(description="Bare username, no leading @, lowercased")
+    name: str = ""
+    bio: str = ""
+    url: HttpUrl = Field(description="Profile URL, https://x.com/<handle>")
+    reason: str = Field(default="", description="One line on why it is relevant")
+    posts: list[XPost] = Field(default_factory=list)
+
+
+class XFollow(BaseModel):
+    """An X account the user has chosen to follow from the discover page.
+
+    Stored so the account is excluded from future discovery (and could later
+    feed the X ranking source). ``handle`` is the bare, lowercased username —
+    the same identity key as :class:`XAccount.handle`.
+    """
+
+    handle: str
+    name: str = ""
+    followed_at: datetime
+
+
 class Issue(BaseModel):
     """A rendered daily issue persisted in DynamoDB."""
 

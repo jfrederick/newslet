@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +26,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from newslet import db, email_render, hn, newsletters, themes, tokens, websearch
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
+
+log = logging.getLogger(__name__)
 
 _TEMPLATES = Environment(
     loader=FileSystemLoader(str(Path(__file__).resolve().parent.parent / "templates")),
@@ -519,6 +522,94 @@ def send_now(admin_token: str | None = Cookie(default=None)) -> Response:
         Payload=json.dumps({"manual": True}),
     )
     return RedirectResponse(url="/admin?sent=1", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Discover — find new X (Twitter) accounts to follow
+# ---------------------------------------------------------------------------
+
+
+def _kick_x_discover() -> None:
+    """Async-invoke the digest Lambda to refresh the discover page's next page.
+
+    Best-effort and silent: a missing ``DIGEST_FUNCTION_NAME`` (e.g. local dev)
+    or an invoke hiccup must never break rendering the discover page — the page
+    just won't have a prefetched next page ready.
+    """
+    fn = settings().digest_function_name
+    if not fn:
+        return
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=fn,
+            InvocationType="Event",
+            Payload=json.dumps({"x_discover": True}),
+        )
+    except Exception as exc:  # noqa: BLE001 - background prefetch is best-effort
+        log.warning("could not kick x-discover refresh: %s", exc)
+
+
+@app.get("/discover", response_class=HTMLResponse)
+def discover(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
+    """Discover new X (Twitter) accounts to follow.
+
+    Shows a page of profile-matched accounts (active in the last 14 days, each
+    with a few recent posts) you don't already follow, with one-click follow
+    buttons. On visit it (a) promotes any background-prefetched "next" page —
+    so a page you didn't get to last time is shown as page 1 now — and (b)
+    kicks a fresh background refresh to prefetch the *next* page.
+    """
+    _require_admin(admin_token)
+    accounts = db.promote_x_discover()
+    followed = db.followed_x_handles()
+    # Filter client-side too: an account followed since the page was generated
+    # shouldn't linger (the follow button also removes it without a reload).
+    visible = [a for a in accounts if a.handle not in followed]
+    _kick_x_discover()
+    html = _TEMPLATES.get_template("discover.html.j2").render(
+        theme_css=_theme_css(),
+        accounts=visible,
+        has_content=bool(visible),
+        x_configured=bool(settings().xai_api_key),
+        follow_count=len(followed),
+    )
+    return HTMLResponse(html)
+
+
+@app.get("/api/discover/status")
+def discover_status(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
+    """Report whether the background-prefetched next page is ready.
+
+    The discover page polls this after kicking a refresh: when ``next_ready``
+    flips true it either reloads (to fill an empty first visit) or reveals the
+    "Next page" affordance."""
+    _require_admin(admin_token)
+    state = db.get_x_discover()
+    return JSONResponse(
+        {"next_ready": bool(state["next"]), "current_count": len(state["current"])}
+    )
+
+
+@app.post("/api/x/follow")
+def x_follow(
+    request: Request,
+    handle: str = Form(...),
+    name: str = Form(default=""),
+    admin_token: str | None = Cookie(default=None),
+) -> Response:
+    """Follow an X account from the discover page.
+
+    Persists the account to the followed set (which excludes it from future
+    discovery). Returns JSON for the fetch-based UI; falls back to a redirect
+    for a no-JS form post."""
+    _require_admin(admin_token)
+    bare = handle.strip().lstrip("@").strip()
+    if not bare:
+        raise HTTPException(status_code=400, detail="missing handle")
+    follow = db.add_x_follow(bare, name=name)
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"ok": True, "handle": follow.handle})
+    return RedirectResponse(url="/discover", status_code=303)
 
 
 # ---------------------------------------------------------------------------

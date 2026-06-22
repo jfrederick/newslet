@@ -930,6 +930,164 @@ def test_home_status_reports_freshness(client):
 
 
 # ---------------------------------------------------------------------------
+# Discover (X account discovery)
+# ---------------------------------------------------------------------------
+
+
+def _account(handle, *, name="", posts=None):
+    from newslet.contracts import XAccount, XPost
+
+    return XAccount(
+        handle=handle,
+        name=name or handle.title(),
+        bio=f"{handle} bio",
+        url=f"https://x.com/{handle}",
+        reason="relevant to you",
+        posts=posts
+        or [XPost(url=f"https://x.com/{handle}/status/1", text="a recent take", likes=9)],
+    )
+
+
+def test_discover_requires_admin(client):
+    r = client.get("/discover")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_discover_renders_accounts_and_promotes_next(client):
+    """A prefetched next page is promoted into view on visit (shown as page 1)."""
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    db.set_x_discover_next([_account("alice", name="Alice Researcher")])
+
+    r = client.get("/discover")
+    assert r.status_code == 200
+    assert "Alice Researcher" in r.text
+    assert "@alice" in r.text
+    assert "a recent take" in r.text
+    assert 'action="/api/x/follow"' in r.text
+    # The promoted page is now "current"; the next buffer is consumed.
+    state = db.get_x_discover()
+    assert [a.handle for a in state["current"]] == ["alice"]
+    assert state["next"] == []
+
+
+def test_discover_next_page_becomes_page_one_next_visit(client):
+    """If you don't get to the next page, it shows as page 1 next time."""
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    db.set_x_discover_next([_account("alice")])
+    assert "alice bio" in client.get("/discover").text  # page 1 = alice
+
+    # Background prefetch lands a fresh page; the user never clicked "next".
+    db.set_x_discover_next([_account("bob")])
+    r = client.get("/discover")
+    assert "bob bio" in r.text  # the prefetched page is now page 1
+    assert "alice bio" not in r.text
+
+
+def test_discover_hides_followed_accounts(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    db.add_x_follow("alice")
+    db.set_x_discover_next([_account("alice"), _account("bob")])
+
+    r = client.get("/discover")
+    assert r.status_code == 200
+    assert "bob bio" in r.text
+    assert "alice bio" not in r.text  # already followed → filtered out
+
+
+def test_discover_shows_key_notice_when_unconfigured(client):
+    """With no XAI key the page explains how to enable discovery."""
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/discover")
+    assert r.status_code == 200
+    assert "XAI_API_KEY" in r.text
+
+
+def test_discover_kicks_background_refresh(client, monkeypatch):
+    """Visiting /discover async-invokes the digest with {"x_discover": true}."""
+    import json
+
+    from newslet.config import settings
+    from newslet.handlers import web
+
+    monkeypatch.setenv("DIGEST_FUNCTION_NAME", "newslet-Digest-abc123")
+    settings.cache_clear()
+
+    calls: list[dict] = []
+
+    class _FakeLambda:
+        def invoke(self, **kwargs):
+            calls.append(kwargs)
+            return {"StatusCode": 202}
+
+    monkeypatch.setattr(web.boto3, "client", lambda svc, **_: _FakeLambda())
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/discover")
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["InvocationType"] == "Event"
+    assert json.loads(calls[0]["Payload"]) == {"x_discover": True}
+
+
+def test_discover_status_reports_next_ready(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/api/discover/status")
+    assert r.status_code == 200
+    assert r.json()["next_ready"] is False
+
+    db.set_x_discover_next([_account("alice")])
+    r = client.get("/api/discover/status")
+    assert r.json()["next_ready"] is True
+
+
+def test_discover_status_requires_admin(client):
+    r = client.get("/api/discover/status")
+    assert r.status_code == 303
+
+
+def test_x_follow_persists_and_returns_json(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/x/follow",
+        data={"handle": "@Alice", "name": "Alice"},
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "handle": "alice"}
+    assert db.followed_x_handles() == {"alice"}
+
+
+def test_x_follow_redirects_without_json(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/x/follow", data={"handle": "bob"})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/discover"
+
+
+def test_x_follow_requires_admin(client):
+    r = client.post("/api/x/follow", data={"handle": "alice"})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_x_follow_rejects_empty_handle(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/x/follow", data={"handle": "@"})
+    assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # Themes
 # ---------------------------------------------------------------------------
 

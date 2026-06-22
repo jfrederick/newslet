@@ -62,13 +62,14 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | `Settings` — env vars + SSM SecureString lookups for secrets |
-| `contracts.py` | pydantic models at every JSON/DB boundary (Article, Pick, Issue, Discovery, WebArticle, …) |
+| `contracts.py` | pydantic models at every JSON/DB boundary (Article, Pick, Issue, Discovery, WebArticle, XAccount/XPost/XFollow, …) |
 | `tokens.py` | HMAC sign/verify for `/rate` links |
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `search_common.py` | shared Claude `web_search` primitives (tool def, last-text-block, JSON extraction, host key) used by `discovery` + `websearch` |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
 | `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
+| `x_discover.py` | X (Twitter) **account** discovery for the `/discover` admin page — Grok `x_search` finds followable accounts (active ≤14d, each with recent teaser posts), injected `complete`; best-effort/empty without `XAI_API_KEY` |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
@@ -78,11 +79,12 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `themes.py` | named visual themes (color/font/radius tokens) for web + email — the Claude-chat family (Foundry default, Atelier, Manuscript, Observatory, Meadow), Classic, and the textmode set; `get()` is lenient, `css()` emits the `:root` vars (incl. the text-size root `font-size`) the web templates style against |
 | `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
 | `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
-| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`) |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/discover` X-account discovery, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`, `/api/discover/status`, `/api/x/follow`) |
 | `docs/product.md` + `docs/index.html` | the **product guide**: canonical markdown + a self-contained HTML viewer that fetches it live (3 selectable detail levels). Served at `/docs`; the markdown is the single source of truth |
 | `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search; auto-regenerates when stale) |
 | `templates/emails.html.j2` | the sent-email archive list |
 | `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, theme picker, send now) |
+| `templates/discover.html.j2` | the discover page: a grid of followable X accounts with one-click follow + a prefetched "next page" |
 | `infra/template.yaml` | SAM stack |
 
 ## Conventions and invariants
@@ -130,6 +132,20 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
     same `FeedbackRow` shape as `/rate`; an **upvote** is sticky and a
     **downvote removes** the article from the page (and it stays gone — the
     home view drops already-downvoted articles).
+- **Discover page (`/discover`, X accounts):** a slow (~minute) Grok
+  `x_search` over accounts, so it never runs inline. State lives in the profile
+  table under `id="x_discover"` as a **double buffer** — `current` (the page
+  shown) and `next` (a page prefetched in the background). Visiting `/discover`
+  (a) `db.promote_x_discover()`s a ready `next` into `current` (so a page you
+  didn't get to last time becomes page 1 now), then (b) best-effort
+  async-invokes the digest `{"x_discover": true}` mode to refill `next` (same
+  fire-and-forget invoke as send-now/home-refresh). The page polls
+  `/api/discover/status`; on a cold first visit it reloads when `next_ready`,
+  otherwise it reveals a "Next page" button (a reload, since the GET promotes).
+  Followed accounts live under `id="x_follows"`; the follow button
+  (`/api/x/follow`) persists them and they're excluded from future discovery
+  (plus the current/next handles, so each page is genuinely new). Both ids
+  reuse the profile table to avoid a new DynamoDB table for tiny singleton docs.
 - **Admin config** lives in the profile table under `id="config"`
   (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
   `max_web_articles`, `web_variety` (0–100 exploration dial for

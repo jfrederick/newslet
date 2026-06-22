@@ -388,6 +388,44 @@ def test_handler_routes_home(aws, monkeypatch):
     assert result["status"] == "home_refreshed"
 
 
+def test_handler_routes_x_discover(aws, monkeypatch):
+    """The x_discover mode finds accounts, excludes follows + the shown page,
+    and stores the result as the prefetched next page."""
+    from newslet import db, x_discover
+    from newslet.contracts import XAccount, XPost
+    from newslet.handlers import digest
+
+    db.put_profile("AI safety, distributed systems")
+    db.add_x_follow("alreadyfollowed")
+    db.set_x_discover_next([
+        XAccount(handle="onpage", url="https://x.com/onpage",
+                 posts=[XPost(url="https://x.com/onpage/status/1", text="hi")])
+    ])
+    db.promote_x_discover()  # "onpage" is now the current (shown) page
+
+    captured: dict = {}
+
+    def fake_find(query, *, exclude_handles, max_results, **_):
+        captured["query"] = query
+        captured["exclude"] = set(exclude_handles)
+        return [
+            XAccount(handle="fresh", url="https://x.com/fresh",
+                     posts=[XPost(url="https://x.com/fresh/status/2", text="new")])
+        ]
+
+    monkeypatch.setattr(x_discover, "find_x_accounts", fake_find)
+
+    result = digest.handler({"x_discover": True}, None)
+    assert result == {"status": "x_discover_refreshed", "accounts": 1}
+    # Followed + already-shown handles are excluded from the search.
+    assert {"alreadyfollowed", "onpage"} <= captured["exclude"]
+    assert "AI safety" in captured["query"]
+    # The new page is buffered as "next", leaving the shown page intact.
+    state = db.get_x_discover()
+    assert [a.handle for a in state["current"]] == ["onpage"]
+    assert [a.handle for a in state["next"]] == ["fresh"]
+
+
 def test_handler_daily_already_sent(aws, monkeypatch):
     from newslet import db
     from newslet.handlers import digest

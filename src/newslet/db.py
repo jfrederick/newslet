@@ -30,6 +30,8 @@ from newslet.contracts import (
     Profile,
     Subscription,
     WebArticle,
+    XAccount,
+    XFollow,
 )
 
 log = logging.getLogger(__name__)
@@ -242,6 +244,160 @@ def put_config(config: Config) -> Config:
         }
     )
     return config
+
+
+# ---------------------------------------------------------------------------
+# X (Twitter) account discovery — followed accounts + the page buffer.
+#
+# Both live in the profile table under reserved ids (like "config"): the
+# followed-accounts set under "x_follows", and the discover page's double
+# buffer (the displayed page + a prefetched next page) under "x_discover".
+# Storing them here avoids a new DynamoDB table for two tiny singleton docs.
+# ---------------------------------------------------------------------------
+
+_X_FOLLOWS_ID = "x_follows"
+_X_DISCOVER_ID = "x_discover"
+
+
+def _dump_accounts(accounts: list[XAccount]) -> str:
+    return json.dumps([json.loads(a.model_dump_json()) for a in accounts])
+
+
+def _load_accounts(raw: object) -> list[XAccount]:
+    """Parse a stored accounts JSON blob, skipping any bad entry (lenient)."""
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+    out: list[XAccount] = []
+    for entry in items if isinstance(items, list) else []:
+        try:
+            out.append(XAccount.model_validate(entry))
+        except ValidationError as exc:
+            log.warning("skipping bad x discover account: %s", exc)
+    return out
+
+
+def list_x_follows() -> list[XFollow]:
+    """Accounts the user follows from the discover page, newest first.
+
+    Lenient: a missing row or a bad entry yields a partial/empty list rather
+    than raising, so a garbled row can't break the discover page.
+    """
+    item = _t_profile().get_item(Key={"id": _X_FOLLOWS_ID}).get("Item")
+    if not item:
+        return []
+    try:
+        raw = json.loads(item.get("follows_json", "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return []
+    follows: list[XFollow] = []
+    for entry in raw if isinstance(raw, list) else []:
+        try:
+            follows.append(XFollow.model_validate(entry))
+        except ValidationError as exc:
+            log.warning("skipping bad x follow row: %s", exc)
+    follows.sort(key=lambda f: f.followed_at, reverse=True)
+    return follows
+
+
+def followed_x_handles() -> set[str]:
+    """The set of bare, lowercased handles the user already follows."""
+    return {f.handle for f in list_x_follows()}
+
+
+def add_x_follow(handle: str, name: str = "") -> XFollow:
+    """Record that the user follows ``handle`` (upsert on the bare handle).
+
+    Idempotent: following an already-followed account refreshes its display
+    name and timestamp rather than creating a duplicate.
+    """
+    handle = handle.strip().lstrip("@").lower()
+    now = datetime.now(UTC)
+    by_handle = {f.handle: f for f in list_x_follows()}
+    follow = XFollow(handle=handle, name=name, followed_at=now)
+    by_handle[handle] = follow
+    _t_profile().put_item(
+        Item={
+            "id": _X_FOLLOWS_ID,
+            "follows_json": json.dumps(
+                [json.loads(f.model_dump_json()) for f in by_handle.values()]
+            ),
+            "updated_at": now.isoformat(),
+        }
+    )
+    return follow
+
+
+def get_x_discover() -> dict[str, Any]:
+    """Return the discover page's double buffer.
+
+    ``{"current": [...], "current_at": dt|None, "next": [...], "next_at":
+    dt|None}`` — ``current`` is the page shown now; ``next`` is a page
+    prefetched in the background, ready to be promoted on the next visit.
+    """
+    item = _t_profile().get_item(Key={"id": _X_DISCOVER_ID}).get("Item") or {}
+
+    def _dt(key: str) -> datetime | None:
+        val = item.get(key)
+        try:
+            return datetime.fromisoformat(val) if val else None
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "current": _load_accounts(item.get("current_json")),
+        "current_at": _dt("current_at"),
+        "next": _load_accounts(item.get("next_json")),
+        "next_at": _dt("next_at"),
+    }
+
+
+def set_x_discover_next(accounts: list[XAccount]) -> None:
+    """Store ``accounts`` as the prefetched next page, leaving current intact.
+
+    Called by the background refresh. An empty list clears the buffer (and is
+    treated as "not ready" by the page), so a failed refresh never leaves a
+    stale "next page ready" signal.
+    """
+    state = get_x_discover()
+    now = datetime.now(UTC)
+    item: dict[str, Any] = {
+        "id": _X_DISCOVER_ID,
+        "current_json": _dump_accounts(state["current"]),
+        "next_json": _dump_accounts(accounts),
+        "updated_at": now.isoformat(),
+    }
+    if state["current_at"]:
+        item["current_at"] = state["current_at"].isoformat()
+    if accounts:
+        item["next_at"] = now.isoformat()
+    _t_profile().put_item(Item=item)
+
+
+def promote_x_discover() -> list[XAccount]:
+    """Promote a ready next page to current and return the page to show.
+
+    If a prefetched ``next`` page exists, it becomes ``current`` (and ``next``
+    is cleared) so the page the user couldn't get to last time shows as page 1
+    now. With no prefetched page, the existing ``current`` is returned
+    unchanged. Idempotent enough for a single-user app — last writer wins.
+    """
+    state = get_x_discover()
+    if not state["next"]:
+        return state["current"]
+    now = datetime.now(UTC)
+    promoted = state["next"]
+    _t_profile().put_item(
+        Item={
+            "id": _X_DISCOVER_ID,
+            "current_json": _dump_accounts(promoted),
+            "current_at": (state["next_at"] or now).isoformat(),
+            "next_json": _dump_accounts([]),
+            "updated_at": now.isoformat(),
+        }
+    )
+    return promoted
 
 
 # ---------------------------------------------------------------------------

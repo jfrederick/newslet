@@ -28,6 +28,7 @@ from newslet import (
     themes,
     tune,
     websearch,
+    x_discover,
     x_grok,
 )
 from newslet.config import settings
@@ -77,6 +78,9 @@ _WEB_SEARCHES = 2
 
 # Reserved issues-table key for the standalone web homepage aggregation.
 HOME_KEY = "home"
+
+# How many X accounts the discover page asks for per page.
+_X_DISCOVER_ACCOUNTS = 30
 
 
 def _web_search_query(profile_md: str) -> str:
@@ -439,6 +443,34 @@ def _run_home(s: Any) -> dict:
     }
 
 
+def _run_x_discover(s: Any) -> dict:
+    """Background refresh of the discover page's *next* page of X accounts.
+
+    Async-invoked by the web Lambda when the discover page is visited. Finds a
+    fresh page of followable accounts (profile-matched, posted in the last 14
+    days), excluding accounts the user already follows and any already shown on
+    the current/pending page so each page is genuinely new, and stores them as
+    the prefetched ``next`` buffer. Best-effort: an empty result (no key, error)
+    just leaves the buffer empty, which the page reads as "not ready".
+    """
+    profile = db.get_profile()
+    state = db.get_x_discover()
+    # Don't re-surface accounts the user follows or that are already on the
+    # current/pending page — the next page should show new accounts.
+    exclude = db.followed_x_handles()
+    exclude |= {a.handle for a in state["current"]}
+    exclude |= {a.handle for a in state["next"]}
+
+    accounts = x_discover.find_x_accounts(
+        _x_search_query(profile.markdown),
+        exclude_handles=exclude,
+        max_results=_X_DISCOVER_ACCOUNTS,
+    )
+    db.set_x_discover_next(accounts)
+    log.info("x discover refreshed: %d accounts", len(accounts))
+    return {"status": "x_discover_refreshed", "accounts": len(accounts)}
+
+
 def handler(event: dict, context: Any) -> dict:
     """Run the digest pipeline once.
 
@@ -477,6 +509,9 @@ def handler(event: dict, context: Any) -> dict:
 
     if event and event.get("home"):
         return _run_home(s)
+
+    if event and event.get("x_discover"):
+        return _run_x_discover(s)
 
     today = datetime.now(UTC).strftime("%Y-%m-%d")
 
