@@ -23,7 +23,9 @@ _SYSTEM_PROMPT = """\
 You rank candidate news articles for a personalized daily email digest.
 
 Score each article 0.0-1.0 based on how well it matches the user's profile
-and recent feedback.  Write a one-sentence ``blurb`` for each pick.
+and recent feedback.  Write a one-sentence ``blurb`` for each pick that
+summarizes what the article is about.  The blurb describes the topic only;
+do NOT explain why it matches the user or why they might find it interesting.
 
 Aim to return at least {min_picks} picks and at most {max_picks}.  Return
 fewer than {min_picks} only if there genuinely aren't that many relevant
@@ -37,7 +39,7 @@ fences):
     {{
       "url":    "<article url>",
       "title":  "<article title>",
-      "blurb":  "<one-sentence synopsis>",
+      "blurb":  "<one-sentence synopsis of the topic>",
       "source": "<feed source>",
       "score":  <float between 0.0 and 1.0>
     }}

@@ -367,7 +367,7 @@ Claude returns **only** this JSON (no prose):
     {
       "url": "https://…",
       "title": "…",
-      "blurb": "one-sentence why-this-matters",
+      "blurb": "one-sentence topic synopsis",
       "source": "Feed Title",
       "score": 0.0
     }

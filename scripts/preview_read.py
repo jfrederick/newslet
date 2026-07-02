@@ -49,8 +49,8 @@ def _make_issue(date: str) -> Issue:
                 url=f"https://example.com/pick/{i}",
                 title=f"Ranked pick #{i + 1}: a genuinely interesting headline",
                 blurb=(
-                    "A one-sentence synopsis of why this matters, written by the "
-                    "ranker against your profile."
+                    "A one-sentence synopsis of the topic, written by the "
+                    "ranker."
                 ),
                 source=src,
                 score=round(1.0 - i * 0.02, 3),

@@ -49,7 +49,8 @@ fences) matching this schema:
       "url":    "<article url>",
       "title":  "<article title>",
       "source": "<publication name>",
-      "blurb":  "<one sentence on what it covers and why it is worth reading>"
+      "blurb":  "<one sentence on what the article covers; describe the topic \
+only, not why it is worth reading>"
     }}
   ]
 }}
