@@ -103,8 +103,8 @@ decent to show. A busy day gets trimmed to your chosen length.
 
 The ranking is done by Claude, Anthropic's language model. daily scoop hands it
 your profile, your recent votes, and the day's candidate stories, and asks it
-to score each one from 0 to 1 and write the one-line "why this matters" note
-you see in the email. The highest scores become the email, in order.
+to score each one from 0 to 1 and write the one-line topic summary you see in
+the email. The highest scores become the email, in order.
 
 :::
 
