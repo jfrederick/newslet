@@ -190,3 +190,42 @@ class Config(BaseModel):
     max_x_articles: int = Field(default=15, ge=1, le=30)
     theme: str = Field(default="foundry")
     text_size: int = Field(default=100, ge=75, le=150)
+
+
+class DiscoverFeed(BaseModel):
+    """A recommended RSS/Atom feed for the Discover page.
+
+    ``feed_url`` is liveness-checked (fetched and confirmed to have entries)
+    before the board is stored, so every entry here is safe to offer as a
+    one-click subscribe.
+    """
+
+    title: str
+    site_url: HttpUrl
+    feed_url: HttpUrl
+    reason: str = Field(default="", description="One line on why it fits the profile")
+
+
+class DiscoverAccount(BaseModel):
+    """A recommended X (Twitter) account for the Discover page.
+
+    ``handle`` is stored bare (no leading ``@``); ``url`` is the account's
+    ``x.com`` profile link, derived from the handle at build time.
+    """
+
+    handle: str  # without the @
+    name: str = ""
+    reason: str = ""
+    url: HttpUrl  # https://x.com/<handle>
+
+
+class DiscoverBoard(BaseModel):
+    """The stored Discover-page recommendations (feeds + X accounts).
+
+    Built on a schedule by :func:`newslet.discover.build_discover_board` and
+    persisted as-is; ``generated_at`` is ``None`` until a build succeeds.
+    """
+
+    feeds: list[DiscoverFeed] = Field(default_factory=list)
+    accounts: list[DiscoverAccount] = Field(default_factory=list)
+    generated_at: datetime | None = None

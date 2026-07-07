@@ -22,6 +22,7 @@ from newslet.config import settings
 from newslet.contracts import (
     Article,
     Config,
+    DiscoverBoard,
     Discovery,
     Feed,
     FeedbackRow,
@@ -226,6 +227,36 @@ def get_config() -> Config:
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
         return Config()
+
+
+def get_discover() -> DiscoverBoard:
+    """Return the stored Discover-page board, or an empty one.
+
+    Lenient on read like ``get_config`` (same table, ``id="discover"``): a
+    missing or garbled row yields an empty board rather than raising, so the
+    Discover page always renders.
+    """
+    resp = _t_profile().get_item(Key={"id": "discover"})
+    item = resp.get("Item")
+    if not item:
+        return DiscoverBoard()
+    try:
+        return DiscoverBoard.model_validate_json(item.get("board_json", "{}"))
+    except (ValidationError, ValueError, TypeError) as exc:
+        log.warning("bad discover row, using empty board: %s", exc)
+        return DiscoverBoard()
+
+
+def put_discover(board: DiscoverBoard) -> DiscoverBoard:
+    """Persist the Discover-page board (validated by the model first)."""
+    _t_profile().put_item(
+        Item={
+            "id": "discover",
+            "board_json": board.model_dump_json(),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    return board
 
 
 def put_config(config: Config) -> Config:

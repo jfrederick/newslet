@@ -184,6 +184,28 @@ def test_add_and_delete_feed_roundtrip(client):
     assert 'value="https://example.com/rss"' not in r.text
 
 
+def test_add_feed_returns_json_for_fetch_callers(client):
+    """The Discover page adds feeds via fetch and must stay on /discover —
+    an Accept: application/json post gets JSON back, not the /admin 303."""
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/feeds",
+        data={"url": "https://example.com/rss", "title": "Example"},
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["url"].startswith("https://example.com/rss")
+    # The no-JS form post still redirects to the admin page.
+    r = client.post(
+        "/api/feeds",
+        data={"url": "https://example.com/rss2", "title": "Example 2"},
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin"
+
+
 def test_profile_save(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.post("/api/profile", data={"markdown": "I like LLMs and Postgres."})
@@ -1065,6 +1087,164 @@ def test_home_status_reports_freshness(client):
     r = client.get("/api/home/status")
     assert r.json()["ready"] is True
     assert r.json()["created_at"]
+
+
+# ---------------------------------------------------------------------------
+# Discover
+# ---------------------------------------------------------------------------
+
+
+def test_discover_requires_admin(client):
+    r = client.get("/discover")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_discover_empty_board_shows_empty_state(client):
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/discover")
+    assert r.status_code == 200
+    assert "No feed recommendations yet" in r.text
+    assert 'id="refresh-btn"' in r.text
+
+
+def test_discover_stored_board_renders_feed_and_account_cards(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import DiscoverAccount, DiscoverBoard, DiscoverFeed
+
+    db.put_discover(
+        DiscoverBoard(
+            feeds=[
+                DiscoverFeed(
+                    title="Example Wire",
+                    site_url="https://example.com",
+                    feed_url="https://example.com/rss",
+                    reason="Matches your interests.",
+                )
+            ],
+            accounts=[
+                DiscoverAccount(
+                    handle="exampleuser",
+                    name="Example User",
+                    reason="Posts about your beat.",
+                    url="https://x.com/exampleuser",
+                )
+            ],
+            generated_at=datetime.now(UTC),
+        )
+    )
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/discover")
+    assert r.status_code == 200
+
+    _, _, after_feeds_marker = r.text.partition('id="feeds-grid"')
+    feeds_section, _, accounts_section = after_feeds_marker.partition('id="accounts-grid"')
+    assert "Example Wire" in feeds_section
+    assert "https://example.com/rss" in feeds_section
+    assert 'action="/api/feeds"' in feeds_section
+
+    assert "@exampleuser" in accounts_section
+    assert "https://x.com/exampleuser" in accounts_section
+
+
+def test_discover_hides_already_followed_feed(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import DiscoverBoard, DiscoverFeed
+
+    db.add_feed("https://followed.example.com/rss", title="Followed")
+    db.put_discover(
+        DiscoverBoard(
+            feeds=[
+                DiscoverFeed(
+                    title="Already Followed",
+                    site_url="https://followed.example.com",
+                    feed_url="https://followed.example.com/rss",
+                ),
+                DiscoverFeed(
+                    title="Fresh Pick",
+                    site_url="https://fresh.example.com",
+                    feed_url="https://fresh.example.com/rss",
+                ),
+            ],
+            generated_at=datetime.now(UTC),
+        )
+    )
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.get("/discover")
+    assert r.status_code == 200
+    assert "Already Followed" not in r.text
+    assert "Fresh Pick" in r.text
+
+
+def test_discover_refresh_invokes_digest_discover_mode(client, monkeypatch):
+    import json
+
+    from newslet.config import settings
+    from newslet.handlers import web
+
+    monkeypatch.setenv("DIGEST_FUNCTION_NAME", "newslet-Digest-abc123")
+    settings.cache_clear()
+
+    calls: list[dict] = []
+
+    class _FakeLambda:
+        def invoke(self, **kwargs):
+            calls.append(kwargs)
+            return {"StatusCode": 202}
+
+    monkeypatch.setattr(web.boto3, "client", lambda svc, **_: _FakeLambda())
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/discover/refresh", headers={"accept": "application/json"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert len(calls) == 1
+    assert calls[0]["InvocationType"] == "Event"
+    assert json.loads(calls[0]["Payload"]) == {"discover": True}
+
+
+def test_discover_refresh_requires_admin(client):
+    r = client.post("/api/discover/refresh")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_discover_refresh_503_when_not_configured(client, monkeypatch):
+    from newslet.config import settings
+
+    monkeypatch.delenv("DIGEST_FUNCTION_NAME", raising=False)
+    settings.cache_clear()
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post("/api/discover/refresh")
+    assert r.status_code == 503
+
+
+def test_discover_status_reports_freshness(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import DiscoverBoard
+
+    client.cookies.set("admin_token", "supersecret")
+
+    r = client.get("/api/discover/status")
+    assert r.status_code == 200
+    assert r.json() == {"generated_at": "", "ready": False}
+
+    now = datetime.now(UTC)
+    db.put_discover(DiscoverBoard(generated_at=now))
+    r = client.get("/api/discover/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ready"] is True
+    assert body["generated_at"] == now.isoformat()
 
 
 # ---------------------------------------------------------------------------

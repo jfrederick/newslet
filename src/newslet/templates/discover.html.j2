@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>daily scoop · discover</title>
+<style>
+  {{ theme_css }}
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { font-family: var(--font-body); line-height: 1.5; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  header.top { display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  .brand { font-family: var(--font-brand); font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; }
+  .navlinks { font-size: 0.8125rem; }
+  .navlinks a { color: var(--muted); text-decoration: none; margin-left: 14px; }
+  .navlinks a:hover { color: var(--fg); text-decoration: underline; }
+  .lede { margin-bottom: 20px; }
+  .lede p { color: var(--muted); font-size: 0.875rem; margin: 6px 0 0; }
+  h2.section { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .grid { display: grid; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .card h3 { margin: 0 0 4px; font-size: 1rem; line-height: 1.35; }
+  .card h3 a { color: var(--accent); text-decoration: none; }
+  .card h3 a:hover { text-decoration: underline; }
+  .meta { font-size: 0.8125rem; color: var(--muted); margin-bottom: 6px; }
+  .reason { font-size: 0.875rem; margin: 0 0 10px; }
+  .actions { display: flex; align-items: center; gap: 10px; }
+  .btn { font: inherit; font-size: 0.8125rem; font-weight: 600; padding: 6px 12px;
+    color: var(--accent); background: var(--accent-bg, transparent); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn:hover { border-color: var(--accent); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+  .footnote { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 30px; padding-top: 12px; border-top: 1px solid var(--border);
+    font-size: 0.8125rem; color: var(--muted); }
+  .spinner { display: none; color: var(--muted); font-size: 0.8125rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">daily scoop · discover</div>
+    <nav class="navlinks">
+      <a href="/">home</a>
+      <a href="/admin">admin</a>
+      <a href="/emails">emails</a>
+    </nav>
+  </header>
+
+  <div class="lede">
+    <p>Sources you might like, matched to your profile — refreshed on a weekly
+    schedule. Add a feed with one click; follow accounts over on X.</p>
+  </div>
+
+  <h2 class="section">RSS feeds you might like</h2>
+  {% if feeds %}
+  <div class="grid" id="feeds-grid">
+    {% for f in feeds %}
+    <article class="card">
+      <h3><a href="{{ f.site_url|e }}" target="_blank" rel="noopener noreferrer">{{ f.title|e }}</a></h3>
+      <div class="meta">{{ f.feed_url|e }}</div>
+      {% if f.reason %}<p class="reason">{{ f.reason|e }}</p>{% endif %}
+      <form class="actions add-feed" method="post" action="/api/feeds">
+        <input type="hidden" name="url" value="{{ f.feed_url|e }}">
+        <input type="hidden" name="title" value="{{ f.title|e }}">
+        <button class="btn" type="submit">+ Add to my feeds</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">No feed recommendations yet — they generate on a weekly schedule, or refresh below.</div>
+  {% endif %}
+
+  <h2 class="section">X accounts you might like</h2>
+  {% if accounts %}
+  <div class="grid" id="accounts-grid">
+    {% for a in accounts %}
+    <article class="card">
+      <h3><a href="{{ a.url|e }}" target="_blank" rel="noopener noreferrer">@{{ a.handle|e }}</a>{% if a.name %} <span style="font-weight:400;color:var(--muted);">— {{ a.name|e }}</span>{% endif %}</h3>
+      {% if a.reason %}<p class="reason">{{ a.reason|e }}</p>{% endif %}
+      <div class="actions">
+        <a class="btn" href="{{ a.url|e }}" target="_blank" rel="noopener noreferrer">View on X ↗</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">No account recommendations yet — they generate on a weekly schedule, or refresh below.</div>
+  {% endif %}
+
+  <div class="footnote">
+    <span>
+      {% if generated_at %}Recommendations generated {{ generated_at|e }}.{% else %}Nothing generated yet.{% endif %}
+    </span>
+    <span style="display:flex;align-items:center;gap:10px;">
+      <span class="spinner" id="refresh-spinner">Refreshing — takes a minute or two…</span>
+      <button class="btn" id="refresh-btn" type="button">Refresh recommendations</button>
+    </span>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  // ---- Add feed in place: fetch JSON, remove the card, stay on the page ----
+  // The plain form post (→ 303 /admin) remains as the no-JS fallback.
+  document.querySelectorAll("form.add-feed").forEach(function (form) {
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var button = form.querySelector("button");
+      button.disabled = true;
+      fetch("/api/feeds", {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        headers: { "Accept": "application/json" },
+      })
+        .then(function (r) { if (!r.ok) throw new Error("add failed"); return r.json(); })
+        .then(function () {
+          var card = form.closest("article.card");
+          if (card) card.remove();
+        })
+        .catch(function () {
+          button.disabled = false;
+          form.submit(); // fall back to the full form post so the add still lands
+        });
+    });
+  });
+
+  // Refresh is fire-and-forget on the server (an async digest {"discover":
+  // true} invoke); the page stays fully readable while we poll for the new
+  // board and reload when it lands. Non-blocking by design — the stored
+  // recommendations remain on screen throughout.
+  var btn = document.getElementById("refresh-btn");
+  var spinner = document.getElementById("refresh-spinner");
+  var baseline = {{ baseline_iso|tojson }};
+
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    spinner.style.display = "inline";
+    fetch("/api/discover/refresh", { method: "POST", headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error("refresh failed"); return r.json(); })
+      .then(function () { poll(0); })
+      .catch(function () {
+        spinner.textContent = "Couldn't refresh — try again in a moment.";
+        btn.disabled = false;
+      });
+  });
+
+  function poll(tries) {
+    if (tries > 40) { // ~3.5 min ceiling
+      spinner.textContent = "Still working… reload the page in a minute.";
+      return;
+    }
+    setTimeout(function () {
+      fetch("/api/discover/status", { headers: { "Accept": "application/json" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.generated_at && d.generated_at !== baseline) {
+            window.location.reload();
+          } else {
+            poll(tries + 1);
+          }
+        })
+        .catch(function () { poll(tries + 1); });
+    }, 5000);
+  }
+})();
+</script>
+</body>
+</html>

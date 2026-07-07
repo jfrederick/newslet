@@ -367,6 +367,15 @@ Resources:
             Schedule: cron(45 9 * * ? *)
             Description: Rebuild the web homepage daily at 09:45 UTC (before the email)
             Input: '{"home": true}'
+        # Regenerate the Discover page's stored recommendations (feeds + X
+        # accounts) weekly; the page itself never generates on visit. The
+        # admin "Refresh recommendations" button fires the same event.
+        DiscoverRefreshSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 9 ? * MON *)
+            Description: Rebuild the Discover recommendations weekly (Mondays 09:30 UTC)
+            Input: '{"discover": true}'
         DailySchedule:
           Type: Schedule
           Properties:

@@ -13,13 +13,13 @@ import logging
 from collections.abc import Callable
 
 import anthropic
-import feedparser
 from pydantic import TypeAdapter, ValidationError
 
 from .config import settings
 from .contracts import Discovery
 from .search_common import (
     extract_json_object,
+    feed_is_live,
     host_key,
     last_text_block,
     web_search_tool,
@@ -61,35 +61,6 @@ fences) matching this schema:
 _discovery_adapter = TypeAdapter(Discovery)
 
 
-def _feed_is_live(feed_url: str) -> bool:
-    """Return True if ``feed_url`` actually parses as an RSS/Atom feed.
-
-    The model asserts a ``feed_url`` but can hallucinate a plausible-looking
-    one. We fetch it and require feedparser to find at least one entry and
-    no fatal (``bozo``) parse error — the same liveness bar ``feeds.py``
-    applies on the real fetch — so we never offer a "subscribe" button for
-    a dead URL. Best-effort: any network/parse failure means "not live",
-    never an exception out of discovery.
-    """
-    try:
-        parsed = feedparser.parse(feed_url)
-    except Exception as exc:  # noqa: BLE001 - feedparser can raise anything
-        logger.info("discovery: feed %s failed to fetch: %s", feed_url, exc)
-        return False
-
-    if getattr(parsed, "bozo", 0) and getattr(parsed, "bozo_exception", None):
-        logger.info(
-            "discovery: feed %s is malformed: %s", feed_url, parsed.bozo_exception
-        )
-        return False
-
-    if not getattr(parsed, "entries", None):
-        logger.info("discovery: feed %s has no entries", feed_url)
-        return False
-
-    return True
-
-
 def find_discoveries(
     profile_md: str,
     feed_domains: list[str],
@@ -107,7 +78,7 @@ def find_discoveries(
     best-effort and must never crash the digest pipeline.
     """
     if feed_validator is None:
-        feed_validator = _feed_is_live
+        feed_validator = feed_is_live
     if client is None:
         client = anthropic.Anthropic(api_key=settings().anthropic_api_key)
 

@@ -485,6 +485,77 @@ def test_handler_routes_home(aws, monkeypatch):
     assert result["status"] == "home_refreshed"
 
 
+def test_handler_routes_discover(aws, monkeypatch):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import DiscoverAccount, DiscoverBoard, DiscoverFeed
+    from newslet.handlers import digest
+
+    db.add_feed("https://example.com/rss", title="F")
+    db.put_profile("test profile")
+
+    board = DiscoverBoard(
+        feeds=[
+            DiscoverFeed(
+                title="New Wire",
+                site_url="https://new.example.com",
+                feed_url="https://new.example.com/rss",
+            )
+        ],
+        accounts=[
+            DiscoverAccount(handle="newuser", url="https://x.com/newuser")
+        ],
+        generated_at=datetime.now(UTC),
+    )
+    monkeypatch.setattr(digest.discover, "build_discover_board", lambda *_a, **_k: board)
+
+    result = digest.handler({"discover": True}, None)
+    assert result["status"] == "discover_refreshed"
+
+    stored = db.get_discover()
+    assert stored.generated_at is not None
+    assert len(stored.feeds) == 1
+    assert stored.feeds[0].title == "New Wire"
+    assert len(stored.accounts) == 1
+
+
+def test_handler_routes_discover_keeps_previous_board_on_failed_build(aws, monkeypatch):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import DiscoverBoard, DiscoverFeed
+    from newslet.handlers import digest
+
+    db.add_feed("https://example.com/rss", title="F")
+    db.put_profile("test profile")
+
+    previous = DiscoverBoard(
+        feeds=[
+            DiscoverFeed(
+                title="Old Wire",
+                site_url="https://old.example.com",
+                feed_url="https://old.example.com/rss",
+            )
+        ],
+        generated_at=datetime.now(UTC),
+    )
+    db.put_discover(previous)
+
+    # A failed build yields an empty board with generated_at=None.
+    monkeypatch.setattr(
+        digest.discover, "build_discover_board", lambda *_a, **_k: DiscoverBoard()
+    )
+
+    result = digest.handler({"discover": True}, None)
+    assert result["status"] == "discover_failed"
+
+    stored = db.get_discover()
+    assert stored.generated_at is not None
+    assert len(stored.feeds) == 1
+    assert stored.feeds[0].title == "Old Wire"
+
+
 def test_handler_daily_already_sent(aws, monkeypatch):
     from newslet import db
     from newslet.handlers import digest
