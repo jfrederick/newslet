@@ -43,10 +43,11 @@ class RankResponse(BaseModel):
 
 
 class WebArticle(BaseModel):
-    """An article surfaced for the rich web view, not the email.
+    """An article surfaced by a search, outside the ranked picks.
 
-    Used for the "from around the web" block (Claude web-search results)
-    and the on-demand subject search ("textbook"). Unlike :class:`Pick`,
+    Used for the "from around the web" block, the "off your beat" block
+    (both rendered on the homepage *and* in the daily email), and the
+    web view's on-demand subject search ("textbook"). Unlike :class:`Pick`,
     it carries optional engagement signal (``points``/``comments``) and a
     separate ``comments_url`` so Hacker News items can link to their
     discussion thread alongside the article itself. Lenient by design: the
