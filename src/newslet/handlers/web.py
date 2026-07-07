@@ -232,8 +232,8 @@ def product_guide_markdown() -> Response:
 # ---------------------------------------------------------------------------
 
 
-def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
-    """Build (pick_cards, web_cards, total) with sticky vote state.
+def _home_cards(issue) -> tuple[list[dict], list[dict], list[dict], int]:
+    """Build (pick_cards, web_cards, random_cards, total) with sticky vote state.
 
     Articles already downvoted are dropped entirely — a downvote makes an
     article disappear from the page (and stay gone on reload).
@@ -248,16 +248,26 @@ def _home_cards(issue) -> tuple[list[dict], list[dict], int]:
         for p in sorted_picks
         if votes.get(str(p.url)) != "down"
     ]
-    web_cards = [
-        _article_card(
+
+    def _web_card(w) -> dict:
+        return _article_card(
             url=w.url, title=w.title, blurb=w.blurb, source=w.source,
             score=None, rating=votes.get(str(w.url), ""),
             points=w.points, comments=w.comments, comments_url=w.comments_url,
         )
+
+    web_cards = [
+        _web_card(w)
         for w in issue.web_articles
         if votes.get(str(w.url)) != "down"
     ]
-    return pick_cards, web_cards, len(pick_cards) + len(web_cards)
+    random_cards = [
+        _web_card(r)
+        for r in issue.random_articles
+        if votes.get(str(r.url)) != "down"
+    ]
+    total = len(pick_cards) + len(web_cards) + len(random_cards)
+    return pick_cards, web_cards, random_cards, total
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -280,10 +290,11 @@ def home(
 
     pick_cards: list[dict] = []
     web_cards: list[dict] = []
+    random_cards: list[dict] = []
     total = 0
     subject = intro = ""
     if issue is not None:
-        pick_cards, web_cards, total = _home_cards(issue)
+        pick_cards, web_cards, random_cards, total = _home_cards(issue)
         subject, intro = issue.subject, issue.intro
 
     # "Today's edition" is judged on the Eastern calendar day (see
@@ -316,6 +327,7 @@ def home(
         intro=intro,
         picks=pick_cards,
         web_articles=web_cards,
+        random_articles=random_cards,
         total=total,
         has_content=issue is not None,
         stale=stale,
@@ -438,12 +450,13 @@ def save_config(
     # three still validate.
     x_enabled: bool = Form(default=False),
     max_x_articles: int = Form(default=15),
+    max_random_articles: int = Form(default=4),
     theme: str = Form(default=themes.DEFAULT_THEME),
     text_size: int = Form(default=themes.TEXT_SIZE_DEFAULT),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
-    and the app appearance (theme + text size)."""
+    the off-your-beat count, and the app appearance (theme + text size)."""
     _require_admin(admin_token)
     # Strict on write (the read path is the lenient one): reject names the
     # picker could never have sent.
@@ -456,6 +469,7 @@ def save_config(
             web_variety=web_variety,
             x_enabled=x_enabled,
             max_x_articles=max_x_articles,
+            max_random_articles=max_random_articles,
             theme=theme,
             text_size=text_size,
         )
@@ -698,7 +712,11 @@ def _vote_lookup(issue) -> dict[str, str]:
     One batched read so the rich view can render sticky +/- state — making
     the *effect* of a vote visible after it is cast.
     """
-    urls = [str(p.url) for p in issue.picks] + [str(w.url) for w in issue.web_articles]
+    urls = (
+        [str(p.url) for p in issue.picks]
+        + [str(w.url) for w in issue.web_articles]
+        + [str(r.url) for r in issue.random_articles]
+    )
     return db.feedback_ratings(urls, issue.date)
 
 

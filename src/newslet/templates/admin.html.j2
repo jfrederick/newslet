@@ -127,6 +127,13 @@
                    value="{{ config.max_web_articles }}"
                    style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
           </label>
+          <label style="flex:1;min-width:160px;">
+            Off-your-beat articles
+            <span style="color:var(--muted);font-size: 0.8125rem;">— popular, non-tech; 0 turns the block off</span>
+            <input type="number" name="max_random_articles" min="0" max="20"
+                   value="{{ config.max_random_articles }}"
+                   style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
+          </label>
         </div>
         <div style="margin-top:18px;">
           <label>

@@ -339,6 +339,38 @@ model spent its whole budget on tool calls and returned nothing.
 
 :::
 
+### Off your beat
+
+A small block of stories that have nothing to do with your day job — popular,
+widely-shared pieces from the past week that someone with your broader tastes
+might enjoy, with computers, software, and AI deliberately excluded. It's a
+palate cleanser: the rest of the digest optimizes for your interests; this
+block exists to get you off them. It appears in the daily email and on the
+homepage, and you can vote on its stories like any other.
+
+:::tier little
+
+The block uses your profile only to guess at the kind of person you are
+outside of work — hobbies, curiosities, general tastes — and asks for popular
+recent pieces on everything *except* computing. An admin setting controls how
+many of these you get; zero turns the block off.
+
+:::
+
+:::tier medium
+
+`serendipity.fetch_serendipity()` mirrors the web block's machinery (Claude's
+server-side `web_search`, same JSON contract and tolerant parsing) with a
+prompt that inverts the usual targeting: the profile informs broader human
+taste only, recency is capped at roughly a week, popularity is preferred, and
+anything touching computers/software/AI/the tech industry is hard-excluded.
+Results ride on `Issue.random_articles` as their own block on both surfaces —
+never folded into the ranked candidate pool, where the profile-driven ranker
+would bury them — capped by `max_random_articles` (0 disables). Best-effort
+and seen-filtered like the web block.
+
+:::
+
 ### Newsletter subscriptions
 
 Plenty of good writing only arrives by email newsletter, never as an RSS feed.
@@ -532,8 +564,9 @@ issue that hasn't been delivered.
 :::tier little
 
 The settings have sensible ranges: the email carries between 1 and 40 ranked
-stories (default 10) and up to 30 web results (default 5, or 0 to switch the web
-block off), and the variety dial runs 0 to 100 (default 30). "Send now" doesn't
+stories (default 10), up to 30 web results (default 5, or 0 to switch the web
+block off), and up to 20 "off your beat" stories (default 4, or 0 to switch
+that block off), and the variety dial runs 0 to 100 (default 30). "Send now" doesn't
 disturb your daily rhythm — it sends a genuine email with working vote buttons,
 but it stays out of the regular schedule and your recent-issues list.
 
@@ -543,8 +576,8 @@ but it stays out of the regular schedule and your recent-issues list.
 
 The console is `GET /admin` in the web Lambda. Settings persist through
 `/api/config` as a `Config` model (`max_rss_articles` 1–40, `max_web_articles`
-0–30, `web_variety` 0–100, `theme`, `text_size` 75–150), read leniently with
-defaults on a missing or bad row. Themes live in `newslet.themes` as named
+0–30, `max_random_articles` 0–20, `web_variety` 0–100, `theme`, `text_size`
+75–150), read leniently with defaults on a missing or bad row. Themes live in `newslet.themes` as named
 token sets (colors, font stacks, corner radii); web pages consume them as CSS
 variables — with the text-size dial applied as the root font size — and the
 email template inlines the same tokens with scaled font sizes, so one admin

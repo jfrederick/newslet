@@ -99,6 +99,11 @@ class Issue(BaseModel):
     # addition to ``picks``; the email never renders them. Optional with a
     # default so issues persisted before this field existed still load.
     web_articles: list[WebArticle] = Field(default_factory=list)
+    # The "off your beat" block: popular past-week pieces deliberately outside
+    # the reader's usual (tech) beat — see ``newslet.serendipity``. Rendered
+    # on both the homepage and the email. Optional with a default so issues
+    # persisted before this field existed still load.
+    random_articles: list[WebArticle] = Field(default_factory=list)
 
 
 class FeedbackRow(BaseModel):
@@ -156,6 +161,9 @@ class Config(BaseModel):
     - ``web_variety`` — 0–100 exploration dial for web search: 0 stays tightly
       on the user's stated interests, 100 ventures into related, ancillary
       areas (exploratory but never random/off-topic).
+    - ``max_random_articles`` — how many "off your beat" articles (popular
+      past-week pieces deliberately outside the reader's usual tech beat —
+      see ``newslet.serendipity``) both surfaces carry (0 disables the block).
     - ``x_enabled`` — whether the X (Twitter) source runs. It also requires an
       ``XAI_API_KEY`` to be configured; turning this off disables X regardless
       of the key, so the user can pause the paid source without removing it.
@@ -176,6 +184,7 @@ class Config(BaseModel):
     max_rss_articles: int = Field(default=10, ge=1, le=40)
     max_web_articles: int = Field(default=5, ge=0, le=30)
     web_variety: int = Field(default=30, ge=0, le=100)
+    max_random_articles: int = Field(default=4, ge=0, le=20)
     x_enabled: bool = Field(default=True)
     max_x_articles: int = Field(default=15, ge=1, le=30)
     theme: str = Field(default="foundry")

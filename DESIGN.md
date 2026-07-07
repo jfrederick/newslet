@@ -166,6 +166,26 @@ on the profile, high roams into related ancillary areas (never random).
 `max_searches`/`model` let the interactive subject box use a fast model and
 few rounds to fit the HTTP API's ~30s limit.
 
+### `newslet.serendipity`
+
+The "off your beat" block: popular, past-week articles deliberately outside
+the reader's usual (tech) beat — the profile informs broader human tastes
+only, and anything about computers/software/AI/the tech industry is
+hard-excluded in the prompt. Mirrors `websearch` (same `web_search` tool and
+parsing via `search_common`; `client` injectable).
+
+```python
+def fetch_serendipity(
+    profile_md: str, *, max_results: int = 4,
+    client=None, max_searches: int = 2, model: str | None = None,
+) -> list[WebArticle]: ...
+```
+
+Returns `[]` on any failure (best-effort) and immediately when
+`max_results <= 0` (the admin's off switch). Results ride on
+`Issue.random_articles` as their own block on both surfaces — not folded
+into the ranked pool, where the profile-driven ranker would bury them.
+
 ### `newslet.x_grok`
 
 X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
@@ -272,10 +292,12 @@ def render_email(
   the same, so the archive keeps showing the email as sent even after the
   admin changes appearance settings (legacy rows default to classic at 100%
   — historical accuracy, not the current app default).
-- Renders all stored picks plus the `web_articles` block (both votable via
+- Renders all stored picks plus the `web_articles` and `random_articles`
+  ("Off your beat") blocks (all votable via
   `tokens.sign(url, issue.date)` → `{base}/rate?a=…&d=…&v=up|down&t=…`), plus
-  discoveries. The digest stores exactly `Config.max_rss_articles` picks and
-  `Config.max_web_articles` web articles, so the email length follows config.
+  discoveries. The digest stores exactly `Config.max_rss_articles` picks,
+  `Config.max_web_articles` web articles, and `Config.max_random_articles`
+  off-beat articles, so the email length follows config.
 - Footer links generically to the homepage (`{base}/`).
 - Subject: `f"newslet — {issue.date}"` unless the issue carries one.
 
@@ -331,7 +353,7 @@ Routes:
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, theme?, text_size?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -352,7 +374,7 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts/`theme`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

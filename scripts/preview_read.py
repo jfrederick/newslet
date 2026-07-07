@@ -72,6 +72,15 @@ def _make_issue(date: str) -> Issue:
                 ),
             )
         )
+    off_beat = [
+        WebArticle(
+            url=f"https://magazine.example.com/story/{i}",
+            title=f"Off your beat #{i + 1}: a widely-shared non-tech story",
+            blurb="A popular piece from the past week, far from computers.",
+            source=["The Atlantic", "Nat Geo", "Eater", "The Athletic"][i % 4],
+        )
+        for i in range(4)
+    ]
     return Issue(
         date=date,
         picks=picks,
@@ -82,6 +91,7 @@ def _make_issue(date: str) -> Issue:
             "pulled live from the open web. Vote to tune tomorrow's ranking."
         ),
         web_articles=web,
+        random_articles=off_beat,
     )
 
 

@@ -210,6 +210,8 @@ def get_config() -> Config:
         return Config(
             max_rss_articles=int(item.get("max_rss_articles", 10)),
             max_web_articles=int(item.get("max_web_articles", 5)),
+            # Rows written before the "off your beat" block default its count.
+            max_random_articles=int(item.get("max_random_articles", 4)),
             web_variety=int(item.get("web_variety", 30)),
             # Legacy rows predate the X source; default it on (it still needs a
             # key to actually run) so existing installs pick it up.
@@ -233,6 +235,7 @@ def put_config(config: Config) -> Config:
             "id": "config",
             "max_rss_articles": config.max_rss_articles,
             "max_web_articles": config.max_web_articles,
+            "max_random_articles": config.max_random_articles,
             "web_variety": config.web_variety,
             "x_enabled": config.x_enabled,
             "max_x_articles": config.max_x_articles,
@@ -281,6 +284,9 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
     web_articles_json = json.dumps(
         [json.loads(w.model_dump_json()) for w in issue.web_articles]
     )
+    random_articles_json = json.dumps(
+        [json.loads(r.model_dump_json()) for r in issue.random_articles]
+    )
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
@@ -294,6 +300,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "text_size": issue.text_size,
         "discoveries_json": discoveries_json,
         "web_articles_json": web_articles_json,
+        "random_articles_json": random_articles_json,
     }
     if manual:
         # Manual ("send now") issues are stored so /rate title lookup and
@@ -339,6 +346,17 @@ def get_issue(date: str) -> Issue | None:
             log.warning(
                 "skipping bad web_article in issue %s: %s", item.get("date"), exc
             )
+    # Same lenient shape for the "off your beat" block (added after
+    # web_articles; older rows simply have no field).
+    random_articles_raw = json.loads(item.get("random_articles_json", "[]"))
+    random_articles = []
+    for r in random_articles_raw:
+        try:
+            random_articles.append(WebArticle.model_validate(r))
+        except ValidationError as exc:
+            log.warning(
+                "skipping bad random_article in issue %s: %s", item.get("date"), exc
+            )
     return Issue.model_validate(
         {
             "date": item["date"],
@@ -355,6 +373,7 @@ def get_issue(date: str) -> Issue | None:
             "text_size": _int_or(item.get("text_size"), 100),
             "discoveries": discoveries,
             "web_articles": web_articles,
+            "random_articles": random_articles,
         }
     )
 

@@ -285,6 +285,51 @@ def test_get_issue_tolerates_legacy_issue_without_web_articles(dynamo: None) -> 
     assert got.web_articles == []
 
 
+def test_issue_round_trips_random_articles(dynamo: None) -> None:
+    """random_articles (the "off your beat" block) survive a put/get round trip."""
+    from newslet import db
+
+    issue = Issue(
+        date="2026-05-25",
+        picks=[Pick(url="https://example.com/1", title="One", blurb="b", score=0.9)],
+        created_at=datetime.now(UTC),
+        random_articles=[
+            WebArticle(
+                url="https://offbeat.example.com/1",
+                title="Off Beat One",
+                blurb="a break from the usual",
+                source="Example Magazine",
+            ),
+            WebArticle(url="https://offbeat.example.com/2", title="Off Beat Two", source="Web"),
+        ],
+    )
+    db.put_issue(issue)
+    got = db.get_issue("2026-05-25")
+
+    assert got is not None
+    assert len(got.random_articles) == 2
+    assert got.random_articles[0].title == "Off Beat One"
+    assert got.random_articles[0].source == "Example Magazine"
+    assert got.random_articles[1].title == "Off Beat Two"
+
+
+def test_get_issue_tolerates_legacy_issue_without_random_articles(dynamo: None) -> None:
+    """An issue persisted before random_articles existed still loads."""
+    from newslet import db
+
+    # Write a row the old way (no random_articles_json attribute).
+    db._t_issues().put_item(
+        Item={
+            "date": "2026-05-26",
+            "picks_json": "[]",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    got = db.get_issue("2026-05-26")
+    assert got is not None
+    assert got.random_articles == []
+
+
 def test_feedback_ratings_batch_lookup(dynamo: None) -> None:
     """feedback_ratings returns the current rating per url for one issue."""
     from newslet import db

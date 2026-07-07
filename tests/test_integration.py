@@ -181,6 +181,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     """
     from newslet import discovery as discovery_mod
     from newslet import hn as hn_mod
+    from newslet import serendipity as serendipity_mod
     from newslet import summarize as summarize_mod
     from newslet import tune as tune_mod
     from newslet import websearch as websearch_mod
@@ -196,6 +197,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     # production; stub them to offline empties so the pipeline stays offline.
     monkeypatch.setattr(hn_mod, "fetch_hn_articles", lambda *a, **k: [])
     monkeypatch.setattr(websearch_mod, "search_web", lambda *a, **k: [])
+    monkeypatch.setattr(serendipity_mod, "fetch_serendipity", lambda *a, **k: [])
     # The X source reaches xAI in production; stub to an offline empty too.
     monkeypatch.setattr(x_grok_mod, "fetch_x_articles", lambda *a, **k: [])
 

@@ -264,6 +264,37 @@ def test_web_articles_section_omitted_when_empty(stub_sign: None) -> None:
     assert "From around the web" not in html
 
 
+def test_random_articles_section_renders_with_vote_links(stub_sign: None) -> None:
+    issue = Issue(
+        date=DATE,
+        picks=[_pick("https://a.example.com/1", "AlphaTitle", "B")],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        random_articles=[
+            WebArticle(
+                url="https://offbeat.example.com/story",
+                title="An Off Beat Find",
+                blurb="Nothing to do with computers.",
+                source="Example Magazine",
+            ),
+        ],
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "Off your beat" in html
+    assert "An Off Beat Find" in html
+    assert "https://offbeat.example.com/story" in html
+    # Random articles are votable from the email via the same signed /rate links.
+    encoded = quote("https://offbeat.example.com/story", safe="")
+    assert (f"a={encoded}".replace("&", "&amp;") in html) or (f"a={encoded}" in html)
+    assert html.count("v=up") == 2  # one for the pick, one for the random article
+    assert html.count("v=down") == 2
+
+
+def test_random_articles_section_omitted_when_empty(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "AlphaTitle", "B")])
+    _, html = render_email(issue, BASE_URL)
+    assert "Off your beat" not in html
+
+
 def test_homepage_link_present(stub_sign: None) -> None:
     issue = _issue([_pick("https://a.example.com/1", "T", "B")])
     _, html = render_email(issue, BASE_URL)

@@ -160,9 +160,11 @@ links automatically switch to the custom domain too.
 Open the `ApiUrl` from step 3 in a browser and sign in with the value of
 `/newslet/admin-token`. You land on the homepage; go to **admin** (top
 nav, or `/admin`) to add RSS feeds, write a short markdown profile, and
-set the daily-email article counts and web-search variety. The homepage
-builds its first edition automatically on that first visit (it has no
-manual refresh button).
+set the daily-email article counts (including the "off your beat"
+non-tech block), and the web-search variety. The homepage shows a quiet
+"no edition yet" notice until the first scheduled morning rebuild lands
+(or invoke the digest Lambda with `{"home": true}` to build one now — it
+has no manual refresh button).
 
 ### 5. Smoke-test the digest
 
