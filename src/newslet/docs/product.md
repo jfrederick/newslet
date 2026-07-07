@@ -434,17 +434,19 @@ from the page for good. There's a date header so you always know how fresh the
 page is, and a research box (covered next) for chasing a topic on demand.
 
 There is no refresh button, on purpose. The homepage rebuilds itself every
-morning, a little before the email goes out, and if you visit and the page
-isn't today's, it quietly regenerates while you wait and reloads when it's
-ready.
+morning, a little before the email goes out, and always opens instantly on
+the latest edition. If a morning's rebuild ever misses, a small note above
+the stories says which day's edition you're looking at — no waiting, no
+spinner.
 
 :::tier little
 
 The homepage is a separate, bigger edition than the email — it carries far more
 stories and skips the email-only bits (no "follow this source" suggestions).
-It's built by the same ranking machinery, just with generous limits. When it's
-stale, the page kicks off a rebuild in the background, polls until the new
-edition is ready, and reloads itself.
+It's built by the same ranking machinery, just with generous limits. The
+morning schedule is the only thing that rebuilds it — the page itself just
+shows the newest edition, with a quiet note if today's rebuild hasn't
+happened yet.
 
 :::
 
@@ -455,10 +457,13 @@ under the reserved issue key `"home"`, built by the digest's home mode
 (`_run_home`) with generous fixed counts (around 40 ranked picks and 20 web
 articles). Unlike the daily email it ignores the seen-store (it's a browse
 surface, not a deduped feed) and skips discovery. A scheduled EventBridge rule
-rebuilds it daily at **09:45 UTC**, 15 minutes before the email. On demand, when
-the stored edition is missing or not from today, the client posts to
-`/api/home/refresh` (an async digest `{"home": true}` invoke), polls
-`/api/home/status` for a newer timestamp, and reloads. Voting goes through
+rebuilds it daily at **09:45 UTC**, 15 minutes before the email, and is the
+sole updater — the page never regenerates on visit. Freshness ("is this
+today's edition?") is judged on the US-Eastern calendar day (`newslet.clock`),
+not UTC, so an evening visit doesn't mistake the morning's build for
+yesterday's. A stale or missing edition still renders, with a small
+non-blocking notice; `/api/home/refresh` + `/api/home/status` remain as an
+operational escape hatch. Voting goes through
 `/api/vote`; down-voted URLs are dropped when the page is assembled, so a
 removed story stays removed. The homepage requires the admin cookie.
 

@@ -549,7 +549,7 @@ def test_admin_index_flashes_after_send(client):
 # ---------------------------------------------------------------------------
 
 
-def _seed_issue(key):
+def _seed_issue(key, created_at=None):
     """Seed an issue (picks + web articles) under ``key`` (a date or 'home')."""
     from datetime import UTC, datetime
 
@@ -565,7 +565,7 @@ def _seed_issue(key):
                 Pick(url="https://ex.com/b", title="Beta Pick", blurb="bb",
                      source="Hacker News", score=0.4),
             ],
-            created_at=datetime.now(UTC),
+            created_at=created_at or datetime.now(UTC),
             subject="Sharp subject",
             intro="An intro line.",
             web_articles=[
@@ -582,7 +582,6 @@ def _seed_issue(key):
 
 
 def test_homepage_renders_all_articles(client):
-    from datetime import UTC, datetime
 
     client.cookies.set("admin_token", "supersecret")
     _seed_issue("home")
@@ -600,8 +599,11 @@ def test_homepage_renders_all_articles(client):
     assert 'id="refresh-btn"' not in r.text
     assert "data-filter" not in r.text
     assert "position: sticky" not in r.text
-    # The date header carries today's written weekday.
-    assert datetime.now(UTC).strftime("%A") in r.text
+    # The date header carries today's written weekday (Eastern — the app's
+    # calendar day, which can differ from UTC in the evening).
+    from newslet import clock
+
+    assert clock.local_now().strftime("%A") in r.text
 
 
 def test_homepage_downvoted_article_disappears(client):
@@ -623,13 +625,57 @@ def test_homepage_downvoted_article_disappears(client):
     assert "Alpha Pick" in r.text
 
 
-def test_homepage_empty_state_auto_prepares(client):
+def test_homepage_empty_state_shows_notice_without_rebuilding(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.get("/")
     assert r.status_code == 200
-    # No stored edition yet → the page prepares one itself (no manual button).
-    assert "Preparing today's edition" in r.text
+    # No stored edition yet → a quiet notice; the cron owns rebuilds, so the
+    # page must not park the reader on a spinner or kick a refresh itself.
+    assert "No edition yet" in r.text
+    assert "Preparing today's edition" not in r.text
+    assert "/api/home/refresh" not in r.text
     assert 'id="refresh-btn"' not in r.text
+
+
+def test_homepage_same_eastern_day_edition_is_fresh(client):
+    """The evening bug: an edition built this Eastern day must not read as
+    stale merely because its UTC date differs from the current UTC date."""
+    from datetime import UTC, datetime
+
+    from newslet import clock
+
+    client.cookies.set("admin_token", "supersecret")
+    now = datetime.now(UTC)
+    d = clock.local_date(now)
+    # The Eastern day always straddles a UTC midnight, so one of these two
+    # same-Eastern-day instants has a different UTC date than "now".
+    morning = datetime(d.year, d.month, d.day, 0, 30, tzinfo=clock.EASTERN)
+    evening = datetime(d.year, d.month, d.day, 23, 30, tzinfo=clock.EASTERN)
+    created = next(
+        t for t in (morning, evening) if t.astimezone(UTC).date() != now.date()
+    )
+    assert clock.local_date(created) == d  # same Eastern day — fresh
+    _seed_issue("home", created_at=created.astimezone(UTC))
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'id="stale-note"' not in r.text
+    assert "Alpha Pick" in r.text
+
+
+def test_homepage_old_edition_renders_content_with_notice(client):
+    from datetime import UTC, datetime, timedelta
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("home", created_at=datetime.now(UTC) - timedelta(days=3))
+    r = client.get("/")
+    assert r.status_code == 200
+    # The old edition still renders in full — no blocking spinner, no
+    # auto-kicked rebuild — with a small notice naming the edition's day.
+    assert "Alpha Pick" in r.text
+    assert 'id="stale-note"' in r.text
+    assert "today's update hasn't run yet" in r.text
+    assert "Preparing today's edition" not in r.text
+    assert "/api/home/refresh" not in r.text
 
 
 def test_homepage_shows_sticky_vote_state(client):
