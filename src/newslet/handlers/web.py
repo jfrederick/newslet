@@ -339,6 +339,92 @@ def home(
 
 
 # ---------------------------------------------------------------------------
+# Discover — stored recommendations of RSS feeds + X accounts
+# ---------------------------------------------------------------------------
+
+
+@app.get("/discover", response_class=HTMLResponse)
+def discover_page(admin_token: str | None = Cookie(default=None)) -> HTMLResponse:
+    """The Discover page: RSS feeds and X accounts the user might like.
+
+    Renders the stored board (built by the weekly ``{"discover": true}``
+    digest run — see ``digest._run_discover``); the page never generates
+    on visit, so it always loads instantly. Feeds the user already follows
+    are hidden; each remaining feed gets a one-click add (``POST
+    /api/feeds``), and each X account links out to its profile.
+    """
+    _require_admin(admin_token)
+    board = db.get_discover()
+
+    followed = {db.normalize_url(str(f.url)) for f in db.list_feeds()}
+    feed_cards = [
+        {
+            "title": f.title,
+            "site_url": str(f.site_url),
+            "feed_url": str(f.feed_url),
+            "reason": f.reason,
+        }
+        for f in board.feeds
+        if db.normalize_url(str(f.feed_url)) not in followed
+    ]
+    account_cards = [
+        {"handle": a.handle, "name": a.name, "reason": a.reason, "url": str(a.url)}
+        for a in board.accounts
+    ]
+    generated_iso = board.generated_at.isoformat() if board.generated_at else ""
+    generated_label = (
+        clock.local_now(board.generated_at).strftime("%A, %B %-d")
+        if board.generated_at
+        else ""
+    )
+    html = _TEMPLATES.get_template("discover.html.j2").render(
+        theme_css=_theme_css(),
+        feeds=feed_cards,
+        accounts=account_cards,
+        generated_at=generated_label,
+        baseline_iso=generated_iso,
+    )
+    return HTMLResponse(html)
+
+
+@app.post("/api/discover/refresh")
+def discover_refresh(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
+    """Kick off a Discover-board regeneration (async; takes a minute or two).
+
+    Async-invokes the digest Lambda with ``{"discover": true}`` — the same
+    fire-and-forget pattern as the home refresh — because the build (web
+    search + feed liveness checks) far exceeds this Lambda's timeout. The
+    page polls ``/api/discover/status`` and reloads when the board is newer.
+    """
+    _require_admin(admin_token)
+    fn = settings().digest_function_name
+    if not fn:
+        raise HTTPException(
+            status_code=503,
+            detail="DIGEST_FUNCTION_NAME is not configured for the web app",
+        )
+    boto3.client("lambda").invoke(
+        FunctionName=fn,
+        InvocationType="Event",
+        Payload=json.dumps({"discover": True}),
+    )
+    return JSONResponse({"ok": True, "status": "refreshing"})
+
+
+@app.get("/api/discover/status")
+def discover_status(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
+    """Return the stored Discover board's generation timestamp.
+
+    The page captures this before a refresh and polls until it changes,
+    then reloads — same await-the-async-build shape as the home status.
+    """
+    _require_admin(admin_token)
+    board = db.get_discover()
+    generated_iso = board.generated_at.isoformat() if board.generated_at else ""
+    return JSONResponse({"generated_at": generated_iso, "ready": bool(generated_iso)})
+
+
+# ---------------------------------------------------------------------------
 # Admin UI
 # ---------------------------------------------------------------------------
 

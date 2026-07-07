@@ -72,18 +72,20 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `serendipity.py` | Claude `web_search` for the "off your beat" block: popular past-week articles outside the reader's tech beat (profile for human taste only; computers/AI hard-excluded) |
 | `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
+| `discover.py` | Claude `web_search` for the Discover page's stored board: RSS feeds + X accounts matched to the profile (source-level; distinct from the article-level `discovery.py`) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
 | `rank.py` | Anthropic ranking call with prompt caching |
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
 | `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link; theme-aware inline styles) |
 | `themes.py` | named visual themes (color/font/radius tokens) for web + email — the Claude-chat family (Foundry default, Atelier, Manuscript, Observatory, Meadow), Classic, and the textmode set; `get()` is lenient, `css()` emits the `:root` vars (incl. the text-size root `font-size`) the web templates style against |
-| `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"home"}` homepage-rebuild modes |
+| `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now, `{"home"}` homepage-rebuild, and `{"discover"}` discover-board modes |
 | `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
-| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`) |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/discover`, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`, `/api/discover/*`) |
 | `docs/product.md` + `docs/index.html` | the **product guide**: canonical markdown + a self-contained HTML viewer that fetches it live (3 selectable detail levels). Served at `/docs`; the markdown is the single source of truth |
 | `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search; auto-regenerates when stale) |
 | `templates/emails.html.j2` | the sent-email archive list |
+| `templates/discover.html.j2` | the Discover page: stored feed + X-account recommendations, one-click feed add, non-blocking refresh |
 | `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, theme picker, send now) |
 | `infra/template.yaml` | SAM stack |
 
@@ -167,6 +169,16 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model
   field required, check the persisted-data read paths for older rows.
+- **Discover page (`/discover`):** renders a *stored* board of recommended
+  RSS feeds + X accounts (`db.get_discover`/`put_discover`, profile table
+  `id="discover"`, model `contracts.DiscoverBoard`) — it never generates on
+  visit. A weekly EventBridge rule (Mondays 09:30 UTC, `{"discover": true}`)
+  rebuilds it via `discover.build_discover_board` (feed urls
+  liveness-checked with `search_common.feed_is_live`; already-followed
+  domains excluded at build, already-followed feeds also hidden at render);
+  the page's "Refresh recommendations" button async-invokes the same event
+  and polls `/api/discover/status`, non-blocking. A failed build keeps the
+  previous board instead of overwriting it.
 - **Manual "send now":** stores under a synthetic `manual-<ts>-<rand>` key
   that's hidden from "recent issues" and stays out of the daily cadence — see
   `digest._run_manual`. Don't surface that internal key in user-facing output.

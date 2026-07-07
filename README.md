@@ -37,7 +37,10 @@ refresh button: a scheduled job rebuilds it every morning at 09:45 UTC
 (15 minutes before the email) and is the sole updater — the page always
 shows the latest built edition instantly, with a small notice if the
 day's rebuild (judged on the US-Eastern calendar day) hasn't landed yet.
-Past daily emails are archived at `/emails/<date>`.
+Past daily emails are archived at `/emails/<date>`. A **Discover page**
+(`/discover`) lists RSS feeds and X accounts matched to your profile —
+precomputed weekly, with one-click feed adds — so your source list can
+grow beyond the email's occasional suggestions.
 
 ## Product guide
 
@@ -54,8 +57,9 @@ sync with the code on every push to `main` (see
 ## Architecture
 
 ```
-EventBridge cron (09:45 UTC, home) ─┐
-EventBridge cron (10:00 UTC, email) ─┴▶ digest Lambda ──▶ Resend (email)
+EventBridge cron (09:45 UTC, home) ──┐
+EventBridge cron (10:00 UTC, email) ──┼▶ digest Lambda ──▶ Resend (email)
+EventBridge cron (Mon 09:30, discover)┘
                                            │
                                            ▼
                                        DynamoDB ◀── web Lambda ◀── HTTP API
@@ -183,10 +187,11 @@ page back and the vote will appear in the `Feedback` table.
 
 ### 6. Wait for tomorrow
 
-EventBridge fires the digest Lambda twice daily: a homepage rebuild at
-09:45 UTC (`{"home": true}`) and the email digest at 10:00 UTC. Change
-the crons in `infra/template.yaml` if you want different times of day
-(EventBridge cron is always UTC).
+EventBridge fires the digest Lambda twice daily — a homepage rebuild at
+09:45 UTC (`{"home": true}`) and the email digest at 10:00 UTC — plus a
+weekly Discover-page rebuild on Mondays at 09:30 UTC
+(`{"discover": true}`). Change the crons in `infra/template.yaml` if you
+want different times of day (EventBridge cron is always UTC).
 
 ### Optional: X (Twitter) via Grok
 

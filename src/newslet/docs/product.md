@@ -455,6 +455,47 @@ concern: the homepage skips them entirely.
 
 ---
 
+## The Discover page
+
+Where discoveries drip one or two suggestions into the daily email, the
+**Discover page** (`/discover`, linked from the homepage nav) lays out a
+fuller spread in one place: RSS feeds you might like, each with a one-click
+"Add to my feeds" button, and X (Twitter) accounts you might like, each
+linking to its profile so you can follow it there.
+
+The recommendations are prepared ahead of time on a weekly schedule, so the
+page always opens instantly — nothing is generated while you wait. A
+"Refresh recommendations" button rebuilds the list in the background if you
+want a fresh batch sooner; the page stays readable while it works.
+
+:::tier little
+
+Feeds you already follow are hidden automatically, and every suggested feed
+is checked to be a real, working RSS/Atom feed before it's offered — same
+bar as the email's discoveries, so the add button never lands on a dead
+link. The X suggestions are informational: daily scoop links you to the account
+on X rather than following it for you.
+
+:::
+
+:::tier medium
+
+`discover.build_discover_board()` (source-level; distinct from the
+article-level `discovery` module) makes one Claude `web_search` call asking
+for both lists, excludes already-followed domains, liveness-checks each
+`feed_url` (`search_common.feed_is_live`), and normalizes X handles to
+`https://x.com/<handle>` links. The board is stored in the profile table
+under `id="discover"` (`db.get_discover`/`put_discover`) and rebuilt by a
+weekly EventBridge rule (Mondays 09:30 UTC, a `{"discover": true}` digest
+invoke); the page's refresh button fires the same event asynchronously and
+polls `/api/discover/status`. A failed build keeps the previous board
+rather than blanking the page. Rendering hides feeds already present in
+`db.list_feeds`; the add button posts the plain admin-authed `/api/feeds`.
+
+:::
+
+---
+
 ## The homepage
 
 The email is the short list. The homepage is the long one — a richer place to
@@ -692,7 +733,8 @@ The stack is AWS SAM: three Lambdas (digest, web, inbound), an HTTP API in front
 of the web Lambda, seven DynamoDB tables (feeds, profile, seen-articles, issues,
 feedback, subscriptions, inbox), an S3 bucket for raw inbound mail, and SES
 inbound for the newsletter source. Two EventBridge crons drive the daily
-cadence (home rebuild at 09:45 UTC, email at 10:00 UTC). External dependencies
+cadence (home rebuild at 09:45 UTC, email at 10:00 UTC, Discover board
+weekly on Mondays at 09:30 UTC). External dependencies
 are Anthropic (ranking, summaries, discovery, web search) and Resend (delivery).
 Continuous integration runs tests and linting on every change and deploys to AWS
 on merge to the main branch. This product guide is regenerated from the code by

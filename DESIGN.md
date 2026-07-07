@@ -138,6 +138,7 @@ def web_search_tool(max_uses: int = 5) -> dict: ...   # tool def; max_uses floor
 def last_text_block(content: list) -> str | None: ... # final text block (tool use interleaves)
 def extract_json_object(text: str) -> str | None: ... # dig JSON out of fenced/prose replies
 def host_key(url: str) -> str: ...                     # lowercased, www-stripped host for dedup
+def feed_is_live(feed_url: str) -> bool: ...           # fetch + parse: real, non-empty feed?
 ```
 
 `extract_json_object` returns the first balanced `{...}` span (ignoring braces
@@ -165,6 +166,29 @@ definition and JSON-extraction helpers with `discovery` via
 on the profile, high roams into related ancillary areas (never random).
 `max_searches`/`model` let the interactive subject box use a fast model and
 few rounds to fit the HTTP API's ~30s limit.
+
+### `newslet.discover`
+
+Source-level discovery for the `/discover` page — distinct from
+`newslet.discovery`, which surfaces individual *articles* for the daily
+email. This builds a stored board of RSS feeds + X accounts matched to the
+profile, generated on a weekly schedule (never on page visit).
+
+```python
+def build_discover_board(
+    profile_md: str, followed_domains: list[str], *,
+    client=None, max_feeds: int = 6, max_accounts: int = 6,
+    feed_validator=None, now=None,
+) -> DiscoverBoard: ...
+```
+
+One Claude `web_search` call asks for both lists. Feeds are excluded when
+their host is already followed and kept only when `feed_url` passes the
+liveness check (`search_common.feed_is_live`, injectable) — same bar as
+`discovery`. Account handles are normalized (`@` stripped, `[A-Za-z0-9_]{1,15}`),
+deduped case-insensitively, and linked as `https://x.com/<handle>`.
+Best-effort: any failure returns an empty board with `generated_at=None`,
+which the digest's discover mode treats as "keep the previous board".
 
 ### `newslet.serendipity`
 
@@ -306,10 +330,13 @@ def render_email(
 Lambda entry point + CLI dry-run.
 
 `handler` runs the daily pipeline by default; `event={"manual": true}` does an
-isolated send-now and `event={"home": true}` rebuilds the homepage aggregation
-(stored under `HOME_KEY="home"`, no email). Two EventBridge schedules drive it:
-the home rebuild at 09:45 UTC (`{"home": true}`) and the email digest at 10:00
-UTC. `run_digest` takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and
+isolated send-now, `event={"home": true}` rebuilds the homepage aggregation
+(stored under `HOME_KEY="home"`, no email), and `event={"discover": true}`
+rebuilds the Discover page's stored board (`discover.build_discover_board` →
+`db.put_discover`; a failed build keeps the previous board). Three EventBridge
+schedules drive it: the home rebuild at 09:45 UTC (`{"home": true}`), the
+email digest at 10:00 UTC, and the weekly discover rebuild on Mondays at
+09:30 UTC (`{"discover": true}`). `run_digest` takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and
 `max_x_posts` (daily reads them from `Config`; the homepage uses generous fixed
 counts but honours the same X toggle), and folds in the HN,
 subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
@@ -366,13 +393,18 @@ Routes:
 - `POST /api/home/refresh` — async-invoke digest `{"home": true}` → JSON
   (operational escape hatch; the page no longer calls it on load)
 - `GET /api/home/status` — `{created_at, ready}` for polling after a refresh
+- `GET /discover` — the Discover page: the stored board of recommended RSS
+  feeds (one-click add via `/api/feeds`; already-followed feeds hidden) and
+  X accounts (profile links). Renders instantly from storage. Admin cookie.
+- `POST /api/discover/refresh` — async-invoke digest `{"discover": true}` → JSON
+- `GET /api/discover/status` — `{generated_at, ready}` for the refresh poll
 
 ## DynamoDB tables
 
 | Table | PK | SK | Other attrs | TTL |
 |---|---|---|---|---|
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
-| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs) | — | `markdown`/counts/`theme`, `updated_at` | no |
+| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board) | — | `markdown`/counts/`theme`/`board_json`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
 | `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |

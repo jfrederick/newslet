@@ -775,6 +775,64 @@ def test_config_theme_roundtrip(dynamo: None) -> None:
     assert db.get_config().text_size == 120
 
 
+def test_discover_board_roundtrip(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import DiscoverAccount, DiscoverBoard, DiscoverFeed
+
+    now = datetime.now(UTC)
+    board = DiscoverBoard(
+        feeds=[
+            DiscoverFeed(
+                title="Example Wire",
+                site_url="https://example.com",
+                feed_url="https://example.com/rss",
+                reason="Matches your interest in LLMs.",
+            )
+        ],
+        accounts=[
+            DiscoverAccount(
+                handle="exampleuser",
+                name="Example User",
+                reason="Posts about your beat.",
+                url="https://x.com/exampleuser",
+            )
+        ],
+        generated_at=now,
+    )
+    db.put_discover(board)
+
+    got = db.get_discover()
+    assert len(got.feeds) == 1
+    assert got.feeds[0].title == "Example Wire"
+    assert str(got.feeds[0].feed_url) == "https://example.com/rss"
+    assert len(got.accounts) == 1
+    assert got.accounts[0].handle == "exampleuser"
+    assert got.generated_at == now
+
+
+def test_get_discover_no_row_returns_empty_board(dynamo: None) -> None:
+    from newslet import db
+
+    board = db.get_discover()
+    assert board.feeds == []
+    assert board.accounts == []
+    assert board.generated_at is None
+
+
+def test_get_discover_garbled_row_returns_empty_board(dynamo: None) -> None:
+    from newslet import db
+
+    ddb = boto3.resource("dynamodb", region_name="us-east-1")
+    ddb.Table("newslet-profile").put_item(
+        Item={"id": "discover", "board_json": "not json"}
+    )
+
+    board = db.get_discover()
+    assert board.feeds == []
+    assert board.accounts == []
+    assert board.generated_at is None
+
+
 def test_get_issue_tolerates_malformed_text_size(dynamo: None) -> None:
     """A garbled appearance attribute must not make the issue unreadable
     (lenient on read, like the other optional persisted fields)."""

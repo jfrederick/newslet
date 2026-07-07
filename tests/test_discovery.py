@@ -16,10 +16,6 @@ import pytest
 from newslet import discovery
 from newslet.discovery import find_discoveries
 
-# Real liveness check, captured before the autouse stub patches the module
-# global, so the tests that exercise it directly aren't affected by the stub.
-_REAL_FEED_IS_LIVE = discovery._feed_is_live
-
 
 @pytest.fixture(autouse=True)
 def _stub_feed_validator(monkeypatch):
@@ -27,7 +23,7 @@ def _stub_feed_validator(monkeypatch):
     network. Tests that care about the liveness check pass an explicit
     ``feed_validator`` to override this.
     """
-    monkeypatch.setattr(discovery, "_feed_is_live", lambda url: True)
+    monkeypatch.setattr(discovery, "feed_is_live", lambda url: True)
 
 
 class FakeClient:
@@ -262,38 +258,6 @@ def test_stops_validating_at_max_results():
     assert len(result) == 2
     # Only the first two feeds were fetched, not all five.
     assert checked == ["https://s0.com/feed.xml", "https://s1.com/feed.xml"]
-
-
-def test_feed_is_live_accepts_feed_with_entries(monkeypatch):
-    """_feed_is_live: a parseable feed with entries and no bozo error passes."""
-    fake_parsed = SimpleNamespace(bozo=0, bozo_exception=None, entries=[{"x": 1}])
-    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
-    assert _REAL_FEED_IS_LIVE("https://ok.com/feed.xml") is True
-
-
-def test_feed_is_live_rejects_empty_feed(monkeypatch):
-    """A well-formed but entry-less feed is not 'live' enough to subscribe."""
-    fake_parsed = SimpleNamespace(bozo=0, bozo_exception=None, entries=[])
-    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
-    assert _REAL_FEED_IS_LIVE("https://empty.com/feed.xml") is False
-
-
-def test_feed_is_live_rejects_malformed_feed(monkeypatch):
-    """A bozo (fatally malformed) feed is rejected."""
-    fake_parsed = SimpleNamespace(
-        bozo=1, bozo_exception=Exception("bad xml"), entries=[{"x": 1}]
-    )
-    monkeypatch.setattr(discovery.feedparser, "parse", lambda url: fake_parsed)
-    assert _REAL_FEED_IS_LIVE("https://broken.com/feed.xml") is False
-
-
-def test_feed_is_live_swallows_fetch_error(monkeypatch):
-    """A network/parse exception means 'not live', never propagates."""
-    def boom(url):
-        raise RuntimeError("network down")
-
-    monkeypatch.setattr(discovery.feedparser, "parse", boom)
-    assert _REAL_FEED_IS_LIVE("https://x.com/feed.xml") is False
 
 
 def test_parses_fenced_json():

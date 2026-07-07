@@ -14,6 +14,8 @@ That shared shape needs the same handful of helpers:
   fence or surrounding prose; this digs the object back out.
 - :func:`host_key` — a lowercased, ``www.``-stripped host used to dedupe and
   to exclude already-followed domains.
+- :func:`feed_is_live` — confirms a model-asserted RSS/Atom feed URL is real
+  before it is offered as a subscribe link.
 
 Keeping them here (rather than reaching into one module's privates from the
 other) gives both callers a single, directly-tested home.
@@ -21,8 +23,13 @@ other) gives both callers a single, directly-tested home.
 
 from __future__ import annotations
 
+import logging
 import re
 from urllib.parse import urlsplit
+
+import feedparser
+
+logger = logging.getLogger(__name__)
 
 # Server-side web search tool. Pin to the version string the API expects;
 # tests never call the real API so the exact value is not load-bearing here.
@@ -122,3 +129,32 @@ def extract_json_object(text: str) -> str | None:
             if depth == 0:
                 return candidate[start : i + 1]
     return None
+
+
+def feed_is_live(feed_url: str) -> bool:
+    """Return True if ``feed_url`` actually parses as an RSS/Atom feed.
+
+    The model asserts a ``feed_url`` but can hallucinate a plausible-looking
+    one. We fetch it and require feedparser to find at least one entry and
+    no fatal (``bozo``) parse error — the same liveness bar ``feeds.py``
+    applies on the real fetch — so we never offer a "subscribe" button for
+    a dead URL. Best-effort: any network/parse failure means "not live",
+    never an exception out of the caller.
+    """
+    try:
+        parsed = feedparser.parse(feed_url)
+    except Exception as exc:  # noqa: BLE001 - feedparser can raise anything
+        logger.info("search_common: feed %s failed to fetch: %s", feed_url, exc)
+        return False
+
+    if getattr(parsed, "bozo", 0) and getattr(parsed, "bozo_exception", None):
+        logger.info(
+            "search_common: feed %s is malformed: %s", feed_url, parsed.bozo_exception
+        )
+        return False
+
+    if not getattr(parsed, "entries", None):
+        logger.info("search_common: feed %s has no entries", feed_url)
+        return False
+
+    return True

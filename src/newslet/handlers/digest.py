@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from newslet import (
     db,
+    discover,
     discovery,
     email_render,
     feeds,
@@ -464,12 +465,47 @@ def _run_home(s: Any) -> dict:
     }
 
 
+def _run_discover(s: Any) -> dict:
+    """Regenerate the Discover page's stored recommendations (no email).
+
+    Builds a board of RSS feeds + X accounts matched to the profile (see
+    :mod:`newslet.discover`) and stores it under ``id="discover"`` in the
+    profile table. Fired by the weekly EventBridge schedule and by the
+    page's "Refresh recommendations" button — the page itself only ever
+    reads the stored board. On a failed build (empty board, no
+    ``generated_at``) the previous board is left in place rather than
+    overwritten, so a bad run never blanks the page.
+    """
+    profile = db.get_profile()
+    feeds_list = db.list_feeds()
+    board = discover.build_discover_board(
+        profile.markdown,
+        _feed_domains([str(f.url) for f in feeds_list]),
+    )
+    if board.generated_at is None:
+        log.warning("discover build failed; keeping the previous board")
+        return {"status": "discover_failed"}
+    db.put_discover(board)
+    log.info(
+        "discover refreshed: %d feeds, %d accounts",
+        len(board.feeds),
+        len(board.accounts),
+    )
+    return {
+        "status": "discover_refreshed",
+        "feeds": len(board.feeds),
+        "accounts": len(board.accounts),
+    }
+
+
 def handler(event: dict, context: Any) -> dict:
     """Run the digest pipeline once.
 
     With ``event["manual"]`` truthy, runs an on-demand send isolated from
-    the daily cadence (see :func:`_run_manual`). Otherwise runs the daily
-    pipeline idempotently.
+    the daily cadence (see :func:`_run_manual`). ``event["home"]`` rebuilds
+    the homepage aggregation; ``event["discover"]`` rebuilds the Discover
+    page's stored recommendations. Otherwise runs the daily pipeline
+    idempotently.
 
     Daily idempotency is keyed on ``sent_at`` — *not* mere existence of
     the Issue row — so a partial failure (e.g. ``put_issue`` succeeded but
@@ -502,6 +538,9 @@ def handler(event: dict, context: Any) -> dict:
 
     if event and event.get("home"):
         return _run_home(s)
+
+    if event and event.get("discover"):
+        return _run_discover(s)
 
     today = datetime.now(UTC).strftime("%Y-%m-%d")
 
