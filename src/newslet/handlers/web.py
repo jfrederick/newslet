@@ -491,18 +491,24 @@ def emails_index(admin_token: str | None = Cookie(default=None)) -> HTMLResponse
 
 @app.post("/api/feeds")
 def add_feed(
+    request: Request,
     url: str = Form(...),
     title: str = Form(default=""),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
+    """Add a feed. JSON for fetch-based callers (the Discover page adds
+    in place without navigating away — same negotiation as ``/api/vote``);
+    303 to ``/admin`` for the no-JS form post."""
     _require_admin(admin_token)
     try:
-        db.add_feed(url, title=title)
+        feed = db.add_feed(url, title=title)
     except ValidationError as exc:
         raise HTTPException(
             status_code=400,
             detail=f"invalid feed URL: {exc.errors()[0]['msg']}",
         ) from exc
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"ok": True, "url": str(feed.url)})
     return RedirectResponse(url="/admin", status_code=303)
 
 

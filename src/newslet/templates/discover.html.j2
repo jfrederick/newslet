@@ -64,7 +64,7 @@
       <h3><a href="{{ f.site_url|e }}" target="_blank" rel="noopener noreferrer">{{ f.title|e }}</a></h3>
       <div class="meta">{{ f.feed_url|e }}</div>
       {% if f.reason %}<p class="reason">{{ f.reason|e }}</p>{% endif %}
-      <form class="actions" method="post" action="/api/feeds">
+      <form class="actions add-feed" method="post" action="/api/feeds">
         <input type="hidden" name="url" value="{{ f.feed_url|e }}">
         <input type="hidden" name="title" value="{{ f.title|e }}">
         <button class="btn" type="submit">+ Add to my feeds</button>
@@ -107,6 +107,30 @@
 <script>
 (function () {
   "use strict";
+  // ---- Add feed in place: fetch JSON, remove the card, stay on the page ----
+  // The plain form post (→ 303 /admin) remains as the no-JS fallback.
+  document.querySelectorAll("form.add-feed").forEach(function (form) {
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var button = form.querySelector("button");
+      button.disabled = true;
+      fetch("/api/feeds", {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        headers: { "Accept": "application/json" },
+      })
+        .then(function (r) { if (!r.ok) throw new Error("add failed"); return r.json(); })
+        .then(function () {
+          var card = form.closest("article.card");
+          if (card) card.remove();
+        })
+        .catch(function () {
+          button.disabled = false;
+          form.submit(); // fall back to the full form post so the add still lands
+        });
+    });
+  });
+
   // Refresh is fire-and-forget on the server (an async digest {"discover":
   // true} invoke); the page stays fully readable while we poll for the new
   // board and reload when it lands. Non-blocking by design — the stored

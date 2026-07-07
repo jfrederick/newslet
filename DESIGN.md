@@ -377,7 +377,8 @@ Routes:
   `admin_token` cookie.
 - `GET /admin` — admin UI (feeds, profile, daily-email settings, theme picker, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`
-- `POST /api/feeds` — `{url, title?}` → 303 `/admin`
+- `POST /api/feeds` — `{url, title?}` → 303 `/admin` (or JSON when the caller
+  sends `Accept: application/json` — the Discover page adds in place)
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
 - `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)

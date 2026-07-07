@@ -184,6 +184,28 @@ def test_add_and_delete_feed_roundtrip(client):
     assert 'value="https://example.com/rss"' not in r.text
 
 
+def test_add_feed_returns_json_for_fetch_callers(client):
+    """The Discover page adds feeds via fetch and must stay on /discover —
+    an Accept: application/json post gets JSON back, not the /admin 303."""
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/feeds",
+        data={"url": "https://example.com/rss", "title": "Example"},
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["url"].startswith("https://example.com/rss")
+    # The no-JS form post still redirects to the admin page.
+    r = client.post(
+        "/api/feeds",
+        data={"url": "https://example.com/rss2", "title": "Example 2"},
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin"
+
+
 def test_profile_save(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.post("/api/profile", data={"markdown": "I like LLMs and Postgres."})
