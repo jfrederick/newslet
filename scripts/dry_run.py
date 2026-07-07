@@ -123,6 +123,20 @@ def main() -> int:
                 source="Open Web",
             ),
         ],
+        random_articles=[
+            WebArticle(
+                url="https://www.theatlantic.com/example/the-lost-art-of-the-long-lunch",
+                title="The lost art of the long lunch",
+                blurb="Why two-hour lunches are quietly returning to European cities.",
+                source="The Atlantic",
+            ),
+            WebArticle(
+                url="https://www.natgeo.com/example/deep-sea-census-new-species",
+                title="Deep-sea census logs 800 new species in a single year",
+                blurb="A global survey of hadal-zone life turns up an unexpected bounty.",
+                source="National Geographic",
+            ),
+        ],
     )
     # Optional positional arg picks the theme, e.g. `dry_run.py phosphor`
     # (themes.get falls back to the default, foundry, on anything unknown).

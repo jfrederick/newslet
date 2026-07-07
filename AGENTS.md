@@ -69,6 +69,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `search_common.py` | shared Claude `web_search` primitives (tool def, last-text-block, JSON extraction, host key) used by `discovery` + `websearch` |
 | `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
+| `serendipity.py` | Claude `web_search` for the "off your beat" block: popular past-week articles outside the reader's tech beat (profile for human taste only; computers/AI hard-excluded) |
 | `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
 | `db.py` | boto3 DynamoDB wrappers (7 tables) |
@@ -93,12 +94,14 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   `/rate` pattern for any new email-clickable action.
 - **Best-effort enrichment:** summarize, discovery, the Hacker News source
   (`hn.fetch_hn_articles`), the web-search block (`websearch.search_web`), the
+  off-your-beat block (`serendipity.fetch_serendipity`), the
   subscribed-newsletter source (`db.recent_inbox_articles`), and the X source
   (`x_grok.fetch_x_articles`) must never block a send — they degrade to empty
   on any failure. Keep new enrichment steps in the same `try/except → empty`
   shape, and make their network edge injectable (HN takes a `fetch` callable;
-  websearch a `client`; X a `complete` callable; `run_digest` takes
-  `hn_fn`/`websearch_fn`/`newsletters_fn`/`x_fn`) so tests stay offline.
+  websearch/serendipity a `client`; X a `complete` callable; `run_digest`
+  takes `hn_fn`/`websearch_fn`/`newsletters_fn`/`x_fn`/`serendipity_fn`) so
+  tests stay offline.
 - **Optional-source keys:** sources gated on a key the user may not have set
   (the X source's `XAI_API_KEY`) read it via `config._optional_secret`, which
   returns `""` (feature disabled) instead of raising, and only consults SSM
@@ -118,8 +121,11 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   - The **daily email** (`/emails/{date}` archive renders it as-sent; the
     `/emails` list is the archive index) carries `Config.max_rss_articles`
     ranked picks (RSS + Hacker News) plus `Config.max_web_articles` open-web
-    results, both votable via the signed `/rate` link, plus discoveries. It
-    links generically to the homepage.
+    results plus `Config.max_random_articles` "off your beat" articles
+    (`Issue.random_articles`), all votable via the signed `/rate` link, plus
+    discoveries. It links generically to the homepage. The off-beat block
+    also renders on the homepage — its own section on both surfaces, never
+    folded into the ranked pool.
   - The **homepage** (`/`, `read.html.j2`) is the rich, browse-everything web
     experience: a separate aggregation stored under the reserved issue key
     `"home"` (see `digest.HOME_KEY`). There is **no refresh button** — a
@@ -136,7 +142,8 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
     home view drops already-downvoted articles).
 - **Admin config** lives in the profile table under `id="config"`
   (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
-  `max_web_articles`, `web_variety` (0–100 exploration dial for
+  `max_web_articles`, `max_random_articles` (the "off your beat" block's
+  count; 0 disables it), `web_variety` (0–100 exploration dial for
   `websearch.search_web`), `x_enabled` (X source on/off; also needs
   `XAI_API_KEY`), `max_x_articles` (X posts pulled into the pool), `theme`
   (visual theme for the web pages *and* the daily email; resolve names via

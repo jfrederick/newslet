@@ -105,6 +105,23 @@ def render_email(
             }
         )
 
+    # The "off your beat" block: same signed voting as picks/web, so feedback
+    # on the deliberately-off-profile picks still lands in the ranking loop.
+    ctx_random = []
+    for r in issue.random_articles:
+        url_str = str(r.url)
+        up_link, down_link = _rate_links(url_str)
+        ctx_random.append(
+            {
+                "url": url_str,
+                "title": r.title,
+                "blurb": r.blurb,
+                "source": r.source,
+                "up_link": up_link,
+                "down_link": down_link,
+            }
+        )
+
     ctx_discoveries = []
     for d in issue.discoveries:
         feed_str = str(d.feed_url)
@@ -132,6 +149,7 @@ def render_email(
         date=display_date,
         picks=ctx_picks,
         web_articles=ctx_web,
+        random_articles=ctx_random,
         intro=issue.intro,
         discoveries=ctx_discoveries,
         # Generic link to the newslet homepage (the rich, browse-everything

@@ -549,8 +549,13 @@ def test_admin_index_flashes_after_send(client):
 # ---------------------------------------------------------------------------
 
 
-def _seed_issue(key, created_at=None):
-    """Seed an issue (picks + web articles) under ``key`` (a date or 'home')."""
+def _seed_issue(key, created_at=None, random_articles=None):
+    """Seed an issue (picks + web articles) under ``key`` (a date or 'home').
+
+    ``random_articles`` (the "off your beat" block) defaults to ``None``,
+    which keeps the previous behaviour (an empty list) so existing callers
+    are unaffected.
+    """
     from datetime import UTC, datetime
 
     from newslet import db
@@ -576,6 +581,7 @@ def _seed_issue(key, created_at=None):
                            points=222, comments=33,
                            comments_url="https://news.ycombinator.com/item?id=9"),
             ],
+            random_articles=random_articles or [],
         )
     )
     return key
@@ -622,6 +628,52 @@ def test_homepage_downvoted_article_disappears(client):
     assert r.status_code == 200
     # The downvoted article is gone; the others remain.
     assert "Beta Pick" not in r.text
+    assert "Alpha Pick" in r.text
+
+
+def test_homepage_renders_random_articles(client):
+    from newslet.contracts import WebArticle
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue(
+        "home",
+        random_articles=[
+            WebArticle(url="https://offbeat.ex.com/1", title="Off Beat Story",
+                       blurb="rb", source="Example Magazine"),
+        ],
+    )
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Off your beat" in r.text
+    assert "Off Beat Story" in r.text
+    # Votable, inside the dedicated random-articles grid.
+    grid = r.text[r.text.index('id="random-grid"'):]
+    assert "Off Beat Story" in grid
+    assert 'action="/api/vote"' in grid
+
+
+def test_homepage_downvoted_random_article_disappears(client):
+    from datetime import UTC, datetime
+
+    from newslet import db
+    from newslet.contracts import FeedbackRow, WebArticle
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue(
+        "home",
+        random_articles=[
+            WebArticle(url="https://offbeat.ex.com/1", title="Off Beat Story",
+                       blurb="rb", source="Example Magazine"),
+        ],
+    )
+    db.put_feedback(
+        FeedbackRow(article_url="https://offbeat.ex.com/1", title="Off Beat Story",
+                    rating="down", ts=datetime.now(UTC), issue_date="home")
+    )
+    r = client.get("/")
+    assert r.status_code == 200
+    # The downvoted random article is gone; the other content remains.
+    assert "Off Beat Story" not in r.text
     assert "Alpha Pick" in r.text
 
 
@@ -884,6 +936,46 @@ def test_config_save_and_render(client):
     assert 'name="web_variety"' in r.text
     assert 'name="x_enabled"' in r.text
     assert 'name="max_x_articles"' in r.text
+
+
+def test_config_save_persists_max_random_articles(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={
+            "max_rss_articles": "15",
+            "max_web_articles": "8",
+            "web_variety": "70",
+            "x_enabled": "true",
+            "max_x_articles": "12",
+            "max_random_articles": "7",
+        },
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin"
+    assert db.get_config().max_random_articles == 7
+
+    # The admin page shows the saved value.
+    r = client.get("/admin")
+    assert 'name="max_random_articles"' in r.text
+    assert 'value="7"' in r.text
+
+
+def test_config_max_random_articles_defaults_when_absent(client):
+    """A pre-serendipity client posting only the original fields gets the
+    app default (4) — backward compat."""
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        # No max_random_articles key — mirrors a client that predates the field.
+        data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().max_random_articles == 4
 
 
 def test_config_x_disabled_when_checkbox_absent(client):

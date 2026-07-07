@@ -45,6 +45,7 @@
 
   h2.section { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
     margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .section-hint { text-transform: none; letter-spacing: normal; font-weight: 400; }
 
   .grid { display: grid; gap: 12px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 16px 12px;
@@ -136,6 +137,13 @@
   <h2 class="section">From around the web</h2>
   <div class="grid" id="web-grid">
     {% for c in web_articles %}{{ card(c) }}{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if random_articles %}
+  <h2 class="section">Off your beat <span class="section-hint">— popular this week, nothing to do with computers</span></h2>
+  <div class="grid" id="random-grid">
+    {% for c in random_articles %}{{ card(c) }}{% endfor %}
   </div>
   {% endif %}
 

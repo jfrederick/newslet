@@ -24,6 +24,7 @@ from newslet import (
     feeds,
     hn,
     rank,
+    serendipity,
     summarize,
     themes,
     tune,
@@ -60,6 +61,7 @@ _HOME_WEB_ARTICLES = 20
 # Fallback counts when no admin config is present (run_digest defaults).
 _DEFAULT_MAX_PICKS = 10
 _DEFAULT_MAX_WEB = 5
+_DEFAULT_MAX_RANDOM = 4
 
 # How many HN front pages to pull into the ranking candidate pool.
 _HN_PAGES = 20
@@ -109,6 +111,7 @@ def _build_issue(
     intro: str = "",
     discoveries: list[Discovery] | None = None,
     web_articles: list[WebArticle] | None = None,
+    random_articles: list[WebArticle] | None = None,
 ) -> Issue:
     return Issue(
         date=date,
@@ -118,6 +121,7 @@ def _build_issue(
         intro=intro,
         discoveries=discoveries or [],
         web_articles=web_articles or [],
+        random_articles=random_articles or [],
     )
 
 
@@ -162,11 +166,13 @@ def run_digest(
     websearch_fn=None,
     newsletters_fn=None,
     x_fn=None,
+    serendipity_fn=None,
     x_enabled: bool = True,
     max_x_posts: int = _X_MAX_POSTS,
     max_picks: int = _DEFAULT_MAX_PICKS,
     min_picks: int = 5,
     max_web: int = _DEFAULT_MAX_WEB,
+    max_random: int = _DEFAULT_MAX_RANDOM,
     web_variety: int = 30,
     web_model: str | None = None,
     now: datetime | None = None,
@@ -176,9 +182,9 @@ def run_digest(
     Returns ``(issue, candidates)`` so callers can mark every fetched
     article seen (not just the picked ones) and avoid re-evaluating
     rejects on subsequent days.  Summarize, discovery, the Hacker News
-    source, the X (Twitter) source, and the web-search block are all
-    best-effort: a failure in any of them degrades to empty and never
-    blocks the send.
+    source, the X (Twitter) source, the web-search block, and the
+    "off your beat" serendipity block are all best-effort: a failure in
+    any of them degrades to empty and never blocks the send.
     """
     # Resolve at call time (not as defaults) so monkeypatching the module
     # attributes in tests is honoured.
@@ -188,6 +194,7 @@ def run_digest(
     websearch_fn = websearch_fn or websearch.search_web
     newsletters_fn = newsletters_fn or db.recent_inbox_articles
     x_fn = x_fn or x_grok.fetch_x_articles
+    serendipity_fn = serendipity_fn or serendipity.fetch_serendipity
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -286,6 +293,21 @@ def run_digest(
             log.exception("web search failed; sending without the web block")
     web_articles = [w for w in web_articles if not is_seen(str(w.url))]
 
+    # The "off your beat" block: popular past-week pieces deliberately outside
+    # the reader's usual (tech) beat — see newslet.serendipity. Its own block
+    # on both surfaces (not folded into the ranked pool, where the
+    # profile-driven ranker would bury it). Best-effort and seen-filtered like
+    # the web block; ``max_random == 0`` disables it entirely.
+    random_articles: list[WebArticle] = []
+    if max_random > 0:
+        try:
+            random_articles = serendipity_fn(
+                profile.markdown, max_results=max_random
+            )
+        except Exception:  # noqa: BLE001 - best effort, never block the send
+            log.exception("serendipity failed; sending without the off-beat block")
+    random_articles = [r for r in random_articles if not is_seen(str(r.url))]
+
     issue = _build_issue(
         response.picks,
         date=date,
@@ -293,6 +315,7 @@ def run_digest(
         intro=intro,
         discoveries=discoveries,
         web_articles=web_articles,
+        random_articles=random_articles,
     )
     return issue, candidates
 
@@ -330,6 +353,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         is_seen=db.is_seen,
         max_picks=config.max_rss_articles,
         max_web=config.max_web_articles,
+        max_random=config.max_random_articles,
         web_variety=config.web_variety,
         x_enabled=config.x_enabled,
         max_x_posts=config.max_x_articles,
@@ -420,6 +444,7 @@ def _run_home(s: Any) -> dict:
         max_picks=_HOME_RANK_PICKS,
         min_picks=_HOME_MIN_PICKS,
         max_web=_HOME_WEB_ARTICLES,
+        max_random=config.max_random_articles,
         web_variety=config.web_variety,
         x_enabled=config.x_enabled,
         max_x_posts=config.max_x_articles,
@@ -512,6 +537,7 @@ def handler(event: dict, context: Any) -> dict:
     seen_urls = [str(a.url) for a in candidates]
     seen_urls += [str(d.url) for d in issue.discoveries]
     seen_urls += [str(w.url) for w in issue.web_articles]
+    seen_urls += [str(r.url) for r in issue.random_articles]
     if seen_urls:
         db.mark_seen(seen_urls)
 
@@ -618,6 +644,18 @@ def _fake_websearch(query: str, **_) -> list[WebArticle]:
     ]
 
 
+def _fake_serendipity(profile_md: str, **_) -> list[WebArticle]:
+    """Deterministic, offline "off your beat" articles for --dry-run."""
+    return [
+        WebArticle(
+            url="https://example.com/off-beat-1",
+            title="A widely-shared story from well outside your beat",
+            blurb="Sample off-your-beat result rendered in the dry-run output.",
+            source="Example Magazine",
+        )
+    ]
+
+
 def _dry_run_env() -> None:
     """Force dry-run env values.
 
@@ -679,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
         websearch_fn=_fake_websearch,
         newsletters_fn=_fake_newsletters,
         x_fn=_fake_x,
+        serendipity_fn=_fake_serendipity,
     )
 
     if not issue.picks:

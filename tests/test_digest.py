@@ -300,6 +300,103 @@ def test_run_digest_no_candidates_returns_empty_issue(env):
     assert candidates == []
 
 
+def test_run_digest_serendipity_returns_random_articles(env):
+    from newslet.contracts import WebArticle
+    from newslet.handlers.digest import run_digest
+
+    random_articles = [
+        WebArticle(url="https://off.example.com/1", title="Off One", blurb="b", source="Src"),
+        WebArticle(url="https://off.example.com/2", title="Off Two", blurb="b", source="Src"),
+    ]
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        serendipity_fn=lambda *_a, **_k: random_articles,
+    )
+    assert issue.random_articles == random_articles
+
+
+def test_run_digest_serendipity_exception_is_swallowed(env):
+    from newslet.handlers.digest import run_digest
+
+    def boom_serendipity(*_a, **_k):
+        raise RuntimeError("serendipity exploded")
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        serendipity_fn=boom_serendipity,
+    )
+    # Issue built despite serendipity failure
+    assert issue.random_articles == []
+
+
+def test_run_digest_max_random_zero_skips_serendipity(env):
+    from newslet.handlers.digest import run_digest
+
+    def boom_if_called(*_a, **_k):
+        raise AssertionError("serendipity_fn should not be called when max_random=0")
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        serendipity_fn=boom_if_called,
+        max_random=0,
+    )
+    assert issue.random_articles == []
+
+
+def test_run_digest_serendipity_seen_result_is_dropped(env):
+    from newslet.contracts import WebArticle
+    from newslet.handlers.digest import run_digest
+
+    seen_url = "https://off.example.com/seen"
+    random_articles = [
+        WebArticle(url=seen_url, title="Seen One", blurb="b", source="Src"),
+        WebArticle(url="https://off.example.com/fresh", title="Fresh One", blurb="b", source="Src"),
+    ]
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda u: u == seen_url,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        serendipity_fn=lambda *_a, **_k: random_articles,
+    )
+    assert [str(r.url) for r in issue.random_articles] == ["https://off.example.com/fresh"]
+
+
 def test_run_digest_max_web_zero_skips_websearch(env):
     from newslet.handlers.digest import run_digest
 
