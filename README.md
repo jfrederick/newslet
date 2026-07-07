@@ -34,9 +34,10 @@ open-web block, with `+`/`−` voting (upvote keeps, downvote removes) that
 feeds the same ranking loop, and a "research a subject" box that runs a
 fresh web search on whatever topic you type. The homepage has no manual
 refresh button: a scheduled job rebuilds it every morning at 09:45 UTC
-(15 minutes before the email), and it also regenerates on demand if the
-stored edition isn't from today. Past daily emails are archived at
-`/emails/<date>`.
+(15 minutes before the email) and is the sole updater — the page always
+shows the latest built edition instantly, with a small notice if the
+day's rebuild (judged on the US-Eastern calendar day) hasn't landed yet.
+Past daily emails are archived at `/emails/<date>`.
 
 ## Product guide
 

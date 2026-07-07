@@ -75,6 +75,7 @@
   .empty { color: var(--muted); padding: 10px 0; }
   .banner { background: var(--accent-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 20px 0; }
   .spinner { display: none; color: var(--muted); font-size: 0.875rem; padding: 8px 0; }
+  .stale-note { color: var(--muted); font-size: 0.875rem; padding: 8px 0; font-style: italic; }
 </style>
 </head>
 <body>
@@ -114,7 +115,15 @@
     {% if intro %}<p>{{ intro|e }}</p>{% endif %}
   </div>
 
-  <div class="spinner" id="prep-spinner">Preparing today's edition — this takes about a minute…</div>
+  {% if stale %}
+  <div class="stale-note" id="stale-note">
+    {% if has_content %}
+    Showing {{ stale_day|e }}'s edition — today's update hasn't run yet.
+    {% else %}
+    No edition yet — the daily update builds one each morning.
+    {% endif %}
+  </div>
+  {% endif %}
 
   {% if picks %}
   <h2 class="section">Ranked picks</h2>
@@ -204,38 +213,6 @@
     });
   }
 
-  // ---- Auto-regenerate when the stored edition is missing or not today's ----
-  function autoRefresh() {
-    var spinner = document.getElementById("prep-spinner");
-    var baseline = {{ created_iso|tojson }};
-    spinner.style.display = "block";
-    fetch("/api/home/refresh", { method: "POST", headers: { "Accept": "application/json" } })
-      .then(function (r) { if (!r.ok) throw new Error("refresh failed"); return r.json(); })
-      .then(function () { pollStatus(baseline, 0); })
-      .catch(function () {
-        spinner.textContent = "Couldn't prepare today's edition — reload in a moment.";
-      });
-  }
-  function pollStatus(baseline, tries) {
-    if (tries > 40) { // ~3.5 min ceiling
-      document.getElementById("prep-spinner").textContent =
-        "Still preparing… reload the page in a minute.";
-      return;
-    }
-    setTimeout(function () {
-      fetch("/api/home/status", { headers: { "Accept": "application/json" } })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.ready && d.created_at && d.created_at !== baseline) {
-            window.location.reload();
-          } else {
-            pollStatus(baseline, tries + 1);
-          }
-        })
-        .catch(function () { pollStatus(baseline, tries + 1); });
-    }, 5000);
-  }
-
   // ---- Research box: inline search via JSON, no full reload ----
   var sform = document.getElementById("search-form");
   if (sform) {
@@ -294,9 +271,6 @@
   }
 
   wireVotes(document);
-
-  // Kick off generation when the stored edition is missing or stale.
-  if ({{ 'true' if stale else 'false' }}) autoRefresh();
 })();
 </script>
 </body>

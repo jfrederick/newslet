@@ -22,7 +22,7 @@ from markupsafe import Markup
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from newslet import db, email_render, hn, newsletters, themes, tokens, websearch
+from newslet import clock, db, email_render, hn, newsletters, themes, tokens, websearch
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -269,9 +269,11 @@ def home(
     the daily email) aggregating lots of ranked picks plus an open-web block,
     with +/- voting and a subject-search box.
 
-    There is no manual refresh button: the page regenerates itself when the
-    stored edition is missing or not from today (the client auto-kicks the
-    async rebuild and reloads when it lands)."""
+    The scheduled daily rebuild (the ``{"home": true}`` cron) is the sole
+    updater: the page always renders the latest stored edition immediately
+    and never blocks on (or kicks off) a rebuild. If the newest edition is
+    not from today — Eastern, the reader's calendar day, not UTC — a small
+    non-blocking notice says so above the content."""
     _require_admin(admin_token)
     now = datetime.now(UTC)
     issue = db.get_issue(_HOME_KEY)
@@ -280,15 +282,17 @@ def home(
     web_cards: list[dict] = []
     total = 0
     subject = intro = ""
-    created_iso = ""
     if issue is not None:
         pick_cards, web_cards, total = _home_cards(issue)
         subject, intro = issue.subject, issue.intro
-        created_iso = issue.created_at.isoformat()
 
-    # Regenerate when there is no edition yet, or the stored one is from an
-    # earlier day — so the homepage is always "today's edition".
-    stale = issue is None or issue.created_at.date() != now.date()
+    # "Today's edition" is judged on the Eastern calendar day (see
+    # newslet.clock) — a UTC comparison here made every evening visit look
+    # stale the moment the UTC date rolled over.
+    stale = issue is None or clock.local_date(issue.created_at) != clock.local_date(now)
+    stale_day = (
+        clock.local_date(issue.created_at).strftime("%A") if issue is not None else ""
+    )
 
     # Optional inline subject search (progressive-enhancement fallback).
     query = (q or "").strip()
@@ -303,10 +307,11 @@ def home(
                 )
             )
 
+    local = clock.local_now(now)
     html = _TEMPLATES.get_template("read.html.j2").render(
         theme_css=_theme_css(),
         vote_key=_HOME_KEY,
-        date_header=now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y"),
+        date_header=local.strftime("%A, %B ") + str(local.day) + local.strftime(", %Y"),
         subject=subject,
         intro=intro,
         picks=pick_cards,
@@ -314,7 +319,7 @@ def home(
         total=total,
         has_content=issue is not None,
         stale=stale,
-        created_iso=created_iso,
+        stale_day=stale_day,
         query=query,
         search_results=search_cards,
     )
@@ -800,8 +805,9 @@ def home_refresh(admin_token: str | None = Cookie(default=None)) -> JSONResponse
 
     Async-invokes the digest Lambda with ``{"home": true}`` — the same
     fire-and-forget pattern as "send now" — because a full rebuild far
-    exceeds this Lambda's (and the HTTP API's) timeout. The page then polls
-    ``/api/home/status`` and reloads when the content is newer.
+    exceeds this Lambda's (and the HTTP API's) timeout. The daily cron is
+    the normal updater; this endpoint remains as an operational escape
+    hatch (the page itself no longer calls it on load).
     """
     _require_admin(admin_token)
     fn = settings().digest_function_name
@@ -822,8 +828,8 @@ def home_refresh(admin_token: str | None = Cookie(default=None)) -> JSONResponse
 def home_status(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
     """Return the homepage content's current freshness timestamp.
 
-    The client captures this before a refresh and polls until it changes,
-    then reloads — a simple way to await the async regeneration.
+    A caller that triggered ``/api/home/refresh`` can poll this until the
+    timestamp changes to know the async regeneration landed.
     """
     _require_admin(admin_token)
     issue = db.get_issue(_HOME_KEY)

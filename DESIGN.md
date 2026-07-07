@@ -319,10 +319,13 @@ Routes:
 - `GET /docs/content.md` — the canonical product-guide markdown
   (`newslet/docs/product.md`), served as `text/markdown` for the viewer to fetch
 - `GET /` — the homepage: rich reading UX (`read.html.j2`) over the stored
-  `"home"` aggregation, with a today's-date header, +/- voting (upvote sticky,
-  downvote removes the article), and a subject-search box. No refresh button —
-  it auto-regenerates when the stored edition is missing or not from today.
-  Optional `?q=` server-renders a web search. Requires the `admin_token` cookie.
+  `"home"` aggregation, with a today's-date header (US Eastern — see
+  `newslet.clock`), +/- voting (upvote sticky, downvote removes the article),
+  and a subject-search box. The daily cron is the sole updater: the page always
+  renders the latest stored edition immediately and shows a small non-blocking
+  notice when that edition isn't from today (Eastern) — it never rebuilds on
+  visit. Optional `?q=` server-renders a web search. Requires the
+  `admin_token` cookie.
 - `GET /admin` — admin UI (feeds, profile, daily-email settings, theme picker, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin`
@@ -339,7 +342,8 @@ Routes:
 - `GET /api/search` — `?q=` admin-authed live web search → JSON cards
 - `GET /api/hn` — admin-authed live Hacker News front page → JSON cards
 - `POST /api/home/refresh` — async-invoke digest `{"home": true}` → JSON
-- `GET /api/home/status` — `{created_at, ready}` for the refresh poll
+  (operational escape hatch; the page no longer calls it on load)
+- `GET /api/home/status` — `{created_at, ready}` for polling after a refresh
 
 ## DynamoDB tables
 

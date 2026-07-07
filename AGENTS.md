@@ -61,6 +61,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 
 | Module | Responsibility |
 | --- | --- |
+| `clock.py` | the app's calendar-day boundary (US Eastern): `local_date`/`local_now`; nothing else hardcodes a timezone |
 | `config.py` | `Settings` — env vars + SSM SecureString lookups for secrets |
 | `contracts.py` | pydantic models at every JSON/DB boundary (Article, Pick, Issue, Discovery, WebArticle, …) |
 | `tokens.py` | HMAC sign/verify for `/rate` links |
@@ -123,10 +124,13 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
     experience: a separate aggregation stored under the reserved issue key
     `"home"` (see `digest.HOME_KEY`). There is **no refresh button** — a
     scheduled EventBridge rule rebuilds it daily at 09:45 UTC (a
-    `{"home": true}` digest run, 15 min before the email), and the page also
-    auto-regenerates on demand when the stored edition is missing or not from
-    today (client kicks `/api/home/refresh` → async digest `{"home": true}`,
-    polls `/api/home/status`, reloads). Voting uses `/api/vote` (admin cookie),
+    `{"home": true}` digest run, 15 min before the email) and is the **sole
+    updater**: the page always renders the latest stored edition immediately
+    and never rebuilds on visit. Freshness is judged on the **US-Eastern
+    calendar day** (`newslet.clock`), not UTC; a stale/missing edition renders
+    with a small non-blocking notice. `/api/home/refresh` +
+    `/api/home/status` remain as an operational escape hatch (not wired to
+    page load). Voting uses `/api/vote` (admin cookie),
     same `FeedbackRow` shape as `/rate`; an **upvote** is sticky and a
     **downvote removes** the article from the page (and it stays gone — the
     home view drops already-downvoted articles).
