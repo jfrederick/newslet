@@ -40,6 +40,7 @@ def render_email(
     theme: themes.Theme | None = None,
     text_size: int = 100,
     web_nav: bool = False,
+    deepdive_pending: int | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, html)`` for one issue.
 
@@ -47,7 +48,9 @@ def render_email(
     stylesheet classes); ``None`` renders the app default. ``text_size``
     (percent) scales every inline ``font-size`` — the email analogue of the
     web pages' root font-size dial. ``web_nav`` adds the web page's nav strip
-    above the email body; never set for sent emails.
+    above the email body; never set for sent emails. ``deepdive_pending``
+    (web only) renders the deep-dive request form with its queue count;
+    ``None`` (the email default) omits the form entirely.
     """
     theme = theme or themes.get(None)
     text_size = min(
@@ -142,6 +145,20 @@ def render_email(
     fact_mid = next((_fact_ctx(f) for f in issue.facts if f.slot == "mid"), None)
     fact_end = next((_fact_ctx(f) for f in issue.facts if f.slot == "end"), None)
 
+    # The reader-requested deep dive ("You asked"): paragraphs like a fact,
+    # but no voting — the reader explicitly asked for it.
+    deepdive_ctx = None
+    if issue.deepdive is not None:
+        deepdive_ctx = {
+            "topic": issue.deepdive.topic,
+            "title": issue.deepdive.title,
+            "paragraphs": [
+                p.strip()
+                for p in issue.deepdive.body_md.split("\n\n")
+                if p.strip()
+            ],
+        }
+
     # The quote of the day (epigraph): same synthetic-signed-URL voting as
     # facts, path shape /quote/{issue-key} (see newslet.quotes.VOTE_PATH_RE).
     quote_ctx = None
@@ -193,6 +210,8 @@ def render_email(
         fact_mid=fact_mid,
         fact_end=fact_end,
         quote=quote_ctx,
+        deepdive=deepdive_ctx,
+        deepdive_pending=deepdive_pending,
         weather_line=issue.weather_line,
     )
     return subject, html

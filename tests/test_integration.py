@@ -65,6 +65,12 @@ def aws(env):
             BillingMode="PAY_PER_REQUEST",
         )
         ddb.create_table(
+            TableName="newslet-requests",
+            KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
             TableName="newslet-issues",
             KeySchema=[{"AttributeName": "date", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "date", "AttributeType": "S"}],
@@ -179,6 +185,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     consume the rank fake). Patching the bound functions keeps each test
     focused on the behaviour it asserts.
     """
+    from newslet import deepdive as deepdive_mod
     from newslet import discovery as discovery_mod
     from newslet import facts as facts_mod
     from newslet import hn as hn_mod
@@ -210,6 +217,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     monkeypatch.setattr(facts_mod, "tune_facts_profile", lambda md, fb, **_: md)
     monkeypatch.setattr(quotes_mod, "fetch_quote", lambda *a, **k: None)
     monkeypatch.setattr(weather_mod, "fetch_weather", lambda *a, **k: None)
+    monkeypatch.setattr(deepdive_mod, "fetch_deepdive", lambda *a, **k: None)
     monkeypatch.setattr(quotes_mod, "tune_quotes_profile", lambda md, fb, **_: md)
 
 

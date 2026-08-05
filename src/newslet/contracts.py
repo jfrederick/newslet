@@ -93,6 +93,18 @@ class FactsState(BaseModel):
     recent_topics: list[str] = Field(default_factory=list)
 
 
+class DeepDive(BaseModel):
+    """A reader-requested ~500-word explainer — see ``newslet.deepdive``.
+
+    ``topic`` echoes the request verbatim so the "You asked" block can show
+    it and the post-send serving step can match the pending request row.
+    """
+
+    topic: str
+    title: str
+    body_md: str
+
+
 class Quote(BaseModel):
     """The philosophical quote of the day — see ``newslet.quotes``.
 
@@ -167,6 +179,8 @@ class Issue(BaseModel):
     # The philosophical quote of the day (epigraph) — see ``newslet.quotes``.
     # Optional for the same lenient-load reason.
     quote: Quote | None = None
+    # A reader-requested explainer ("You asked") — see ``newslet.deepdive``.
+    deepdive: DeepDive | None = None
     # One terse NWS forecast line ("78° chance light rain, tonight 64° ...")
     # stamped at build time — see ``newslet.weather``. Empty = absent.
     weather_line: str = ""
@@ -251,6 +265,8 @@ class Config(BaseModel):
       of the day (see ``newslet.quotes``).
     - ``weather_enabled`` — whether each issue carries the one-line Brooklyn
       weather forecast (see ``newslet.weather``).
+    - ``deepdive_enabled`` — whether the digest answers queued deep-dive
+      requests (see ``newslet.deepdive``).
     """
 
     max_rss_articles: int = Field(default=10, ge=1, le=40)
@@ -264,6 +280,7 @@ class Config(BaseModel):
     facts_enabled: bool = Field(default=True)
     quote_enabled: bool = Field(default=True)
     weather_enabled: bool = Field(default=True)
+    deepdive_enabled: bool = Field(default=True)
 
 
 class DiscoverFeed(BaseModel):

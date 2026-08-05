@@ -63,8 +63,8 @@ EventBridge cron (Mon 09:30, discover)┘
    newsletter email ──▶ SES ──▶ S3 ──▶ inbound Lambda
 ```
 
-Seven DynamoDB tables (`Feeds`, `Profile`, `SeenArticles` w/ 21d TTL,
-`Issues`, `Feedback`, `Subscriptions`, `Inbox` w/ 30d TTL), three Lambdas
+Eight DynamoDB tables (`Feeds`, `Profile`, `SeenArticles` w/ 21d TTL,
+`Issues`, `Feedback`, `Subscriptions`, `Requests`, `Inbox` w/ 30d TTL), three Lambdas
 (digest, web, inbound), one HTTP API, and — for the newsletter source —
 SES inbound + an S3 bucket. SAM-deployed.
 
@@ -317,6 +317,7 @@ resolve a lockfile.
 - `src/newslet/facts.py` — two ~500-word tech-fact essays per issue, with their own vote-tuned taste profile
 - `src/newslet/quotes.py` — the philosophical quote of the day, with its own vote-tuned taste profile
 - `src/newslet/weather.py` — one terse Brooklyn forecast line via the free NWS API (no LLM)
+- `src/newslet/deepdive.py` — reader-requested ~500-word explainers, queued from the homepage
 - `src/newslet/x_grok.py` — X (Twitter) ranking candidates via xAI Grok Live Search (optional; on when `XAI_API_KEY` is set)
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers

@@ -195,6 +195,15 @@
             </span>
           </label>
         </div>
+        <div style="margin-top:12px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" name="deepdive_enabled" value="true"
+                   {% if config.deepdive_enabled %}checked{% endif %}>
+            <span>Deep-dive requests
+              <span style="color:var(--muted);font-size: 0.8125rem;">— the "request a deep dive" box on the homepage; answers open the next edition</span>
+            </span>
+          </label>
+        </div>
         <div style="margin-top:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
           <label style="flex:1;min-width:200px;max-width:320px;display:block;">
             Theme

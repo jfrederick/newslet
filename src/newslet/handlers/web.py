@@ -250,14 +250,42 @@ def home(
     issue = db.get_issue(row["date"]) if row else None
     if issue is None:
         return HTMLResponse(_NO_ISSUES_HTML)
+    # The deep-dive request box renders only on the web, and only when the
+    # feature is on; the count feeds its status line. Best-effort — a
+    # storage hiccup must not take down the homepage.
+    deepdive_pending: int | None = None
+    try:
+        if db.get_config().deepdive_enabled:
+            deepdive_pending = db.count_pending_deepdives()
+    except Exception:  # noqa: BLE001 - the box is optional chrome
+        deepdive_pending = None
     _, html = email_render.render_email(
         issue,
         _base_url(request),
         theme=themes.get(issue.theme),
         text_size=issue.text_size,
         web_nav=True,
+        deepdive_pending=deepdive_pending,
     )
     return HTMLResponse(html)
+
+
+@app.post("/api/deepdive")
+def request_deepdive(
+    topic: str = Form(...),
+    admin_token: str | None = Cookie(default=None),
+) -> Response:
+    """Queue a deep-dive request; the next digest build answers it.
+
+    Plain no-JS form post from the homepage's request box → 303 back to
+    ``/`` so the queue count updates in place.
+    """
+    _require_admin(admin_token)
+    topic = topic.strip()
+    if not topic or len(topic) > 200:
+        raise HTTPException(status_code=400, detail="topic must be 1-200 characters")
+    db.add_deepdive_request(topic)
+    return RedirectResponse(url="/", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +498,7 @@ def save_config(
     facts_enabled: bool = Form(default=False),
     quote_enabled: bool = Form(default=False),
     weather_enabled: bool = Form(default=False),
+    deepdive_enabled: bool = Form(default=False),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
@@ -494,6 +523,7 @@ def save_config(
             facts_enabled=facts_enabled,
             quote_enabled=quote_enabled,
             weather_enabled=weather_enabled,
+            deepdive_enabled=deepdive_enabled,
         )
     except ValidationError as exc:
         raise HTTPException(

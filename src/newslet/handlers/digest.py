@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from newslet import (
     db,
+    deepdive,
     discover,
     discovery,
     email_render,
@@ -38,6 +39,7 @@ from newslet import (
 from newslet.config import settings
 from newslet.contracts import (
     Article,
+    DeepDive,
     Discovery,
     Fact,
     FactsState,
@@ -168,6 +170,7 @@ def _build_issue(
     facts_list: list[Fact] | None = None,
     quote: Quote | None = None,
     weather_line: str = "",
+    deepdive: DeepDive | None = None,
 ) -> Issue:
     return Issue(
         date=date,
@@ -181,6 +184,7 @@ def _build_issue(
         facts=facts_list or [],
         quote=quote,
         weather_line=weather_line,
+        deepdive=deepdive,
     )
 
 
@@ -236,6 +240,8 @@ def run_digest(
     quote_enabled: bool = True,
     weather_fn=None,
     weather_enabled: bool = True,
+    deepdive_fn=None,
+    deepdive_topic: str = "",
     x_enabled: bool = True,
     max_x_posts: int = _X_MAX_POSTS,
     max_picks: int = _DEFAULT_MAX_PICKS,
@@ -267,6 +273,7 @@ def run_digest(
     facts_fn = facts_fn or facts.fetch_facts
     quote_fn = quote_fn or quotes.fetch_quote
     weather_fn = weather_fn or weather.fetch_weather
+    deepdive_fn = deepdive_fn or deepdive.fetch_deepdive
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -406,6 +413,17 @@ def run_digest(
         except Exception:  # noqa: BLE001 - best effort, never block the send
             log.exception("weather failed; sending without the forecast line")
 
+    # The reader-requested deep dive ("You asked"): the caller pops the
+    # oldest pending topic and passes it in (db stays out of this pure
+    # pipeline); empty topic means nothing queued. Best-effort — a failed
+    # generation leaves the request pending for the next build.
+    issue_deepdive: DeepDive | None = None
+    if deepdive_topic:
+        try:
+            issue_deepdive = deepdive_fn(deepdive_topic)
+        except Exception:  # noqa: BLE001 - best effort, never block the send
+            log.exception("deep dive failed; the request stays queued")
+
     issue = _build_issue(
         response.picks,
         date=date,
@@ -417,6 +435,7 @@ def run_digest(
         facts_list=issue_facts,
         quote=issue_quote,
         weather_line=weather_line,
+        deepdive=issue_deepdive,
     )
     return issue, candidates
 
@@ -451,6 +470,15 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     feedback, _fact_votes, _quote_votes = _recent_feedback_split(_RANK_FEEDBACK_LIMIT)
     facts_state = db.get_facts_state() if config.facts_enabled else FactsState()
     quotes_state = db.get_quotes_state() if config.quote_enabled else QuotesState()
+    # The requests table is the one storage dependency the send does not
+    # otherwise touch (new table, separate IAM grant) — a failure here must
+    # degrade to "nothing queued", never block the email.
+    pending_deepdive = None
+    if config.deepdive_enabled:
+        try:
+            pending_deepdive = db.oldest_pending_deepdive()
+        except Exception:  # noqa: BLE001 - the deep dive is best effort
+            log.exception("deep-dive lookup failed; sending without one")
     issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
         profile=profile,
@@ -469,6 +497,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         recent_quotes=quotes_state.recent_quotes,
         quote_enabled=config.quote_enabled,
         weather_enabled=config.weather_enabled,
+        deepdive_topic=pending_deepdive["topic"] if pending_deepdive else "",
         now=now,
     )
 
@@ -552,6 +581,24 @@ def _advance_quotes_log(issue: Issue) -> None:
         log.exception("failed to update the quotes no-repeat log")
 
 
+def _mark_deepdive_served(issue: Issue) -> None:
+    """Flip the answered request to served, only after a confirmed send.
+
+    Re-reads the oldest pending request and marks it iff its topic matches
+    the one the issue actually answered — a request queued mid-build is
+    left alone, and a duplicate-send retry is a no-op (the matching row is
+    already served). Best effort.
+    """
+    if issue.deepdive is None:
+        return
+    try:
+        pending = db.oldest_pending_deepdive()
+        if pending and pending["topic"] == issue.deepdive.topic:
+            db.mark_deepdive_served(pending["id"], issue.date)
+    except Exception:  # noqa: BLE001 - serving is best effort
+        log.exception("failed to mark the deep-dive request served")
+
+
 def _tune_quotes_after_send() -> None:
     """Re-tune the quotes-taste profile from quote votes only. Mirrors
     ``_tune_facts_after_send`` including the fresh re-read before write."""
@@ -632,6 +679,7 @@ def _run_manual(s: Any) -> dict:
     # Intentionally no mark_issue_sent / mark_seen here — see docstring.
     _advance_facts_topic_log(issue)
     _advance_quotes_log(issue)
+    _mark_deepdive_served(issue)
     _tune_profile_after_send()
     _tune_facts_after_send()
     _tune_quotes_after_send()
@@ -755,6 +803,7 @@ def handler(event: dict, context: Any) -> dict:
 
     _advance_facts_topic_log(issue)
     _advance_quotes_log(issue)
+    _mark_deepdive_served(issue)
     _tune_profile_after_send()
     _tune_facts_after_send()
     _tune_quotes_after_send()
@@ -903,6 +952,19 @@ def _fake_weather(**_) -> str:
     return "today 78° chance light rain, tonight 64° mostly clear"
 
 
+def _fake_deepdive(topic: str, **_) -> DeepDive:
+    """Deterministic, offline deep dive for --dry-run."""
+    return DeepDive(
+        topic=topic,
+        title="How DNS resolution actually works",
+        body_md=(
+            "You asked, so here is the mechanism end to end.\n\n"
+            "This fixture paragraph stands in for a ~500-word explainer in "
+            "the dry-run output."
+        ),
+    )
+
+
 def _dry_run_env() -> None:
     """Force dry-run env values.
 
@@ -968,6 +1030,8 @@ def main(argv: list[str] | None = None) -> int:
         facts_fn=_fake_facts,
         quote_fn=_fake_quote,
         weather_fn=_fake_weather,
+        deepdive_fn=_fake_deepdive,
+        deepdive_topic="how does DNS resolution work?",
     )
 
     if not issue.picks:

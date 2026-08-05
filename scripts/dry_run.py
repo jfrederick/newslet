@@ -24,7 +24,15 @@ os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
 from newslet import email_render, themes  # noqa: E402
-from newslet.contracts import Discovery, Fact, Issue, Pick, Quote, WebArticle  # noqa: E402
+from newslet.contracts import (  # noqa: E402
+    DeepDive,
+    Discovery,
+    Fact,
+    Issue,
+    Pick,
+    Quote,
+    WebArticle,
+)
 
 FIXTURE_PICKS = [
     Pick(
@@ -132,6 +140,15 @@ def main() -> int:
         discoveries=FIXTURE_DISCOVERIES,
         facts=FIXTURE_FACTS,
         weather_line="today 78° chance light rain, tonight 64° mostly clear",
+        deepdive=DeepDive(
+            topic="how does DNS resolution work?",
+            title="How DNS resolution actually works",
+            body_md=(
+                "You asked, so here is the mechanism end to end.\n\n"
+                "This fixture paragraph stands in for a ~500-word explainer "
+                "in the dry-run output."
+            ),
+        ),
         quote=Quote(
             text=(
                 "The impediment to action advances action. "

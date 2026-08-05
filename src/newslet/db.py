@@ -22,6 +22,7 @@ from newslet.config import settings
 from newslet.contracts import (
     Article,
     Config,
+    DeepDive,
     DiscoverBoard,
     Discovery,
     Fact,
@@ -89,6 +90,10 @@ def _t_seen() -> Any:
 
 def _t_issues() -> Any:
     return _resource().Table(settings().table_issues)
+
+
+def _t_requests() -> Any:
+    return _resource().Table(settings().table_requests)
 
 
 def _t_feedback() -> Any:
@@ -294,6 +299,8 @@ def get_config() -> Config:
             quote_enabled=bool(item.get("quote_enabled", True)),
             # Same for the weather line.
             weather_enabled=bool(item.get("weather_enabled", True)),
+            # And the deep-dive answers.
+            deepdive_enabled=bool(item.get("deepdive_enabled", True)),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -346,6 +353,7 @@ def put_config(config: Config) -> Config:
             "facts_enabled": config.facts_enabled,
             "quote_enabled": config.quote_enabled,
             "weather_enabled": config.weather_enabled,
+            "deepdive_enabled": config.deepdive_enabled,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )
@@ -396,6 +404,9 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
     quote_json = (
         issue.quote.model_dump_json() if issue.quote is not None else ""
     )
+    deepdive_json = (
+        issue.deepdive.model_dump_json() if issue.deepdive is not None else ""
+    )
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
@@ -412,6 +423,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "random_articles_json": random_articles_json,
         "facts_json": facts_json,
         "quote_json": quote_json,
+        "deepdive_json": deepdive_json,
         "weather_line": issue.weather_line,
     }
     if manual:
@@ -478,6 +490,16 @@ def get_issue(date: str) -> Issue | None:
             facts.append(Fact.model_validate(f))
         except ValidationError as exc:
             log.warning("skipping bad fact in issue %s: %s", item.get("date"), exc)
+    # The deep-dive block is optional and lenient like every post-v1 field.
+    deepdive = None
+    deepdive_raw = item.get("deepdive_json", "")
+    if deepdive_raw:
+        try:
+            deepdive = DeepDive.model_validate_json(deepdive_raw)
+        except ValidationError as exc:
+            log.warning(
+                "skipping bad deepdive in issue %s: %s", item.get("date"), exc
+            )
     # The quote is optional and lenient like every post-v1 field.
     quote = None
     quote_raw = item.get("quote_json", "")
@@ -505,6 +527,7 @@ def get_issue(date: str) -> Issue | None:
             "random_articles": random_articles,
             "facts": facts,
             "quote": quote,
+            "deepdive": deepdive,
             "weather_line": str(item.get("weather_line", "")),
         }
     )
@@ -888,3 +911,78 @@ def recent_inbox_articles(since: datetime, *, now: datetime | None = None) -> li
             seen.add(key)
             articles.append(art)
     return articles
+
+
+# ---------------------------------------------------------------------------
+# Deep-dive requests
+# ---------------------------------------------------------------------------
+
+
+def add_deepdive_request(topic: str) -> str:
+    """Queue a deep-dive request; returns the new row's id.
+
+    Ids are ``{created_at iso}#{random}`` so lexicographic order is age
+    order — ``oldest_pending_deepdive`` relies on that.
+    """
+    import uuid as _uuid
+
+    created = datetime.now(UTC).isoformat()
+    request_id = f"{created}#{_uuid.uuid4().hex[:8]}"
+    _t_requests().put_item(
+        Item={
+            "id": request_id,
+            "topic": topic,
+            "status": "pending",
+            "created_at": created,
+        }
+    )
+    return request_id
+
+
+def oldest_pending_deepdive() -> dict[str, Any] | None:
+    """The oldest pending request (id + topic), or None. Paginated scan —
+    the table stays tiny (one reader), but completeness is still free."""
+    kwargs: dict[str, Any] = {}
+    items: list[dict[str, Any]] = []
+    while True:
+        resp = _t_requests().scan(**kwargs)
+        items.extend(resp.get("Items", []))
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        kwargs["ExclusiveStartKey"] = last_key
+    pending = [
+        i for i in items if i.get("status") == "pending" and i.get("topic")
+    ]
+    if not pending:
+        return None
+    row = min(pending, key=lambda i: str(i.get("id", "")))
+    return {"id": str(row["id"]), "topic": str(row["topic"])}
+
+
+def mark_deepdive_served(request_id: str, issue_date: str) -> None:
+    _t_requests().update_item(
+        Key={"id": request_id},
+        UpdateExpression="SET #s = :served, served_date = :d",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":served": "served", ":d": issue_date},
+    )
+
+
+def count_pending_deepdives() -> int:
+    """How many requests are still queued (for the form's status line)."""
+    row_count = 0
+    kwargs: dict[str, Any] = {
+        "ProjectionExpression": "#s",
+        "ExpressionAttributeNames": {"#s": "status"},
+    }
+    while True:
+        resp = _t_requests().scan(**kwargs)
+        row_count += sum(
+            1 for i in resp.get("Items", []) if i.get("status") == "pending"
+        )
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        kwargs["ExclusiveStartKey"] = last_key
+    return row_count

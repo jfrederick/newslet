@@ -93,6 +93,31 @@
           </tr>
           {% endif %}
 
+          {% if deepdive %}
+          <tr>
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <div style="font-family:{{ t.font_brand }}; font-size:{{ fs(15) }}; font-weight:700; color:{{ p.fg }}; margin:0;">
+                You asked
+              </div>
+              <div style="font-size:{{ fs(12) }}; color:{{ p.muted }}; margin:2px 0 0 0;">
+                {{ deepdive.topic|e }}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <div style="font-size:{{ fs(17) }}; line-height:1.35; font-weight:600; color:{{ p.fg }}; margin:0 0 10px 0;">
+                {{ deepdive.title|e }}
+              </div>
+              {% for para in deepdive.paragraphs %}
+              <div style="font-size:{{ fs(15) }}; line-height:1.55; color:{{ p.fg }}; margin:0 0 12px 0;">
+                {{ para|e }}
+              </div>
+              {% endfor %}
+            </td>
+          </tr>
+          {% endif %}
+
           {#- One tech-fact essay (mid or end slot): section header, title,
               genre subline, ~500 words of paragraphs, and the same signed
               +/- voting cell as articles. -#}
@@ -293,5 +318,31 @@
       </td>
     </tr>
   </table>
+  {% if deepdive_pending is not none %}
+  {#- Web-only ("/"): the deep-dive request box. Never rendered in sent
+      emails (the context key stays None there). -#}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{{ p.bg }};">
+    <tr>
+      <td align="center" style="padding:0 12px 32px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px; background:{{ p.panel }}; border:1px solid {{ p.border }}; border-radius:{{ t.radius_sm }};">
+          <tr>
+            <td style="padding:20px 24px;">
+              <div style="font-family:{{ t.font_brand }}; font-size:{{ fs(15) }}; font-weight:700; color:{{ p.fg }}; margin:0 0 4px 0;">
+                Request a deep dive
+              </div>
+              <div style="font-size:{{ fs(12) }}; color:{{ p.muted }}; margin:0 0 12px 0;">
+                {% if deepdive_pending == 0 %}Ask for a ~500-word explainer &mdash; it arrives in the next edition.{% else %}{{ deepdive_pending }} queued &mdash; the next one arrives in tomorrow&rsquo;s edition.{% endif %}
+              </div>
+              <form method="post" action="/api/deepdive" style="margin:0;">
+                <input type="text" name="topic" maxlength="200" required placeholder="e.g. how does BGP routing actually work?" style="width:70%; padding:9px 12px; font-size:{{ fs(14) }}; font-family:{{ t.font_body }}; color:{{ p.fg }}; background:{{ p.bg }}; border:1px solid {{ p.border }}; border-radius:{{ t.radius_sm }};">
+                <button type="submit" style="padding:9px 16px; font-size:{{ fs(14) }}; font-weight:600; font-family:{{ t.font_body }}; color:{{ p.accent_fg }}; background:{{ p.accent }}; border:1px solid {{ p.accent }}; border-radius:{{ t.radius_sm }}; cursor:pointer;">Queue it</button>
+              </form>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+  {% endif %}
 </body>
 </html>

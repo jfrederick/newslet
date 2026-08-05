@@ -64,6 +64,7 @@ def aws(env):
         _hash_table("newslet-seen-articles", "url_hash")
         _hash_table("newslet-issues", "date")
         _hash_table("newslet-subscriptions", "address")
+        _hash_table("newslet-requests", "id")
 
         ddb.create_table(
             TableName="newslet-feedback",
@@ -1181,3 +1182,132 @@ def test_run_digest_attaches_weather_line(env):
     # None from the fetcher stores as the empty string, not "None".
     issue, _ = run_digest(**common, weather_fn=lambda **_: None)
     assert issue.weather_line == ""
+
+
+# --- Deep-dive requests ---
+
+
+def _deepdive():
+    from newslet.contracts import DeepDive
+
+    return DeepDive(topic="how does BGP work?", title="BGP explained", body_md="B")
+
+
+def test_run_digest_attaches_deepdive_only_when_topic_queued(env):
+    from newslet.handlers.digest import run_digest
+
+    common = dict(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=lambda *_a, **_k: [],
+        quote_fn=lambda *_a, **_k: None,
+        weather_fn=lambda **_: None,
+    )
+    captured = {}
+
+    def fake_deepdive(topic, **_):
+        captured["topic"] = topic
+        return _deepdive()
+
+    issue, _ = run_digest(**common, deepdive_fn=fake_deepdive,
+                          deepdive_topic="how does BGP work?")
+    assert issue.deepdive is not None and issue.deepdive.title == "BGP explained"
+    assert captured["topic"] == "how does BGP work?"
+
+    # No queued topic → the fn is never called.
+    calls: list[int] = []
+
+    def recording(topic, **_):
+        calls.append(1)
+        return _deepdive()
+
+    issue, _ = run_digest(**common, deepdive_fn=recording)
+    assert issue.deepdive is None
+    assert calls == []
+
+    # A raising fn degrades to no block.
+    def boom(topic, **_):
+        raise RuntimeError("down")
+
+    issue, _ = run_digest(**common, deepdive_fn=boom, deepdive_topic="x")
+    assert issue.deepdive is None
+
+
+def test_fresh_issue_pops_oldest_pending_topic(aws, monkeypatch):
+    from newslet import db
+    from newslet.handlers import digest
+
+    db.add_deepdive_request("how does BGP work?")
+    captured = {}
+
+    def fake_run_digest(**kwargs):
+        captured["topic"] = kwargs.get("deepdive_topic")
+        return (Issue(date="2026-08-12", picks=[], created_at=datetime.now(UTC)), [])
+
+    monkeypatch.setattr(digest, "run_digest", fake_run_digest)
+    digest._fresh_issue()
+    assert captured["topic"] == "how does BGP work?"
+
+
+def test_mark_deepdive_served_matches_topic_and_is_post_send_idempotent(aws):
+    from newslet import db
+    from newslet.handlers import digest
+
+    rid = db.add_deepdive_request("how does BGP work?")
+    issue = Issue(
+        date="2026-08-12", picks=[], created_at=datetime.now(UTC),
+        deepdive=_deepdive(),
+    )
+    digest._mark_deepdive_served(issue)
+    assert db.count_pending_deepdives() == 0
+    assert db.oldest_pending_deepdive() is None
+
+    # A duplicate-send retry is a no-op; an unrelated newer request survives.
+    db.add_deepdive_request("what is a bloom filter?")
+    digest._mark_deepdive_served(issue)  # topic no longer matches the head
+    assert db.count_pending_deepdives() == 1
+    assert rid  # (lifecycle covered in test_db)
+
+
+def test_mark_deepdive_served_skips_mismatched_topic(aws):
+    from newslet import db
+    from newslet.handlers import digest
+
+    db.add_deepdive_request("something else entirely")
+    issue = Issue(
+        date="2026-08-12", picks=[], created_at=datetime.now(UTC),
+        deepdive=_deepdive(),
+    )
+    digest._mark_deepdive_served(issue)
+    # The queued request wasn't the one answered — it stays pending.
+    assert db.count_pending_deepdives() == 1
+
+
+def test_fresh_issue_survives_requests_table_failure(aws, monkeypatch):
+    """A broken requests table (new table, separate IAM grant) must degrade
+    to 'nothing queued', never block the send."""
+    from newslet.handlers import digest
+
+    def boom():
+        raise RuntimeError("requests table missing")
+
+    monkeypatch.setattr(digest.db, "oldest_pending_deepdive", boom)
+    captured = {}
+
+    def fake_run_digest(**kwargs):
+        captured["topic"] = kwargs.get("deepdive_topic")
+        return (Issue(date="2026-08-12", picks=[], created_at=datetime.now(UTC)), [])
+
+    monkeypatch.setattr(digest, "run_digest", fake_run_digest)
+    issue, _ = digest._fresh_issue()
+    assert captured["topic"] == ""
+    assert issue.deepdive is None
