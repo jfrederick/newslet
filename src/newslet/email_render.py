@@ -39,13 +39,15 @@ def render_email(
     public_base_url: str,
     theme: themes.Theme | None = None,
     text_size: int = 100,
+    web_nav: bool = False,
 ) -> tuple[str, str]:
     """Return ``(subject, html)`` for one issue.
 
     ``theme`` styles the email via inline-style tokens (email clients ignore
     stylesheet classes); ``None`` renders the app default. ``text_size``
     (percent) scales every inline ``font-size`` — the email analogue of the
-    web pages' root font-size dial.
+    web pages' root font-size dial. ``web_nav`` adds the web page's nav strip
+    above the email body; never set for sent emails.
     """
     theme = theme or themes.get(None)
     text_size = min(
@@ -155,5 +157,6 @@ def render_email(
         # Generic link to the newslet homepage (the rich, browse-everything
         # web experience) — not this issue's page.
         home_url=f"{base}/",
+        web_nav=web_nav,
     )
     return subject, html
