@@ -569,8 +569,10 @@ def mark_issue_sent(date: str) -> None:
 def list_issues(limit: int = 30) -> list[dict[str, Any]]:
     """Return a recent set of issues, newest first.
 
-    Returns lightweight dicts (date + pick count + sent status); avoids
-    pulling the full picks bodies for each row. The scan is fully paginated:
+    Returns lightweight dicts (date + pick count + sent status). The
+    projection reads ``picks_json`` in full (the count needs it) but skips
+    the other body fields (subject/intro/discoveries/web/random JSON).
+    The scan is fully paginated:
     the homepage's newest-sent-issue selection depends on this list being
     complete, so stopping at DynamoDB's first ~1MB page would silently
     serve an arbitrary older edition once the table outgrows it.

@@ -124,7 +124,9 @@ rendered with the web nav strip:
   `Config.max_web_articles` open-web results, `Config.max_random_articles`
   "off your beat" articles, and discoveries — all votable via the signed
   `/rate` links) is the one built surface. `/` re-renders the **newest
-  stored issue** through `email_render.render_email(web_nav=True)` (a thin
+  delivered issue** (newest `sent_at` row; falls back to the newest stored
+  row only when nothing in the last 60 editions was ever sent — a fresh
+  install) through `email_render.render_email(web_nav=True)` (a thin
   nav strip on top; no rebuild, no LLM calls, no staleness logic — before
   today's send it shows yesterday's, clearly dated). `/emails/{date}`
   renders any archived issue **as-sent** (no nav strip); `/emails` is the
