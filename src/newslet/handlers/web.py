@@ -23,7 +23,17 @@ from markupsafe import Markup
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from newslet import clock, db, email_render, facts, hn, newsletters, themes, tokens
+from newslet import (
+    clock,
+    db,
+    email_render,
+    facts,
+    hn,
+    newsletters,
+    quotes,
+    themes,
+    tokens,
+)
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -458,12 +468,13 @@ def save_config(
     theme: str = Form(default=themes.DEFAULT_THEME),
     text_size: int = Form(default=themes.TEXT_SIZE_DEFAULT),
     facts_enabled: bool = Form(default=False),
+    quote_enabled: bool = Form(default=False),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
-    the off-your-beat count, the tech-facts toggle, and the app appearance
-    (theme + text size). Checkbox semantics: an unchecked box submits
-    nothing, so ``facts_enabled``/``x_enabled`` absent means off."""
+    the off-your-beat count, the tech-facts and quote toggles, and the app
+    appearance (theme + text size). Checkbox semantics: an unchecked box
+    submits nothing, so the boolean toggles absent means off."""
     _require_admin(admin_token)
     # Strict on write (the read path is the lenient one): reject names the
     # picker could never have sent.
@@ -480,6 +491,7 @@ def save_config(
             theme=theme,
             text_size=text_size,
             facts_enabled=facts_enabled,
+            quote_enabled=quote_enabled,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -628,8 +640,10 @@ def rate(
     # same anchored full-shape regex the digest's feedback routing uses
     # (newslet.facts.vote_slot), so a real article whose path merely ends
     # ".../facts/<x>/end" still takes the normal picks branch.
-    fact_slot = facts.vote_slot(urlparse(article_url).path)
+    vote_path = urlparse(article_url).path
+    fact_slot = facts.vote_slot(vote_path)
     is_fact_vote = fact_slot is not None
+    is_quote_vote = quotes.is_quote_vote(vote_path)
 
     # Best-effort title lookup from the stored issue
     title = ""
@@ -639,6 +653,9 @@ def rate(
             title = next(
                 (f.title for f in issue.facts if f.slot == fact_slot), ""
             )
+        elif is_quote_vote:
+            if issue.quote is not None:
+                title = f"Quote: {issue.quote.author}"
         else:
             for pick in issue.picks:
                 if str(pick.url) == article_url:
@@ -656,7 +673,11 @@ def rate(
     )
     # The note form carries the original ``a`` + token (what the HMAC signed),
     # not the normalized key, so /rate/note's token check still passes.
-    label = (title or "this fact") if is_fact_vote else ""
+    label = ""
+    if is_fact_vote:
+        label = title or "this fact"
+    elif is_quote_vote:
+        label = title or "the quote of the day"
     return HTMLResponse(_thanks_html(v, a, d, t, label=label))
 
 

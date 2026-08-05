@@ -24,7 +24,7 @@ os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
 from newslet import email_render, themes  # noqa: E402
-from newslet.contracts import Discovery, Fact, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import Discovery, Fact, Issue, Pick, Quote, WebArticle  # noqa: E402
 
 FIXTURE_PICKS = [
     Pick(
@@ -131,6 +131,15 @@ def main() -> int:
         ),
         discoveries=FIXTURE_DISCOVERIES,
         facts=FIXTURE_FACTS,
+        quote=Quote(
+            text=(
+                "The impediment to action advances action. "
+                "What stands in the way becomes the way."
+            ),
+            author="Marcus Aurelius",
+            source="Meditations",
+            tradition="Stoic",
+        ),
         # Only a couple here; the web view is where these (plus the rest of the
         # ranked picks) really live. Their presence makes the email's "Read all
         # on the web" link render.

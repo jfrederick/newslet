@@ -177,6 +177,15 @@
             </span>
           </label>
         </div>
+        <div style="margin-top:12px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" name="quote_enabled" value="true"
+                   {% if config.quote_enabled %}checked{% endif %}>
+            <span>Quote of the day
+              <span style="color:var(--muted);font-size: 0.8125rem;">— a philosophical epigraph under the intro; votes tune their own taste profile</span>
+            </span>
+          </label>
+        </div>
         <div style="margin-top:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
           <label style="flex:1;min-width:200px;max-width:320px;display:block;">
             Theme
