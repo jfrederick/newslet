@@ -149,8 +149,7 @@ host-level backstop, not a true eTLD+1 extractor.
 ### `newslet.websearch`
 
 On-demand web search via Claude's `web_search` tool. Powers the digest's
-"from around the web" block and the web view's subject search box. The
-Anthropic `client` is injectable.
+"from around the web" block. The Anthropic `client` is injectable.
 
 ```python
 def search_web(
@@ -304,6 +303,7 @@ def render_email(
     public_base_url: str,
     theme: Theme | None = None,   # None → the app default (foundry)
     text_size: int = 100,         # percent; scales every inline font-size
+    web_nav: bool = False,        # web homepage only: nav strip above the body
 ) -> tuple[str, str]:  # (subject, html)
     ...
 ```
@@ -323,6 +323,9 @@ def render_email(
   `Config.max_web_articles` web articles, and `Config.max_random_articles`
   off-beat articles, so the email length follows config.
 - Footer links generically to the homepage (`{base}/`).
+- `web_nav=True` (the `/` homepage render only) prepends a thin
+  discover/admin/emails nav strip; sent emails never set it, so their HTML
+  is unchanged.
 - Subject: `f"newslet — {issue.date}"` unless the issue carries one.
 
 ### `newslet.handlers.digest`
@@ -330,17 +333,16 @@ def render_email(
 Lambda entry point + CLI dry-run.
 
 `handler` runs the daily pipeline by default; `event={"manual": true}` does an
-isolated send-now, `event={"home": true}` rebuilds the homepage aggregation
-(stored under `HOME_KEY="home"`, no email), and `event={"discover": true}`
-rebuilds the Discover page's stored board (`discover.build_discover_board` →
-`db.put_discover`; a failed build keeps the previous board). Three EventBridge
-schedules drive it: the home rebuild at 09:45 UTC (`{"home": true}`), the
-email digest at 10:00 UTC, and the weekly discover rebuild on Mondays at
-09:30 UTC (`{"discover": true}`). `run_digest` takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and
-`max_x_posts` (daily reads them from `Config`; the homepage uses generous fixed
-counts but honours the same X toggle), and folds in the HN,
-subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
-seen-filtered — alongside the RSS candidates.
+isolated send-now, and `event={"discover": true}` rebuilds the Discover page's
+stored board (`discover.build_discover_board` → `db.put_discover`; a failed
+build keeps the previous board). A stray `event={"home": true}` (the retired
+homepage-rebuild mode) falls through to the idempotent daily path. Two
+EventBridge schedules drive it: the email digest at 10:00 UTC and the weekly
+discover rebuild on Mondays at 09:30 UTC (`{"discover": true}`). `run_digest`
+takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and `max_x_posts`
+(read from `Config`), and folds in the HN, subscribed-newsletter, and X
+(`x_fn`) sources — each best-effort and seen-filtered — alongside the RSS
+candidates.
 
 ```python
 def handler(event: dict, context: object) -> dict: ...
@@ -367,14 +369,12 @@ Routes:
   selectable technical-detail levels. Linked from `/admin`.
 - `GET /docs/content.md` — the canonical product-guide markdown
   (`newslet/docs/product.md`), served as `text/markdown` for the viewer to fetch
-- `GET /` — the homepage: rich reading UX (`read.html.j2`) over the stored
-  `"home"` aggregation, with a today's-date header (US Eastern — see
-  `newslet.clock`), +/- voting (upvote sticky, downvote removes the article),
-  and a subject-search box. The daily cron is the sole updater: the page always
-  renders the latest stored edition immediately and shows a small non-blocking
-  notice when that edition isn't from today (Eastern) — it never rebuilds on
-  visit. Optional `?q=` server-renders a web search. Requires the
-  `admin_token` cookie.
+- `GET /` — the homepage: the newest stored issue re-rendered as the email
+  HTML via `render_email(web_nav=True)` (thin discover/admin/emails nav on
+  top; voting via the same signed `/rate` links, re-signed with the current
+  key). No rebuild, no LLM calls; before today's send it shows yesterday's
+  issue, clearly dated. A friendly "no editions yet" page when the issues
+  table is empty. Requires the `admin_token` cookie.
 - `GET /admin` — admin UI (feeds, profile, daily-email settings, theme picker, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`
 - `POST /api/feeds` — `{url, title?}` → 303 `/admin` (or JSON when the caller
@@ -386,14 +386,9 @@ Routes:
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
 - `GET /emails` — the sent-email archive index
-- `GET /emails/{date}` — the as-sent daily email HTML (archive view)
-- `POST /api/vote` — `{url, title?, rating, date}`, admin-cookie authed; writes
-  a `FeedbackRow` (same shape as `/rate`). JSON for fetch UI, 303 `/` for no-JS.
-- `GET /api/search` — `?q=` admin-authed live web search → JSON cards
+- `GET /emails/{date}` — the as-sent daily email HTML (archive view; no nav
+  strip, unlike `/`)
 - `GET /api/hn` — admin-authed live Hacker News front page → JSON cards
-- `POST /api/home/refresh` — async-invoke digest `{"home": true}` → JSON
-  (operational escape hatch; the page no longer calls it on load)
-- `GET /api/home/status` — `{created_at, ready}` for polling after a refresh
 - `GET /discover` — the Discover page: the stored board of recommended RSS
   feeds (one-click add via `/api/feeds`; already-followed feeds hidden) and
   X accounts (profile links). Renders instantly from storage. Admin cookie.

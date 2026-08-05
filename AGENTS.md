@@ -50,8 +50,8 @@ changes:
 Both preview scripts take an optional theme name (e.g.
 `scripts/dry_run.py phosphor`) to eyeball a non-default theme.
 
-Render the rich issue web view locally (moto-backed, no network) to eyeball
-`read.html.j2`:
+Render the homepage locally (moto-backed, no network) — the latest email
+rendered with the web nav strip:
 
 ```bash
 .venv/bin/python scripts/preview_read.py && open out/read.html
@@ -68,7 +68,7 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `feeds.py` | feedparser wrapper, 24h filter, dedup via injected `is_seen` |
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `search_common.py` | shared Claude `web_search` primitives (tool def, last-text-block, JSON extraction, host key) used by `discovery` + `websearch` |
-| `websearch.py` | Claude `web_search` for the "from around the web" block + the web view's subject search |
+| `websearch.py` | Claude `web_search` for the "from around the web" block |
 | `serendipity.py` | Claude `web_search` for the "off your beat" block: popular past-week articles outside the reader's tech beat (profile for human taste only; computers/AI hard-excluded) |
 | `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
@@ -77,13 +77,13 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
 | `rank.py` | Anthropic ranking call with prompt caching |
 | `discovery.py` | Claude web-search for sources outside your feeds |
 | `summarize.py` / `tune.py` | subject/intro writing; profile auto-tuning |
-| `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link; theme-aware inline styles) |
+| `email_render.py` | Jinja → `(subject, html)` (configurable counts; HN + web block; generic homepage link; theme-aware inline styles; `web_nav=True` adds the homepage's nav strip) |
 | `themes.py` | named visual themes (color/font/radius tokens) for web + email — the Claude-chat family (Foundry default, Atelier, Manuscript, Observatory, Meadow), Classic, and the textmode set; `get()` is lenient, `css()` emits the `:root` vars (incl. the text-size root `font-size`) the web templates style against |
-| `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now, `{"home"}` homepage-rebuild, and `{"discover"}` discover-board modes |
+| `handlers/digest.py` | scheduled Lambda + dry-run CLI; `{"manual"}` send-now and `{"discover"}` discover-board modes |
 | `handlers/inbound.py` | SES-invoked Lambda: parse received newsletter mail → store links / auto-confirm opt-ins (S3 read + confirm-follow injectable) |
-| `handlers/web.py` | FastAPI + Mangum (`/` homepage, `/discover`, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/vote`, `/api/search`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/home/*`, `/api/discover/*`) |
+| `handlers/web.py` | FastAPI + Mangum (`/` homepage = latest email + nav, `/discover`, `/admin`, `/docs` product guide, `/emails` + `/emails/{date}` archive, `/rate`, `/api/hn`, `/api/config`, `/api/subscriptions`, `/api/discover/*`) |
 | `docs/product.md` + `docs/index.html` | the **product guide**: canonical markdown + a self-contained HTML viewer that fetches it live (3 selectable detail levels). Served at `/docs`; the markdown is the single source of truth |
-| `templates/read.html.j2` | the homepage: rich reading UX (voting, subject search; auto-regenerates when stale) |
+| `templates/email.html.j2` | the email body; also the homepage body (rendered with `web_nav=True`) |
 | `templates/emails.html.j2` | the sent-email archive list |
 | `templates/discover.html.j2` | the Discover page: stored feed + X-account recommendations, one-click feed add, non-blocking refresh |
 | `templates/admin.html.j2` | admin UI (feeds, profile, daily-email settings, theme picker, send now) |
@@ -119,29 +119,19 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   *receipt rule* resources are conditional on `MailDomain` being set — the rest
   of the infra (bucket, tables, Lambda) deploys regardless, and the active
   rule set must be set manually post-deploy (see `README.md`).
-- **Email vs. homepage are separate surfaces:**
-  - The **daily email** (`/emails/{date}` archive renders it as-sent; the
-    `/emails` list is the archive index) carries `Config.max_rss_articles`
-    ranked picks (RSS + Hacker News) plus `Config.max_web_articles` open-web
-    results plus `Config.max_random_articles` "off your beat" articles
-    (`Issue.random_articles`), all votable via the signed `/rate` link, plus
-    discoveries. It links generically to the homepage. The off-beat block
-    also renders on the homepage — its own section on both surfaces, never
-    folded into the ranked pool.
-  - The **homepage** (`/`, `read.html.j2`) is the rich, browse-everything web
-    experience: a separate aggregation stored under the reserved issue key
-    `"home"` (see `digest.HOME_KEY`). There is **no refresh button** — a
-    scheduled EventBridge rule rebuilds it daily at 09:45 UTC (a
-    `{"home": true}` digest run, 15 min before the email) and is the **sole
-    updater**: the page always renders the latest stored edition immediately
-    and never rebuilds on visit. Freshness is judged on the **US-Eastern
-    calendar day** (`newslet.clock`), not UTC; a stale/missing edition renders
-    with a small non-blocking notice. `/api/home/refresh` +
-    `/api/home/status` remain as an operational escape hatch (not wired to
-    page load). Voting uses `/api/vote` (admin cookie),
-    same `FeedbackRow` shape as `/rate`; an **upvote** is sticky and a
-    **downvote removes** the article from the page (and it stays gone — the
-    home view drops already-downvoted articles).
+- **The homepage is the email:** the daily email (`Config.max_rss_articles`
+  ranked picks from RSS + Hacker News + newsletters + optional X, plus
+  `Config.max_web_articles` open-web results, `Config.max_random_articles`
+  "off your beat" articles, and discoveries — all votable via the signed
+  `/rate` links) is the one built surface. `/` re-renders the **newest
+  stored issue** through `email_render.render_email(web_nav=True)` (a thin
+  nav strip on top; no rebuild, no LLM calls, no staleness logic — before
+  today's send it shows yesterday's, clearly dated). `/emails/{date}`
+  renders any archived issue **as-sent** (no nav strip); `/emails` is the
+  index. There is no separate homepage aggregation anymore: the old
+  `{"home"}` digest mode, its 09:45 UTC cron, `read.html.j2`, `/api/vote`,
+  `/api/search`, and `/api/home/*` were all removed — a stray
+  `{"home": true}` Lambda event falls through to the idempotent daily path.
 - **Admin config** lives in the profile table under `id="config"`
   (`db.get_config`/`put_config`, model `contracts.Config`): `max_rss_articles`,
   `max_web_articles`, `max_random_articles` (the "off your beat" block's
@@ -163,8 +153,8 @@ Render the rich issue web view locally (moto-backed, no network) to eyeball
   invents. This is a freshness guard, not just hygiene — an ungrounded pick
   (a plausible story the model recalls from training) would bypass every
   upstream recency filter (the 24h RSS window, HN's recency cap) and surface
-  stale content in the email and on the homepage. Preserve this when changing
-  the rank output path.
+  stale content in the email (and therefore on the homepage). Preserve this
+  when changing the rank output path.
 - **Lenient on read, strict on write:** DB readers (`list_feeds`,
   `recent_feedback`, `get_issue`) skip-and-log bad/legacy rows rather than
   raising, so one bad row can't break a whole page. When you make a model
