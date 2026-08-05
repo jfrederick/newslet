@@ -370,6 +370,42 @@ and seen-filtered like the web block.
 
 :::
 
+### Tech facts
+
+Two essays ride every edition: a "Tech fact of the day" mid-way down, and
+"One more fact" at the very bottom. Each is a self-contained ~500-word read —
+how something actually works, a piece of computing history, the person behind
+a protocol — written to still be true and interesting a year from now. No
+news, no takes.
+
+The facts have their own memory of your taste. Vote on one with the same
+thumbs up/down buttons and that signal tunes *which kinds of facts you get* —
+genres, eras, styles — without touching the profile that ranks your articles.
+The two systems never cross.
+
+:::tier little
+
+Facts are drawn from eight rotating genres (computing history and lore,
+how-it-works internals, people, hardware, networks, algorithms, security, and
+software culture), two different genres per day. A rolling log of recent
+topics keeps them from repeating. An admin toggle turns the whole feature
+off.
+
+:::
+
+:::tier medium
+
+`facts.fetch_facts()` makes one plain model call (no web search — timeless
+material only) that returns both essays as JSON, all-or-nothing, riding on
+`Issue.facts`. Their vote links sign synthetic URLs
+(`/facts/{date}/{mid|end}`), and `digest._split_feedback` routes those rows
+away from ranking and the general tuner into `facts.tune_facts_profile`,
+which maintains the separate `id="facts"` profile row (taste bullets + the
+60-topic no-repeat log). Best-effort throughout: a failed generation means an
+issue without fact blocks, never a blocked send.
+
+:::
+
 ### Newsletter subscriptions
 
 Plenty of good writing only arrives by email newsletter, never as an RSS feed.

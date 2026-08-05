@@ -314,6 +314,7 @@ resolve a lockfile.
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
 - `src/newslet/search_common.py` — shared Claude `web_search` primitives (tool def, JSON extraction, host key) for `discovery` + `websearch`
 - `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block
+- `src/newslet/facts.py` — two ~500-word tech-fact essays per issue, with their own vote-tuned taste profile
 - `src/newslet/x_grok.py` — X (Twitter) ranking candidates via xAI Grok Live Search (optional; on when `XAI_API_KEY` is set)
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers

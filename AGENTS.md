@@ -69,6 +69,7 @@ rendered with the web nav strip:
 | `hn.py` | Hacker News via the Algolia API (rich content), injected `fetch`; feeds the ranking pool + the web view |
 | `search_common.py` | shared Claude `web_search` primitives (tool def, last-text-block, JSON extraction, host key) used by `discovery` + `websearch` |
 | `websearch.py` | Claude `web_search` for the "from around the web" block |
+| `facts.py` | two ~500-word tech-fact essays per issue (8-genre methodology, 60-topic no-repeat log) + the facts-only tuner; state on the `id="facts"` profile row |
 | `serendipity.py` | Claude `web_search` for the "off your beat" block: popular past-week articles outside the reader's tech beat (profile for human taste only; computers/AI hard-excluded) |
 | `x_grok.py` | X (Twitter) ranking candidates via xAI Grok `x_search` tool (Responses API), injected `complete`; on only when `XAI_API_KEY` is set |
 | `newsletters.py` | parse inbound newsletter email → `Article` candidates; double-opt-in detection; address minting (pure, no DB/network) |
@@ -96,7 +97,8 @@ rendered with the web nav strip:
   `/rate` pattern for any new email-clickable action.
 - **Best-effort enrichment:** summarize, discovery, the Hacker News source
   (`hn.fetch_hn_articles`), the web-search block (`websearch.search_web`), the
-  off-your-beat block (`serendipity.fetch_serendipity`), the
+  off-your-beat block (`serendipity.fetch_serendipity`), the tech-fact
+  blocks (`facts.fetch_facts`), the
   subscribed-newsletter source (`db.recent_inbox_articles`), and the X source
   (`x_grok.fetch_x_articles`) must never block a send — they degrade to empty
   on any failure. Keep new enrichment steps in the same `try/except → empty`
@@ -139,7 +141,9 @@ rendered with the web nav strip:
   `max_web_articles`, `max_random_articles` (the "off your beat" block's
   count; 0 disables it), `web_variety` (0–100 exploration dial for
   `websearch.search_web`), `x_enabled` (X source on/off; also needs
-  `XAI_API_KEY`), `max_x_articles` (X posts pulled into the pool), `theme`
+  `XAI_API_KEY`), `max_x_articles` (X posts pulled into the pool),
+  `facts_enabled` (the two tech-fact essays; their votes tune the separate
+  `id="facts"` profile, never the general one), `theme`
   (visual theme for the web pages *and* the daily email; resolve names via
   `themes.get`, which falls back to the default, Foundry, on unknown values),
   and `text_size` (75–150% dial; web pages scale via the root `font-size` —
