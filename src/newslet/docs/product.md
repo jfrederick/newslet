@@ -509,14 +509,17 @@ today's email has gone out, you'll see yesterday's edition, clearly dated.
 :::tier little
 
 There is no separate "web edition" to build or go stale — the homepage
-re-renders the latest stored email on every visit, so it is always exactly as
-fresh as your newest issue, and costs nothing to keep that way.
+re-renders your newest delivered email on every visit, so it is always
+exactly as fresh as the latest issue that reached your inbox, and costs
+nothing to keep that way.
 
 :::
 
 :::tier medium
 
-`GET /` looks up the newest stored issue and re-renders it through the same
+`GET /` looks up the newest issue that was actually delivered — falling back
+to the newest stored issue only when nothing has been marked sent yet (a
+fresh install) — and re-renders it through the same
 `email_render.render_email` used for sending, with `web_nav=True` adding the
 nav strip (the `/emails/{date}` archive renders without it, staying as-sent).
 Vote links are re-signed with the current signing key on each view. There are

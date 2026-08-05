@@ -370,7 +370,8 @@ Routes:
 - `GET /docs/content.md` — the canonical product-guide markdown
   (`newslet/docs/product.md`), served as `text/markdown` for the viewer to fetch
 - `GET /` — the homepage: the newest **sent** issue (fallback: newest stored,
-  for installs where nothing has been marked sent yet) re-rendered as the
+  only when nothing in the last 60 editions was ever sent — a fresh install)
+  re-rendered as the
   email HTML via `render_email(web_nav=True)` (thin discover/admin/emails nav
   on top; voting via the same signed `/rate` links, re-signed with the
   current key). No rebuild, no LLM calls; before today's send it shows

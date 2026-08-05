@@ -162,8 +162,11 @@ Open the `ApiUrl` from step 3 in a browser and sign in with the value of
 nav, or `/admin`) to add RSS feeds, write a short markdown profile, and
 set the daily-email article counts (including the "off your beat"
 non-tech block), and the web-search variety. The homepage shows a quiet
-"no editions yet" notice until the first daily email lands (or use
-**send now** in admin) — it simply renders the newest issue.
+"no editions yet" notice until the first scheduled daily email lands —
+it renders the newest delivered edition. (To trigger one immediately,
+invoke the digest Lambda with an empty payload as in step 5; admin's
+**send now** works too but its issues stay out of the archive and the
+homepage by design.)
 
 ### 5. Smoke-test the digest
 

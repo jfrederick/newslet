@@ -567,17 +567,28 @@ def mark_issue_sent(date: str) -> None:
 
 
 def list_issues(limit: int = 30) -> list[dict[str, Any]]:
-    """Return a recent set of issues for the admin index, newest first.
+    """Return a recent set of issues, newest first.
 
     Returns lightweight dicts (date + pick count + sent status); avoids
-    pulling the full picks JSON for each row.
+    pulling the full picks bodies for each row. The scan is fully paginated:
+    the homepage's newest-sent-issue selection depends on this list being
+    complete, so stopping at DynamoDB's first ~1MB page would silently
+    serve an arbitrary older edition once the table outgrows it.
     """
-    resp = _t_issues().scan(
-        ProjectionExpression="#d, sent_at, picks_json, #m",
-        ExpressionAttributeNames={"#d": "date", "#m": "manual"},
-    )
+    kwargs: dict[str, Any] = {
+        "ProjectionExpression": "#d, sent_at, picks_json, #m",
+        "ExpressionAttributeNames": {"#d": "date", "#m": "manual"},
+    }
+    items: list[dict[str, Any]] = []
+    while True:
+        resp = _t_issues().scan(**kwargs)
+        items.extend(resp.get("Items", []))
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        kwargs["ExclusiveStartKey"] = last_key
     rows = []
-    for item in resp.get("Items", []):
+    for item in items:
         # Manual "send now" issues are kept out of "recent issues".
         if item.get("manual"):
             continue

@@ -228,11 +228,13 @@ def home(
     Preferring ``sent_at`` rows keeps the page honest when a daily run
     stored its issue but failed before the send: that undelivered edition
     stays off the homepage until a retry actually lands it. The fallback to
-    the newest stored row covers a fresh install where nothing has ever
-    been marked sent.
+    the newest stored row applies only when *nothing in the last 60
+    editions* was ever sent — effectively a fresh install (60 straight
+    delivery failures would mean the system is down, not that the page
+    should resurrect an undelivered edition).
     """
     _require_admin(admin_token)
-    rows = db.list_issues(limit=5)
+    rows = db.list_issues(limit=60)
     row = next((r for r in rows if r.get("sent_at")), rows[0] if rows else None)
     issue = db.get_issue(row["date"]) if row else None
     if issue is None:

@@ -33,13 +33,14 @@ import boto3  # noqa: E402
 import moto  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from newslet import themes  # noqa: E402
 from newslet.config import settings  # noqa: E402
-from newslet.contracts import Config, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import Issue, Pick, WebArticle  # noqa: E402
 
 _SOURCES = ["The Verge", "Stratechery", "Hacker News", "Nature", "LessWrong", "Quanta"]
 
 
-def _make_issue(date: str) -> Issue:
+def _make_issue(date: str, theme: str | None = None) -> Issue:
     picks = []
     for i in range(10):
         src = _SOURCES[i % len(_SOURCES)]
@@ -82,6 +83,7 @@ def _make_issue(date: str) -> Issue:
     ]
     return Issue(
         date=date,
+        theme=theme or themes.DEFAULT_THEME,
         picks=picks,
         created_at=datetime.now(UTC),
         subject="Today's read: ranked picks plus finds from the web",
@@ -140,11 +142,14 @@ def main() -> int:
 
         # Optional positional arg picks the theme, e.g. `preview_read.py amber`
         # (unknown names fall back to the default, foundry, at render time).
-        if len(sys.argv) > 1:
-            db.put_config(Config(theme=sys.argv[1]))
+        # The homepage renders the issue's *stamped* theme — as-sent fidelity —
+        # so the theme goes on the seeded issue, not the config row.
+        theme = sys.argv[1] if len(sys.argv) > 1 else None
 
-        # The homepage renders the newest stored issue as the email HTML.
-        db.put_issue(_make_issue("2026-08-05"))
+        # The homepage renders the newest *delivered* issue as the email HTML;
+        # mark the seed sent so the preview walks the same path as production.
+        db.put_issue(_make_issue("2026-08-05", theme=theme))
+        db.mark_issue_sent("2026-08-05")
 
         client = TestClient(app)
         client.cookies.set("admin_token", "preview-token")
