@@ -469,6 +469,7 @@ def save_config(
     text_size: int = Form(default=themes.TEXT_SIZE_DEFAULT),
     facts_enabled: bool = Form(default=False),
     quote_enabled: bool = Form(default=False),
+    weather_enabled: bool = Form(default=False),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
@@ -492,6 +493,7 @@ def save_config(
             text_size=text_size,
             facts_enabled=facts_enabled,
             quote_enabled=quote_enabled,
+            weather_enabled=weather_enabled,
         )
     except ValidationError as exc:
         raise HTTPException(

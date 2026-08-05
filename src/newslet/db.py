@@ -292,6 +292,8 @@ def get_config() -> Config:
             facts_enabled=bool(item.get("facts_enabled", True)),
             # Rows written before the quote feature default it on too.
             quote_enabled=bool(item.get("quote_enabled", True)),
+            # Same for the weather line.
+            weather_enabled=bool(item.get("weather_enabled", True)),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -343,6 +345,7 @@ def put_config(config: Config) -> Config:
             "text_size": config.text_size,
             "facts_enabled": config.facts_enabled,
             "quote_enabled": config.quote_enabled,
+            "weather_enabled": config.weather_enabled,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )
@@ -409,6 +412,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "random_articles_json": random_articles_json,
         "facts_json": facts_json,
         "quote_json": quote_json,
+        "weather_line": issue.weather_line,
     }
     if manual:
         # Manual ("send now") issues are stored so /rate title lookup and
@@ -501,6 +505,7 @@ def get_issue(date: str) -> Issue | None:
             "random_articles": random_articles,
             "facts": facts,
             "quote": quote,
+            "weather_line": str(item.get("weather_line", "")),
         }
     )
 

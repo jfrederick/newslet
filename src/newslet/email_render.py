@@ -193,5 +193,6 @@ def render_email(
         fact_mid=fact_mid,
         fact_end=fact_end,
         quote=quote_ctx,
+        weather_line=issue.weather_line,
     )
     return subject, html

@@ -1108,3 +1108,44 @@ def test_tune_quotes_after_send_updates_only_quotes_row(aws, monkeypatch):
     assert state.markdown == "- new"
     assert state.recent_quotes == ["a"]
     assert db.get_profile().markdown == "# me"
+
+
+# --- Weather line ---
+
+
+def test_run_digest_attaches_weather_line(env):
+    from newslet.handlers.digest import run_digest
+
+    common = dict(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=lambda *_a, **_k: [],
+        quote_fn=lambda *_a, **_k: None,
+    )
+    issue, _ = run_digest(**common, weather_fn=lambda **_: "78° sunny, tonight 64° clear")
+    assert issue.weather_line == "78° sunny, tonight 64° clear"
+
+    def boom(**_):
+        raise RuntimeError("nws down")
+
+    issue, _ = run_digest(**common, weather_fn=boom)
+    assert issue.weather_line == ""
+
+    def must_not_run(**_):
+        raise AssertionError("weather_fn must not run when disabled")
+
+    issue, _ = run_digest(**common, weather_fn=must_not_run, weather_enabled=False)
+    assert issue.weather_line == ""
+
+    # None from the fetcher stores as the empty string, not "None".
+    issue, _ = run_digest(**common, weather_fn=lambda **_: None)
+    assert issue.weather_line == ""

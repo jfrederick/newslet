@@ -131,6 +131,7 @@ def main() -> int:
         ),
         discoveries=FIXTURE_DISCOVERIES,
         facts=FIXTURE_FACTS,
+        weather_line="78° chance light rain, tonight 64° mostly clear",
         quote=Quote(
             text=(
                 "The impediment to action advances action. "

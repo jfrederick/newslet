@@ -271,6 +271,23 @@ def tune_quotes_profile(
 ) -> str: ...
 ```
 
+### `newslet.weather`
+
+One terse forecast line from the free, keyless National Weather Service
+API — no LLM, pure template formatting. Two requests (`/points/{lat},{lon}`
+→ the forecast URL → first two periods) become e.g.
+`78° chance light rain, tonight 64° mostly clear`. Default coordinates are
+Brooklyn, NY (module constants; per-call overridable — deliberately not an
+admin knob yet). Stamped on `Issue.weather_line` at build time so archives
+keep the morning's actual forecast. Best-effort `None`; the injectable
+network edge is `fetch(url) -> dict`.
+
+```python
+def fetch_weather(
+    *, lat: float = BROOKLYN_LAT, lon: float = BROOKLYN_LON, fetch=None,
+) -> str | None: ...
+```
+
 ### `newslet.x_grok`
 
 X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
@@ -388,6 +405,8 @@ def render_email(
 - `web_nav=True` (the `/` homepage render only) prepends a thin
   discover/admin/emails nav strip; sent emails never set it, so their HTML
   is unchanged.
+- `Issue.weather_line` renders as one muted line under the dateline in
+  the header (not votable).
 - `Issue.quote` renders as an italic epigraph directly under the intro,
   with a "— Author, *Source* · tradition" attribution line; its +/- links
   sign the synthetic `{base}/quote/{issue.date}` URL.
@@ -471,7 +490,7 @@ Routes:
   sends `Accept: application/json` — the Discover page adds in place)
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?, quote_enabled?}` → 303 `/admin` (`x_enabled`/`facts_enabled`/`quote_enabled` are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?, quote_enabled?, weather_enabled?}` → 303 `/admin` (the boolean toggles are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -492,7 +511,7 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board, `"facts"` the facts-taste profile + topic log, `"quotes"` the quotes-taste profile + no-repeat log) | — | `markdown`/counts/`theme`/`board_json`/`recent_topics_json`/`recent_quotes_json`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json`, `quote_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json`, `quote_json`, `weather_line` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

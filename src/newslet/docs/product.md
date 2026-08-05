@@ -406,6 +406,31 @@ issue without fact blocks, never a blocked send.
 
 :::
 
+### The weather line
+
+One quiet line under the date: `78° chance light rain, tonight 64° mostly
+clear`. That's the whole feature — a glanceable Brooklyn forecast, no
+paragraphs, no advice to bring an umbrella.
+
+:::tier little
+
+The line comes from the US National Weather Service's free public API and is
+formatted by plain code — no AI involved, so it costs nothing and can't
+hallucinate a forecast. It's stamped onto each edition when it's built, so
+old editions in the archive show the weather of their own morning. An admin
+toggle turns it off.
+
+:::
+
+:::tier medium
+
+`weather.fetch_weather()` makes two keyless calls to api.weather.gov
+(points → forecast) and templates the first two periods into one line;
+coordinates default to Brooklyn (module constants). Best-effort `None` on
+any failure — the line is simply absent. Rides `Issue.weather_line`.
+
+:::
+
 ### Quote of the day
 
 Right under the morning's intro sits a single quote — Marcus Aurelius one

@@ -1326,3 +1326,22 @@ def test_rate_quote_vote_titles_and_labels(client):
     rows = db.recent_feedback(limit=5)
     # The title carries a text prefix so the tuner knows which line landed.
     assert rows[0].title == "Quote: Seneca — It is not that we have a short time to live"
+
+
+def test_config_weather_enabled_roundtrip(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5",
+              "web_variety": "30", "weather_enabled": "true"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().weather_enabled is True
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
+    )
+    assert db.get_config().weather_enabled is False
+    assert 'name="weather_enabled"' in client.get("/admin").text

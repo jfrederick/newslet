@@ -167,6 +167,9 @@ class Issue(BaseModel):
     # The philosophical quote of the day (epigraph) — see ``newslet.quotes``.
     # Optional for the same lenient-load reason.
     quote: Quote | None = None
+    # One terse NWS forecast line ("78° chance light rain, tonight 64° ...")
+    # stamped at build time — see ``newslet.weather``. Empty = absent.
+    weather_line: str = ""
 
 
 class FeedbackRow(BaseModel):
@@ -246,6 +249,8 @@ class Config(BaseModel):
       fact essays (see ``newslet.facts``).
     - ``quote_enabled`` — whether each issue carries the philosophical quote
       of the day (see ``newslet.quotes``).
+    - ``weather_enabled`` — whether each issue carries the one-line Brooklyn
+      weather forecast (see ``newslet.weather``).
     """
 
     max_rss_articles: int = Field(default=10, ge=1, le=40)
@@ -258,6 +263,7 @@ class Config(BaseModel):
     text_size: int = Field(default=100, ge=75, le=150)
     facts_enabled: bool = Field(default=True)
     quote_enabled: bool = Field(default=True)
+    weather_enabled: bool = Field(default=True)
 
 
 class DiscoverFeed(BaseModel):

@@ -31,6 +31,7 @@ from newslet import (
     summarize,
     themes,
     tune,
+    weather,
     websearch,
     x_grok,
 )
@@ -166,6 +167,7 @@ def _build_issue(
     random_articles: list[WebArticle] | None = None,
     facts_list: list[Fact] | None = None,
     quote: Quote | None = None,
+    weather_line: str = "",
 ) -> Issue:
     return Issue(
         date=date,
@@ -178,6 +180,7 @@ def _build_issue(
         random_articles=random_articles or [],
         facts=facts_list or [],
         quote=quote,
+        weather_line=weather_line,
     )
 
 
@@ -231,6 +234,8 @@ def run_digest(
     quotes_profile_md: str = "",
     recent_quotes: list[str] | None = None,
     quote_enabled: bool = True,
+    weather_fn=None,
+    weather_enabled: bool = True,
     x_enabled: bool = True,
     max_x_posts: int = _X_MAX_POSTS,
     max_picks: int = _DEFAULT_MAX_PICKS,
@@ -261,6 +266,7 @@ def run_digest(
     serendipity_fn = serendipity_fn or serendipity.fetch_serendipity
     facts_fn = facts_fn or facts.fetch_facts
     quote_fn = quote_fn or quotes.fetch_quote
+    weather_fn = weather_fn or weather.fetch_weather
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -392,6 +398,14 @@ def run_digest(
         except Exception:  # noqa: BLE001 - best effort, never block the send
             log.exception("quote failed; sending without the epigraph")
 
+    # The weather line: free NWS call, no LLM. Best-effort like the rest.
+    weather_line = ""
+    if weather_enabled:
+        try:
+            weather_line = weather_fn() or ""
+        except Exception:  # noqa: BLE001 - best effort, never block the send
+            log.exception("weather failed; sending without the forecast line")
+
     issue = _build_issue(
         response.picks,
         date=date,
@@ -402,6 +416,7 @@ def run_digest(
         random_articles=random_articles,
         facts_list=issue_facts,
         quote=issue_quote,
+        weather_line=weather_line,
     )
     return issue, candidates
 
@@ -453,6 +468,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         quotes_profile_md=quotes_state.markdown,
         recent_quotes=quotes_state.recent_quotes,
         quote_enabled=config.quote_enabled,
+        weather_enabled=config.weather_enabled,
         now=now,
     )
 
@@ -882,6 +898,11 @@ def _fake_quote(profile_md: str, recent: list[str], **_) -> Quote:
     )
 
 
+def _fake_weather(**_) -> str:
+    """Deterministic, offline weather line for --dry-run."""
+    return "78° chance light rain, tonight 64° mostly clear"
+
+
 def _dry_run_env() -> None:
     """Force dry-run env values.
 
@@ -946,6 +967,7 @@ def main(argv: list[str] | None = None) -> int:
         serendipity_fn=_fake_serendipity,
         facts_fn=_fake_facts,
         quote_fn=_fake_quote,
+        weather_fn=_fake_weather,
     )
 
     if not issue.picks:
