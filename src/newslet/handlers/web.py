@@ -655,7 +655,11 @@ def rate(
             )
         elif is_quote_vote:
             if issue.quote is not None:
-                title = f"Quote: {issue.quote.author}"
+                # Author alone can't teach the tuner which line landed —
+                # carry a text prefix, same shape as the no-repeat log.
+                title = (
+                    f"Quote: {issue.quote.author} — {issue.quote.text[:60]}"
+                )
         else:
             for pick in issue.picks:
                 if str(pick.url) == article_url:

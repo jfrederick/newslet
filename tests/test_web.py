@@ -1311,8 +1311,8 @@ def test_rate_quote_vote_titles_and_labels(client):
             date="2026-08-08",
             picks=[],
             created_at=datetime.now(UTC),
-            quote=Quote(text="T", author="Seneca", source="Letters",
-                        tradition="Stoic"),
+            quote=Quote(text="It is not that we have a short time to live",
+                        author="Seneca", source="Letters", tradition="Stoic"),
         )
     )
     quote_url = "https://api.example.com/quote/2026-08-08"
@@ -1324,4 +1324,5 @@ def test_rate_quote_vote_titles_and_labels(client):
     assert "Quote: Seneca" in r.text
     assert f'<a href="{quote_url}"' not in r.text  # no dead link
     rows = db.recent_feedback(limit=5)
-    assert rows[0].title == "Quote: Seneca"
+    # The title carries a text prefix so the tuner knows which line landed.
+    assert rows[0].title == "Quote: Seneca — It is not that we have a short time to live"
