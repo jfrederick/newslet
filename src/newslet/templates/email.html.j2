@@ -334,7 +334,7 @@
                 {% if deepdive_pending == 0 %}Ask for a ~500-word explainer &mdash; it arrives in the next edition.{% else %}{{ deepdive_pending }} queued &mdash; the next one arrives in tomorrow&rsquo;s edition.{% endif %}
               </div>
               <form method="post" action="/api/deepdive" style="margin:0;">
-                <input type="text" name="topic" maxlength="200" placeholder="e.g. how does BGP routing actually work?" style="width:70%; padding:9px 12px; font-size:{{ fs(14) }}; font-family:{{ t.font_body }}; color:{{ p.fg }}; background:{{ p.bg }}; border:1px solid {{ p.border }}; border-radius:{{ t.radius_sm }};">
+                <input type="text" name="topic" maxlength="200" required placeholder="e.g. how does BGP routing actually work?" style="width:70%; padding:9px 12px; font-size:{{ fs(14) }}; font-family:{{ t.font_body }}; color:{{ p.fg }}; background:{{ p.bg }}; border:1px solid {{ p.border }}; border-radius:{{ t.radius_sm }};">
                 <button type="submit" style="padding:9px 16px; font-size:{{ fs(14) }}; font-weight:600; font-family:{{ t.font_body }}; color:{{ p.accent_fg }}; background:{{ p.accent }}; border:1px solid {{ p.accent }}; border-radius:{{ t.radius_sm }}; cursor:pointer;">Queue it</button>
               </form>
             </td>

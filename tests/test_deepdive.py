@@ -67,7 +67,11 @@ def test_happy_path(env):
 
 
 def test_empty_topic_short_circuits(env):
-    assert deepdive.fetch_deepdive("   ", client=_BoomClient()) is None
+    # A valid canned reply + call recording makes this bite: without the
+    # guard the client would be called and a real DeepDive returned.
+    client = _FakeClient(_REPLY)
+    assert deepdive.fetch_deepdive("   ", client=client) is None
+    assert client.calls == []
 
 
 def test_api_error_returns_none(env):
