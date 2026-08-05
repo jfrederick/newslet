@@ -863,9 +863,10 @@ def test_run_digest_skips_web_block_when_max_web_zero(env, monkeypatch):
     assert issue.web_articles == []
 
 
-def test_home_mode_stores_home_issue_without_emailing(aws, monkeypatch):
-    """handler({"home": True}) builds the homepage aggregation under the
-    reserved 'home' key, hidden from list_issues, and sends no email."""
+def test_stale_home_event_falls_through_to_daily(aws, monkeypatch):
+    """The homepage-rebuild mode is retired: a stray {"home": true} event
+    (e.g. in flight during a deploy) runs the idempotent daily pipeline
+    instead — no crash, and no reserved 'home' row is ever written."""
     from newslet import db, feeds, rank
     from newslet.handlers import digest
 
@@ -893,13 +894,9 @@ def test_home_mode_stores_home_issue_without_emailing(aws, monkeypatch):
 
     result = digest.handler({"home": True}, None)
 
-    assert result["status"] == "home_refreshed"
-    assert sent == []  # the homepage never emails
-    home = db.get_issue("home")
-    assert home is not None
-    assert len(home.picks) == 1
-    # Hidden from the daily "recent issues" list.
-    assert "home" not in [i["date"] for i in db.list_issues()]
+    assert result["status"] == "sent"
+    assert len(sent) == 1  # the daily email, not a homepage rebuild
+    assert db.get_issue("home") is None
 
 
 def test_run_digest_drops_seen_web_article(env, monkeypatch):
