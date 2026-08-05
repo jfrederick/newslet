@@ -900,7 +900,7 @@ def _fake_quote(profile_md: str, recent: list[str], **_) -> Quote:
 
 def _fake_weather(**_) -> str:
     """Deterministic, offline weather line for --dry-run."""
-    return "78° chance light rain, tonight 64° mostly clear"
+    return "today 78° chance light rain, tonight 64° mostly clear"
 
 
 def _dry_run_env() -> None:

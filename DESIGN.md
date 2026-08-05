@@ -276,7 +276,7 @@ def tune_quotes_profile(
 One terse forecast line from the free, keyless National Weather Service
 API — no LLM, pure template formatting. Two requests (`/points/{lat},{lon}`
 → the forecast URL → first two periods) become e.g.
-`78° chance light rain, tonight 64° mostly clear`. Default coordinates are
+`today 78° chance light rain, tonight 64° mostly clear`. Default coordinates are
 Brooklyn, NY (module constants; per-call overridable — deliberately not an
 admin knob yet). Stamped on `Issue.weather_line` at build time so archives
 keep the morning's actual forecast. Best-effort `None`; the injectable

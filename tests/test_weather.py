@@ -34,7 +34,7 @@ def _fake_fetch(points=None, forecast=None):
 def test_happy_path_formats_one_line():
     fetch = _fake_fetch()
     line = weather.fetch_weather(fetch=fetch)
-    assert line == "78° chance light rain, tonight 64° mostly clear"
+    assert line == "today 78° chance light rain, tonight 64° mostly clear"
     assert fetch.calls[0] == (
         f"https://api.weather.gov/points/{weather.BROOKLYN_LAT},{weather.BROOKLYN_LON}"
     )
@@ -53,7 +53,7 @@ def test_single_period_renders_without_second_clause():
             {"name": "Today", "temperature": 80, "shortForecast": "Sunny"},
         ]}
     })
-    assert weather.fetch_weather(fetch=fetch) == "80° sunny"
+    assert weather.fetch_weather(fetch=fetch) == "today 80° sunny"
 
 
 def test_fetch_error_returns_none():
@@ -74,6 +74,13 @@ def test_missing_forecast_url_returns_none():
         {"properties": {"periods": []}},
         {"properties": {"periods": [{"name": "Today"}]}},  # no temp/shortForecast
         {"properties": {"periods": [{"temperature": "hot", "shortForecast": "x"}]}},
+        {"properties": {"periods": ["not-a-dict"]}},
+        {"properties": {"periods": [
+            {"name": "Today", "temperature": float("nan"), "shortForecast": "x"},
+        ]}},
+        {"properties": {"periods": [
+            {"temperature": 70, "shortForecast": "sunny"},  # unnamed period
+        ]}},
     ],
 )
 def test_malformed_forecast_returns_none(forecast):

@@ -408,8 +408,8 @@ issue without fact blocks, never a blocked send.
 
 ### The weather line
 
-One quiet line under the date: `78° chance light rain, tonight 64° mostly
-clear`. That's the whole feature — a glanceable Brooklyn forecast, no
+One quiet line under the date: `today 78° chance light rain, tonight 64°
+mostly clear`. That's the whole feature — a glanceable Brooklyn forecast, no
 paragraphs, no advice to bring an umbrella.
 
 :::tier little

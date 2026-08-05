@@ -822,8 +822,13 @@ def test_run_digest_facts_exception_is_swallowed(env):
 def test_run_digest_facts_disabled_skips_call(env):
     from newslet.handlers.digest import run_digest
 
+    calls: list[int] = []
+
     def must_not_run(*_a, **_k):
-        raise AssertionError("facts_fn must not be called when disabled")
+        # Recording, not raising: the pipeline's except Exception would
+        # swallow an AssertionError and make this test vacuous.
+        calls.append(1)
+        return _facts_pair()
 
     issue, _ = run_digest(
         feed_urls=[],
@@ -842,6 +847,7 @@ def test_run_digest_facts_disabled_skips_call(env):
         weather_fn=lambda **_: None,
     )
     assert issue.facts == []
+    assert calls == []
 
 
 def test_fresh_issue_does_not_burn_topics_before_send(aws, monkeypatch):
@@ -1072,11 +1078,15 @@ def test_run_digest_quote_exception_and_disable(env):
     issue, _ = run_digest(**common, quote_fn=boom)
     assert issue.quote is None
 
-    def must_not_run(*_a, **_k):
-        raise AssertionError("quote_fn must not run when disabled")
+    quote_calls: list[int] = []
 
-    issue, _ = run_digest(**common, quote_fn=must_not_run, quote_enabled=False)
+    def recording_quote(*_a, **_k):
+        quote_calls.append(1)
+        return _quote()
+
+    issue, _ = run_digest(**common, quote_fn=recording_quote, quote_enabled=False)
     assert issue.quote is None
+    assert quote_calls == []
 
 
 def test_advance_quotes_log_dedupes_and_caps(aws):
@@ -1156,11 +1166,17 @@ def test_run_digest_attaches_weather_line(env):
     issue, _ = run_digest(**common, weather_fn=boom)
     assert issue.weather_line == ""
 
-    def must_not_run(**_):
-        raise AssertionError("weather_fn must not run when disabled")
+    # Record calls rather than raising: the pipeline's except Exception
+    # would swallow an AssertionError and make this check vacuous.
+    calls: list[int] = []
 
-    issue, _ = run_digest(**common, weather_fn=must_not_run, weather_enabled=False)
+    def recording(**_):
+        calls.append(1)
+        return "x"
+
+    issue, _ = run_digest(**common, weather_fn=recording, weather_enabled=False)
     assert issue.weather_line == ""
+    assert calls == []
 
     # None from the fetcher stores as the empty string, not "None".
     issue, _ = run_digest(**common, weather_fn=lambda **_: None)

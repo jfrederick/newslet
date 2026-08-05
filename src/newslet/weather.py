@@ -4,7 +4,12 @@ Free, keyless, and template-formatted — no LLM anywhere. Two requests:
 ``/points/{lat},{lon}`` resolves the forecast URL for the coordinates,
 then the forecast's first two periods become a line like::
 
-    78° chance light rain, tonight 64° mostly clear
+    today 78° chance light rain, tonight 64° mostly clear
+
+Both clauses carry the period's own name because the first period is not
+always "today": NWS rolls period boundaries on the grid's local clock, so
+an early-morning build (the daily cron is 10:00 UTC = 05:00 ET in winter)
+can lead with "overnight" and its low temperature.
 
 The line is stamped on the Issue at build time so archive views keep the
 weather the reader actually woke up to. Best-effort like every enrichment:
@@ -39,19 +44,15 @@ def _default_fetch(url: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _format_period(period: dict, *, with_name: bool) -> str | None:
-    """``"78° chance light rain"`` (optionally ``"tonight 64° …"``)."""
+def _format_period(period: dict) -> str | None:
+    """``"today 78° chance light rain"`` — name, temperature, forecast."""
     temp = period.get("temperature")
     short = str(period.get("shortForecast", "")).strip().lower()
-    if not isinstance(temp, int | float) or not short:
+    name = str(period.get("name", "")).strip().lower()
+    if not isinstance(temp, int | float) or temp != temp or not short or not name:
+        # (temp != temp filters NaN, which round() would raise on.)
         return None
-    text = f"{round(temp)}° {short}"
-    if with_name:
-        name = str(period.get("name", "")).strip().lower()
-        if not name:
-            return None
-        text = f"{name} {text}"
-    return text
+    return f"{name} {round(temp)}° {short}"
 
 
 def fetch_weather(
@@ -79,11 +80,16 @@ def fetch_weather(
         logger.warning("weather: forecast carried no periods")
         return None
 
-    now_part = _format_period(periods[0], with_name=False)
+    # Formatting is also best-effort: a non-dict element or otherwise
+    # malformed period must degrade to None, exactly as the docstring
+    # promises, not raise past the digest's log line.
+    try:
+        now_part = _format_period(periods[0])
+        later_part = _format_period(periods[1]) if len(periods) > 1 else None
+    except Exception as exc:  # noqa: BLE001 - best effort; never raise
+        logger.warning("weather: malformed period: %s", exc)
+        return None
     if now_part is None:
         logger.warning("weather: first period was malformed")
         return None
-    later_part = (
-        _format_period(periods[1], with_name=True) if len(periods) > 1 else None
-    )
     return f"{now_part}, {later_part}" if later_part else now_part
