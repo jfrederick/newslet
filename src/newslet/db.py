@@ -24,6 +24,8 @@ from newslet.contracts import (
     Config,
     DiscoverBoard,
     Discovery,
+    Fact,
+    FactsState,
     Feed,
     FeedbackRow,
     Issue,
@@ -192,6 +194,37 @@ def put_profile(markdown: str) -> Profile:
 
 
 # ---------------------------------------------------------------------------
+# Facts state — shares the profile table under id="facts"
+# ---------------------------------------------------------------------------
+
+
+def get_facts_state() -> FactsState:
+    """The tech-facts feature's own state row. Lenient: a missing row or
+    garbled topics JSON yields defaults rather than raising."""
+    resp = _t_profile().get_item(Key={"id": "facts"})
+    item = resp.get("Item")
+    if not item:
+        return FactsState()
+    try:
+        topics_raw = json.loads(item.get("recent_topics_json", "[]"))
+    except json.JSONDecodeError:
+        topics_raw = []
+    topics = [str(t) for t in topics_raw] if isinstance(topics_raw, list) else []
+    return FactsState(markdown=str(item.get("markdown", "")), recent_topics=topics)
+
+
+def put_facts_state(state: FactsState) -> None:
+    _t_profile().put_item(
+        Item={
+            "id": "facts",
+            "markdown": state.markdown,
+            "recent_topics_json": json.dumps(state.recent_topics),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # Config (admin knobs) — shares the profile table under a distinct id
 # ---------------------------------------------------------------------------
 
@@ -318,6 +351,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
     random_articles_json = json.dumps(
         [json.loads(r.model_dump_json()) for r in issue.random_articles]
     )
+    facts_json = json.dumps([json.loads(f.model_dump_json()) for f in issue.facts])
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
@@ -332,6 +366,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "discoveries_json": discoveries_json,
         "web_articles_json": web_articles_json,
         "random_articles_json": random_articles_json,
+        "facts_json": facts_json,
     }
     if manual:
         # Manual ("send now") issues are stored so /rate title lookup and
@@ -388,6 +423,15 @@ def get_issue(date: str) -> Issue | None:
             log.warning(
                 "skipping bad random_article in issue %s: %s", item.get("date"), exc
             )
+    # Same lenient shape for the tech facts (added after random_articles;
+    # older rows simply have no field).
+    facts_raw = json.loads(item.get("facts_json", "[]"))
+    facts = []
+    for f in facts_raw:
+        try:
+            facts.append(Fact.model_validate(f))
+        except ValidationError as exc:
+            log.warning("skipping bad fact in issue %s: %s", item.get("date"), exc)
     return Issue.model_validate(
         {
             "date": item["date"],
@@ -405,6 +449,7 @@ def get_issue(date: str) -> Issue | None:
             "discoveries": discoveries,
             "web_articles": web_articles,
             "random_articles": random_articles,
+            "facts": facts,
         }
     )
 

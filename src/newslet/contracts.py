@@ -64,6 +64,35 @@ class WebArticle(BaseModel):
     comments_url: str = ""
 
 
+class Fact(BaseModel):
+    """One ~500-word tech-fact essay for the daily issue.
+
+    Two ride each issue: ``slot="mid"`` renders between the picks and the
+    web block, ``slot="end"`` at the very bottom. ``body_md`` is plain
+    paragraphs separated by blank lines (no headings/lists); ``genre`` is
+    one of ``facts.GENRES`` but stays a plain string so old issues load
+    even if the taxonomy changes.
+    """
+
+    title: str
+    body_md: str
+    genre: str = ""
+    slot: Literal["mid", "end"] = "mid"
+
+
+class FactsState(BaseModel):
+    """The tech-facts feature's own persisted state (profile row ``id="facts"``).
+
+    ``markdown`` is the auto-managed facts-taste profile — tuned only by
+    votes on facts, never by the general profile tuner (and vice versa).
+    ``recent_topics`` is the rolling no-repeat log of covered fact titles,
+    newest last, capped by the digest at 60.
+    """
+
+    markdown: str = ""
+    recent_topics: list[str] = Field(default_factory=list)
+
+
 class Discovery(BaseModel):
     """A new candidate source/article surfaced outside the user's feeds.
 
@@ -105,6 +134,10 @@ class Issue(BaseModel):
     # on both the homepage and the email. Optional with a default so issues
     # persisted before this field existed still load.
     random_articles: list[WebArticle] = Field(default_factory=list)
+    # The two tech-fact essays (mid + end slots) — see ``newslet.facts``.
+    # Optional with a default so issues persisted before this field existed
+    # still load.
+    facts: list[Fact] = Field(default_factory=list)
 
 
 class FeedbackRow(BaseModel):
