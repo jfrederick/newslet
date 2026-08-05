@@ -470,9 +470,15 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     feedback, _fact_votes, _quote_votes = _recent_feedback_split(_RANK_FEEDBACK_LIMIT)
     facts_state = db.get_facts_state() if config.facts_enabled else FactsState()
     quotes_state = db.get_quotes_state() if config.quote_enabled else QuotesState()
-    pending_deepdive = (
-        db.oldest_pending_deepdive() if config.deepdive_enabled else None
-    )
+    # The requests table is the one storage dependency the send does not
+    # otherwise touch (new table, separate IAM grant) — a failure here must
+    # degrade to "nothing queued", never block the email.
+    pending_deepdive = None
+    if config.deepdive_enabled:
+        try:
+            pending_deepdive = db.oldest_pending_deepdive()
+        except Exception:  # noqa: BLE001 - the deep dive is best effort
+            log.exception("deep-dive lookup failed; sending without one")
     issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
         profile=profile,

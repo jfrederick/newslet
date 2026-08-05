@@ -1290,3 +1290,24 @@ def test_mark_deepdive_served_skips_mismatched_topic(aws):
     digest._mark_deepdive_served(issue)
     # The queued request wasn't the one answered — it stays pending.
     assert db.count_pending_deepdives() == 1
+
+
+def test_fresh_issue_survives_requests_table_failure(aws, monkeypatch):
+    """A broken requests table (new table, separate IAM grant) must degrade
+    to 'nothing queued', never block the send."""
+    from newslet.handlers import digest
+
+    def boom():
+        raise RuntimeError("requests table missing")
+
+    monkeypatch.setattr(digest.db, "oldest_pending_deepdive", boom)
+    captured = {}
+
+    def fake_run_digest(**kwargs):
+        captured["topic"] = kwargs.get("deepdive_topic")
+        return (Issue(date="2026-08-12", picks=[], created_at=datetime.now(UTC)), [])
+
+    monkeypatch.setattr(digest, "run_digest", fake_run_digest)
+    issue, _ = digest._fresh_issue()
+    assert captured["topic"] == ""
+    assert issue.deepdive is None
