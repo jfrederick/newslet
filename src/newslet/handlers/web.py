@@ -12,6 +12,7 @@ import hmac
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import boto3
 from fastapi import Cookie, FastAPI, Form, HTTPException, Query, Request, Response
@@ -456,10 +457,13 @@ def save_config(
     max_random_articles: int = Form(default=4),
     theme: str = Form(default=themes.DEFAULT_THEME),
     text_size: int = Form(default=themes.TEXT_SIZE_DEFAULT),
+    facts_enabled: bool = Form(default=False),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
-    the off-your-beat count, and the app appearance (theme + text size)."""
+    the off-your-beat count, the tech-facts toggle, and the app appearance
+    (theme + text size). Checkbox semantics: an unchecked box submits
+    nothing, so ``facts_enabled``/``x_enabled`` absent means off."""
     _require_admin(admin_token)
     # Strict on write (the read path is the lenient one): reject names the
     # picker could never have sent.
@@ -475,6 +479,7 @@ def save_config(
             max_random_articles=max_random_articles,
             theme=theme,
             text_size=text_size,
+            facts_enabled=facts_enabled,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -611,6 +616,16 @@ def rate(
             if str(pick.url) == article_url:
                 title = pick.title
                 break
+        if not title:
+            # Fact votes carry synthetic /facts/{date}/{slot} URLs (see
+            # email_render); resolve the slot to the fact's title so the
+            # facts tuner sees what was actually voted on.
+            parts = urlparse(article_url).path.rstrip("/").split("/")
+            if len(parts) >= 2 and parts[-3:-2] == ["facts"]:
+                slot = parts[-1]
+                title = next(
+                    (f.title for f in issue.facts if f.slot == slot), ""
+                )
 
     db.put_feedback(
         FeedbackRow(

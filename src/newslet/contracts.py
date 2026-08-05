@@ -213,6 +213,8 @@ class Config(BaseModel):
       the web pages (root ``font-size``; type is declared in ``rem``) and the
       daily email (scaled inline ``px``). Bounds mirror
       ``themes.TEXT_SIZE_MIN``/``MAX``.
+    - ``facts_enabled`` — whether each issue carries the two ~500-word tech
+      fact essays (see ``newslet.facts``).
     """
 
     max_rss_articles: int = Field(default=10, ge=1, le=40)
@@ -223,6 +225,7 @@ class Config(BaseModel):
     max_x_articles: int = Field(default=15, ge=1, le=30)
     theme: str = Field(default="foundry")
     text_size: int = Field(default=100, ge=75, le=150)
+    facts_enabled: bool = Field(default=True)
 
 
 class DiscoverFeed(BaseModel):

@@ -168,6 +168,15 @@
                    style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
           </label>
         </div>
+        <div style="margin-top:18px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" name="facts_enabled" value="true"
+                   {% if config.facts_enabled %}checked{% endif %}>
+            <span>Tech facts
+              <span style="color:var(--muted);font-size: 0.8125rem;">— two ~500-word essays per email; votes tune their own taste profile</span>
+            </span>
+          </label>
+        </div>
         <div style="margin-top:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
           <label style="flex:1;min-width:200px;max-width:320px;display:block;">
             Theme

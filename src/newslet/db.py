@@ -256,6 +256,8 @@ def get_config() -> Config:
             # themes.get falls back.
             theme=str(item.get("theme", themes.DEFAULT_THEME)),
             text_size=int(item.get("text_size", 100)),
+            # Rows written before the tech-facts feature default it on.
+            facts_enabled=bool(item.get("facts_enabled", True)),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -305,6 +307,7 @@ def put_config(config: Config) -> Config:
             "max_x_articles": config.max_x_articles,
             "theme": config.theme,
             "text_size": config.text_size,
+            "facts_enabled": config.facts_enabled,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )

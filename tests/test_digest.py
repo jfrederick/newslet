@@ -715,3 +715,207 @@ def test_main_dry_run_no_picks(env, monkeypatch, tmp_path, capsys):
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "no picks today" in captured.out
+
+
+# --- Tech facts: wiring, feedback separation, tune ---
+
+
+def _fb(url: str, rating: str = "up", title: str = "T"):
+    from newslet.contracts import FeedbackRow
+
+    return FeedbackRow(
+        article_url=url, title=title, rating=rating,
+        ts=datetime.now(UTC), issue_date="2026-08-06",
+    )
+
+
+def test_split_feedback_routes_by_path():
+    from newslet.handlers.digest import _split_feedback
+
+    general = _fb("https://ex.com/article")
+    fact = _fb("https://api.example.com/facts/2026-08-06/mid")
+    quote = _fb("https://api.example.com/quote/2026-08-06")
+    got_general, got_facts = _split_feedback([general, fact, quote])
+    assert [str(r.article_url) for r in got_general] == ["https://ex.com/article"]
+    assert [str(r.article_url) for r in got_facts] == [
+        "https://api.example.com/facts/2026-08-06/mid"
+    ]
+    # Quote votes are reserved for the quote feature (PR 3): not general,
+    # not facts.
+
+
+def _facts_pair():
+    from newslet.contracts import Fact
+
+    return [
+        Fact(title="Mid fact", body_md="B", genre="algorithms & math", slot="mid"),
+        Fact(title="End fact", body_md="B", genre="computing history & lore", slot="end"),
+    ]
+
+
+def test_run_digest_attaches_facts(env):
+    from newslet.handlers.digest import run_digest
+
+    captured = {}
+
+    def fake_facts(profile_md, topics, **_):
+        captured["args"] = (profile_md, topics)
+        return _facts_pair()
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=fake_facts,
+        facts_profile_md="- loves lore",
+        facts_recent_topics=["Old"],
+    )
+    assert [f.slot for f in issue.facts] == ["mid", "end"]
+    assert captured["args"] == ("- loves lore", ["Old"])
+
+
+def test_run_digest_facts_exception_is_swallowed(env):
+    from newslet.handlers.digest import run_digest
+
+    def boom_facts(*_a, **_k):
+        raise RuntimeError("facts down")
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=boom_facts,
+    )
+    assert issue.facts == []
+
+
+def test_run_digest_facts_disabled_skips_call(env):
+    from newslet.handlers.digest import run_digest
+
+    def must_not_run(*_a, **_k):
+        raise AssertionError("facts_fn must not be called when disabled")
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=must_not_run,
+        facts_enabled=False,
+    )
+    assert issue.facts == []
+
+
+def test_fresh_issue_appends_fact_topics_capped(aws, monkeypatch):
+    from newslet import db
+    from newslet.contracts import FactsState
+    from newslet.handlers import digest
+
+    db.put_facts_state(
+        FactsState(markdown="- m", recent_topics=[f"t{i}" for i in range(59)])
+    )
+    fake_issue = Issue(
+        date="2026-08-06",
+        picks=[_pick("https://a.example.com/1")],
+        created_at=datetime.now(UTC),
+        facts=_facts_pair(),
+    )
+    monkeypatch.setattr(digest, "run_digest", lambda **_: (fake_issue, []))
+
+    issue, _ = digest._fresh_issue()
+    assert [f.slot for f in issue.facts] == ["mid", "end"]
+    state = db.get_facts_state()
+    assert len(state.recent_topics) == 60
+    assert state.recent_topics[-2:] == ["Mid fact", "End fact"]
+    assert state.markdown == "- m"  # topic log update never touches the profile
+
+
+def test_fresh_issue_passes_general_feedback_only(aws, monkeypatch):
+    from newslet import db
+    from newslet.handlers import digest
+
+    db.put_feedback(_fb("https://ex.com/article", title="General"))
+    db.put_feedback(_fb("https://api.example.com/facts/2026-08-06/mid", title="Fact"))
+
+    captured = {}
+
+    def fake_run_digest(**kwargs):
+        captured["feedback"] = kwargs["feedback"]
+        return (
+            Issue(date="2026-08-06", picks=[], created_at=datetime.now(UTC)),
+            [],
+        )
+
+    monkeypatch.setattr(digest, "run_digest", fake_run_digest)
+    digest._fresh_issue()
+    assert [r.title for r in captured["feedback"]] == ["General"]
+
+
+def test_tune_facts_after_send_updates_only_facts_row(aws, monkeypatch):
+    from newslet import db, facts
+    from newslet.contracts import FactsState
+    from newslet.handlers import digest
+
+    db.put_profile("# me")
+    db.put_facts_state(FactsState(markdown="- old", recent_topics=["a"]))
+    db.put_feedback(_fb("https://api.example.com/facts/2026-08-06/mid", title="Fact"))
+    db.put_feedback(_fb("https://ex.com/article", title="General"))
+
+    captured = {}
+
+    def fake_tune(current_md, feedback, **_):
+        captured["md"] = current_md
+        captured["titles"] = [r.title for r in feedback]
+        return "- new understanding"
+
+    monkeypatch.setattr(facts, "tune_facts_profile", fake_tune)
+    digest._tune_facts_after_send()
+
+    assert captured["md"] == "- old"
+    assert captured["titles"] == ["Fact"]  # general votes never reach the facts tuner
+    state = db.get_facts_state()
+    assert state.markdown == "- new understanding"
+    assert state.recent_topics == ["a"]  # log survives the tune
+    assert db.get_profile().markdown == "# me"  # general profile untouched
+
+
+def test_tune_profile_after_send_excludes_fact_votes(aws, monkeypatch):
+    from newslet import db, tune
+    from newslet.handlers import digest
+
+    db.put_profile("# me")
+    db.put_feedback(_fb("https://api.example.com/facts/2026-08-06/mid", title="Fact"))
+    db.put_feedback(_fb("https://ex.com/article", title="General"))
+
+    captured = {}
+
+    def fake_tune(profile_md, feedback, **_):
+        captured["titles"] = [r.title for r in feedback]
+        return profile_md
+
+    monkeypatch.setattr(tune, "tune_profile", fake_tune)
+    digest._tune_profile_after_send()
+    assert captured["titles"] == ["General"]
