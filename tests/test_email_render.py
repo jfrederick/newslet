@@ -386,3 +386,53 @@ def test_web_nav_renders_nav_strip(stub_sign: None) -> None:
     assert 'href="/discover"' in html
     assert 'href="/admin"' in html
     assert 'href="/emails"' in html
+
+
+def _fact_issue() -> Issue:
+    from newslet.contracts import Fact
+
+    return Issue(
+        date=DATE,
+        picks=[_pick("https://a.example.com/1", "PickTitle", "B")],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        web_articles=[
+            WebArticle(url="https://w.example.com/1", title="WebTitle", blurb="wb",
+                       source="Open Web"),
+        ],
+        discoveries=[
+            Discovery(url="https://d.example.com/1", title="DiscTitle",
+                      source="Wire", reason="r",
+                      feed_url="https://d.example.com/feed.xml"),
+        ],
+        facts=[
+            Fact(title="MidFactTitle", body_md="First para.\n\nSecond para.",
+                 genre="networks & protocols", slot="mid"),
+            Fact(title="EndFactTitle", body_md="Closing para.",
+                 genre="computing history & lore", slot="end"),
+        ],
+    )
+
+
+def test_fact_blocks_render_in_position(stub_sign: None) -> None:
+    _, html = render_email(_fact_issue(), BASE_URL)
+    # Mid fact: after the picks, before "From around the web".
+    assert html.index("PickTitle") < html.index("MidFactTitle") < html.index("WebTitle")
+    # End fact: after discoveries, before the CTA.
+    assert html.index("DiscTitle") < html.index("EndFactTitle") < html.index("Open daily scoop")
+    assert "First para." in html
+    assert "Second para." in html
+    assert "networks &amp; protocols" in html
+
+
+def test_fact_votes_sign_synthetic_urls(stub_sign: None) -> None:
+    _, html = render_email(_fact_issue(), BASE_URL)
+    mid_url = quote(f"{BASE_URL}/facts/{DATE}/mid", safe="")
+    end_url = quote(f"{BASE_URL}/facts/{DATE}/end", safe="")
+    assert f"{BASE_URL}/rate?a={mid_url}&amp;d={DATE}&amp;v=up" in html
+    assert f"{BASE_URL}/rate?a={end_url}&amp;d={DATE}&amp;v=down" in html
+
+
+def test_no_fact_blocks_when_absent(stub_sign: None) -> None:
+    _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
+    assert "Tech fact of the day" not in html
+    assert "One more fact" not in html

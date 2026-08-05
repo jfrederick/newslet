@@ -61,6 +61,45 @@
           </tr>
           {% endif %}
 
+          {#- One tech-fact essay (mid or end slot): section header, title,
+              genre subline, ~500 words of paragraphs, and the same signed
+              +/- voting cell as articles. -#}
+          {% macro fact_block(fact, header) %}
+          <tr>
+            <td style="padding:20px 24px 8px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <div style="font-family:{{ t.font_brand }}; font-size:{{ fs(15) }}; font-weight:700; color:{{ p.fg }}; margin:0;">
+                {{ header }}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px;">
+                    <div style="font-size:{{ fs(17) }}; line-height:1.35; font-weight:600; color:{{ p.fg }}; margin:0 0 4px 0;">
+                      {{ fact.title|e }}
+                    </div>
+                    {% if fact.genre %}
+                    <div style="font-size:{{ fs(12) }}; color:{{ p.muted }}; margin:0 0 10px 0;">
+                      {{ fact.genre|e }}
+                    </div>
+                    {% endif %}
+                    {% for para in fact.paragraphs %}
+                    <div style="font-size:{{ fs(15) }}; line-height:1.55; color:{{ p.fg }}; margin:0 0 12px 0;">
+                      {{ para|e }}
+                    </div>
+                    {% endfor %}
+                  </td>
+                  <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
+                    <a href="{{ fact.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:{{ fs(18) }}; line-height:1; color:{{ p.ok }}; background:{{ p.ok_bg }}; border:1px solid {{ p.ok_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">+</a>
+                    <a href="{{ fact.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:{{ fs(18) }}; line-height:1; color:{{ p.bad }}; background:{{ p.bad_bg }}; border:1px solid {{ p.bad_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">&#8722;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endmacro %}
           {% for pick in picks %}
           <tr>
             <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
@@ -86,6 +125,8 @@
             </td>
           </tr>
           {% endfor %}
+
+          {% if fact_mid %}{{ fact_block(fact_mid, "Tech fact of the day") }}{% endif %}
 
           {% if web_articles %}
           <tr>
@@ -199,6 +240,8 @@
           </tr>
           {% endfor %}
           {% endif %}
+
+          {% if fact_end %}{{ fact_block(fact_end, "One more fact") }}{% endif %}
 
           <tr>
             <td align="center" style="padding:22px 24px; border-bottom:1px solid {{ p.border_soft }};">
