@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import anthropic
 from pydantic import ValidationError
@@ -31,6 +32,22 @@ from .contracts import Fact, FeedbackRow
 from .search_common import extract_json_object, last_text_block
 
 logger = logging.getLogger(__name__)
+
+# The synthetic vote-URL path shape email_render mints for fact votes:
+# /facts/{issue-key}/{slot}, where the issue key is a date (YYYY-MM-DD) or a
+# manual-send key. Anchored and fully validated so a real article that
+# happens to contain ".../facts/..." in its path never matches. Shared by
+# handlers.digest (feedback routing) and handlers.web (/rate title lookup +
+# thanks page) so the two can never drift apart.
+_ISSUE_KEY_RE = r"(?:\d{4}-\d{2}-\d{2}|manual-[0-9a-zA-Z-]+)"
+VOTE_PATH_RE = re.compile(rf"^/facts/{_ISSUE_KEY_RE}/(mid|end)$")
+
+
+def vote_slot(path: str) -> str | None:
+    """The fact slot ("mid"/"end") for a synthetic vote-URL path, else None."""
+    m = VOTE_PATH_RE.match(path)
+    return m.group(1) if m else None
+
 
 GENRES = (
     "computing history & lore",

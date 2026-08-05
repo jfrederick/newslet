@@ -23,7 +23,7 @@ from markupsafe import Markup
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from newslet import clock, db, email_render, hn, newsletters, themes, tokens
+from newslet import clock, db, email_render, facts, hn, newsletters, themes, tokens
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -622,21 +622,23 @@ def rate(
     # the thanks page lands on this exact row regardless of HttpUrl rewrites.
     article_url = db.normalize_url(a)
 
-    # Fact votes carry synthetic /facts/{date}/{slot} URLs (see email_render);
-    # they get a title lookup by slot and a link-free thanks page (the
-    # synthetic path has no route to link to).
-    parts = urlparse(article_url).path.rstrip("/").split("/")
-    is_fact_vote = (
-        len(parts) >= 3 and parts[-3] == "facts" and parts[-1] in ("mid", "end")
-    )
+    # Fact votes carry synthetic /facts/{issue-key}/{slot} URLs (see
+    # email_render); they get a title lookup by slot and a link-free thanks
+    # page (the synthetic path has no route to link to). The match uses the
+    # same anchored full-shape regex the digest's feedback routing uses
+    # (newslet.facts.vote_slot), so a real article whose path merely ends
+    # ".../facts/<x>/end" still takes the normal picks branch.
+    fact_slot = facts.vote_slot(urlparse(article_url).path)
+    is_fact_vote = fact_slot is not None
 
     # Best-effort title lookup from the stored issue
     title = ""
     issue = db.get_issue(d)
     if issue:
         if is_fact_vote:
-            slot = parts[-1]
-            title = next((f.title for f in issue.facts if f.slot == slot), "")
+            title = next(
+                (f.title for f in issue.facts if f.slot == fact_slot), ""
+            )
         else:
             for pick in issue.picks:
                 if str(pick.url) == article_url:

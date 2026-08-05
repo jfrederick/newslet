@@ -1254,3 +1254,28 @@ def test_rate_fact_vote_thanks_page_shows_title_not_dead_link(client):
     # No dead anchor to the synthetic path; the note form still carries it.
     assert f'<a href="{fact_url}"' not in r.text
     assert f'value="{fact_url}"' in r.text
+
+
+def test_rate_article_under_facts_like_path_uses_pick_title(client):
+    """A real article whose path merely resembles the synthetic shape must
+    take the normal picks branch (linked thanks page, pick title)."""
+    from datetime import UTC, datetime
+
+    from newslet import db, tokens
+    from newslet.contracts import Issue, Pick
+
+    url = "https://someblog.example.com/blog/facts/report/end"
+    db.put_issue(
+        Issue(
+            date="2026-08-06",
+            picks=[Pick(url=url, title="A real article", blurb="b",
+                        source="Blog", score=0.5)],
+            created_at=datetime.now(UTC),
+        )
+    )
+    token = tokens.sign(url, "2026-08-06")
+    r = client.get("/rate", params={"a": url, "d": "2026-08-06", "v": "up", "t": token})
+    assert r.status_code == 200
+    assert f'<a href="{url}"' in r.text  # normal linked thanks page
+    rows = db.recent_feedback(limit=5)
+    assert rows[0].title == "A real article"

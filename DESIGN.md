@@ -239,10 +239,13 @@ a half-result never blocks the send). Results ride on `Issue.facts`.
 whole markdown is auto-managed (no sentinels, unlike `tune.tune_profile`),
 fed only votes on facts, and stored on the profile-table row `id="facts"`
 (`db.get_facts_state`/`put_facts_state`, model `FactsState`) alongside the
-topic log. Fact votes are identified by their synthetic vote-URL path
-prefix `/facts/` (see `handlers.digest._split_feedback`) and never reach
-article ranking or the general profile tuner — and general votes never
-reach this one.
+topic log. Fact votes are identified by an anchored match on the full
+synthetic vote-URL shape `/facts/{issue-key}/{mid|end}` (`VOTE_PATH_RE` /
+`vote_slot`, shared by `handlers.digest._split_feedback` and the web
+handler; the issue key is `YYYY-MM-DD` or a `manual-…` key, so a real
+article containing ".../facts/..." never matches) and never reach article
+ranking or the general profile tuner — and general votes never reach this
+one.
 
 ### `newslet.x_grok`
 
@@ -365,8 +368,8 @@ def render_email(
   picks, before the web block) and "One more fact" (after discoveries,
   before the CTA). Their +/- links sign **synthetic** URLs —
   `{base}/facts/{issue.date}/{mid|end}` — real HTTPS paths so
-  `FeedbackRow.article_url` (HttpUrl) holds and the `/facts/` path prefix
-  routes the vote to the facts-only feedback loop.
+  `FeedbackRow.article_url` (HttpUrl) holds and the anchored full-shape
+  match routes the vote to the facts-only feedback loop.
 - Subject: `f"newslet — {issue.date}"` unless the issue carries one.
 
 ### `newslet.handlers.digest`
@@ -387,13 +390,16 @@ subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
 seen-filtered — alongside the RSS candidates, plus the best-effort facts
 block.
 
-Feedback separation: `_split_feedback` partitions every feedback read by
-vote-URL path — `/facts/` rows feed `_tune_facts_after_send` (facts-only
-tune → `id="facts"`), `/quote/` rows are reserved for the quote feature,
-everything else is general (ranking + `_tune_profile_after_send`). The
-digest also advances the facts topic log (cap 60) as soon as an issue with
-facts is built — a retry reuses the stored issue, so topics burn at most
-once.
+Feedback separation: `_split_feedback` partitions every feedback read by an
+anchored match on the full synthetic vote-URL shape —
+`/facts/{issue-key}/{mid|end}` rows feed `_tune_facts_after_send`
+(facts-only tune → `id="facts"`), `/quote/{issue-key}` rows are reserved
+for the quote feature, everything else is general (ranking +
+`_tune_profile_after_send`). Reads go through `_recent_feedback_split`,
+which over-fetches 4× and trims per bucket so neither vote stream starves
+the other. The facts topic log (cap 60) advances only after a confirmed
+send (`_advance_facts_topic_log`, deduped so duplicate-send retries are
+idempotent) — a failed send never burns topics no reader saw.
 
 ```python
 def handler(event: dict, context: object) -> dict: ...

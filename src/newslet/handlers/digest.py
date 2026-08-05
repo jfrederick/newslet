@@ -57,15 +57,14 @@ _RANK_FEEDBACK_LIMIT = 50
 _TUNE_FEEDBACK_LIMIT = 200
 
 # Synthetic vote URLs (minted by email_render for non-article blocks) match
-# these exact path shapes — the middle segment is an issue key (a date or a
-# manual-send key). They belong to their feature's own feedback loop and
-# must never steer article ranking or the general profile. Matching the full
-# shape (not a bare "/facts/" prefix) keeps a real article that happens to
-# live at e.g. example.com/facts/tcp classified as general. The quote
-# pattern is reserved for the quote-of-the-day feature.
-_ISSUE_KEY_RE = r"(?:\d{4}-\d{2}-\d{2}|manual-[0-9a-zA-Z-]+)"
-_FACTS_VOTE_RE = re.compile(rf"^/facts/{_ISSUE_KEY_RE}/(?:mid|end)$")
-_QUOTE_VOTE_RE = re.compile(rf"^/quote/{_ISSUE_KEY_RE}$")
+# exact, anchored path shapes — the middle segment is an issue key (a date
+# or a manual-send key). They belong to their feature's own feedback loop
+# and must never steer article ranking or the general profile; full-shape
+# matching keeps a real article at e.g. example.com/facts/tcp classified as
+# general. The facts shape lives in newslet.facts (shared with the web
+# handler); the quote pattern is reserved for the quote-of-the-day feature.
+_FACTS_VOTE_RE = facts.VOTE_PATH_RE
+_QUOTE_VOTE_RE = re.compile(rf"^/quote/{facts._ISSUE_KEY_RE}$")
 
 # The facts no-repeat log keeps this many recently-covered topics.
 _FACTS_TOPIC_LOG_CAP = 60
@@ -461,10 +460,12 @@ def _advance_facts_topic_log(issue: Issue) -> None:
     """Append the sent issue's fact titles to the no-repeat log.
 
     Called only after a confirmed send (like ``mark_seen`` and the tuners) so
-    a failed send never burns topics no reader saw. Re-reads the state row at
-    write time (not the copy captured before the multi-minute model chain) so
-    an overlapping run's markdown update isn't reverted, and skips titles
-    already present so a duplicate-send retry stays idempotent. Best effort.
+    a failed send never burns topics no reader saw. Skips titles already
+    present so a duplicate-send retry stays idempotent. Re-reading the state
+    row at write time keeps the window between read and write to
+    milliseconds (there is no model call in between); it narrows — but does
+    not eliminate — the lost-update race with a concurrent run's tune write.
+    Best effort.
     """
     if not issue.facts:
         return
@@ -496,8 +497,13 @@ def _tune_facts_after_send() -> None:
         state = db.get_facts_state()
         new_markdown = facts.tune_facts_profile(state.markdown, fact_votes)
         if new_markdown != state.markdown:
+            # Re-read before writing: the tune model call above takes
+            # seconds, and this run's own _advance_facts_topic_log (or a
+            # concurrent run's) may have appended topics in the meantime —
+            # carrying the pre-call copy would revert them.
+            fresh = db.get_facts_state()
             db.put_facts_state(
-                FactsState(markdown=new_markdown, recent_topics=state.recent_topics)
+                FactsState(markdown=new_markdown, recent_topics=fresh.recent_topics)
             )
     except Exception:  # noqa: BLE001 - tuning is best effort, never raise
         log.exception("facts tuning failed after send")
