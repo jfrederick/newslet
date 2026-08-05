@@ -919,3 +919,50 @@ def test_tune_profile_after_send_excludes_fact_votes(aws, monkeypatch):
     monkeypatch.setattr(tune, "tune_profile", fake_tune)
     digest._tune_profile_after_send()
     assert captured["titles"] == ["General"]
+
+
+def test_split_feedback_keeps_external_facts_paths_general():
+    """A real article that happens to live under /facts/ or /quote/ on some
+    site must stay in the general bucket — only the app's exact synthetic
+    shapes (/facts/{issue-key}/{slot}, /quote/{issue-key}) are rerouted."""
+    from newslet.handlers.digest import _split_feedback
+
+    rows = [
+        _fb("https://example.com/facts/tcp"),
+        _fb("https://example.com/quote/of-the-day-history"),
+        _fb("https://example.com/facts/2026/BAD/extra/mid"),
+        _fb("https://api.example.com/facts/manual-20260806-042944-7c43c81f/end"),
+    ]
+    general, fact_rows = _split_feedback(rows)
+    assert [str(r.article_url) for r in fact_rows] == [
+        "https://api.example.com/facts/manual-20260806-042944-7c43c81f/end"
+    ]
+    assert len(general) == 3
+
+
+def test_recent_feedback_split_overfetches_so_facts_cannot_starve_ranking(
+    aws, monkeypatch
+):
+    from newslet import db
+    from newslet.handlers import digest
+
+    # Newest-first stream: 6 fact votes ahead of 3 article votes.
+    rows = [
+        _fb(f"https://api.example.com/facts/2026-08-0{i % 9 + 1}/mid", title=f"F{i}")
+        for i in range(6)
+    ] + [_fb(f"https://ex.com/a{i}", title=f"G{i}") for i in range(3)]
+
+    captured = {}
+
+    def fake_recent_feedback(limit):
+        captured["limit"] = limit
+        return rows[:limit]
+
+    monkeypatch.setattr(digest.db, "recent_feedback", fake_recent_feedback)
+    general, fact_rows = digest._recent_feedback_split(2)
+    # Over-fetched past the 6-fact streak…
+    assert captured["limit"] == 2 * digest._SPLIT_FETCH_MULTIPLIER
+    # …so the general bucket still fills, trimmed newest-first per bucket.
+    assert [r.title for r in general] == ["G0", "G1"]
+    assert [r.title for r in fact_rows] == ["F0", "F1"]
+    assert db is not None  # keep the aws fixture meaningfully used

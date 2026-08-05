@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -55,36 +56,59 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 _RANK_FEEDBACK_LIMIT = 50
 _TUNE_FEEDBACK_LIMIT = 200
 
-# Vote URLs under these path prefixes are synthetic (minted by email_render
-# for non-article blocks) and belong to their feature's own feedback loop —
-# they must never steer article ranking or the general profile. "/quote/" is
-# reserved for the quote-of-the-day feature.
-_FACTS_VOTE_PATH = "/facts/"
-_QUOTE_VOTE_PATH = "/quote/"
+# Synthetic vote URLs (minted by email_render for non-article blocks) match
+# these exact path shapes — the middle segment is an issue key (a date or a
+# manual-send key). They belong to their feature's own feedback loop and
+# must never steer article ranking or the general profile. Matching the full
+# shape (not a bare "/facts/" prefix) keeps a real article that happens to
+# live at e.g. example.com/facts/tcp classified as general. The quote
+# pattern is reserved for the quote-of-the-day feature.
+_ISSUE_KEY_RE = r"(?:\d{4}-\d{2}-\d{2}|manual-[0-9a-zA-Z-]+)"
+_FACTS_VOTE_RE = re.compile(rf"^/facts/{_ISSUE_KEY_RE}/(?:mid|end)$")
+_QUOTE_VOTE_RE = re.compile(rf"^/quote/{_ISSUE_KEY_RE}$")
 
 # The facts no-repeat log keeps this many recently-covered topics.
 _FACTS_TOPIC_LOG_CAP = 60
+
+# Synthetic rows are dropped from a bucket *after* fetching, so fetch a
+# multiple of the wanted window — otherwise a streak of fact clicks could
+# fill the fetch limit and starve article ranking/tuning of feedback that
+# exists just past it (and vice versa).
+_SPLIT_FETCH_MULTIPLIER = 4
 
 
 def _split_feedback(
     rows: list[FeedbackRow],
 ) -> tuple[list[FeedbackRow], list[FeedbackRow]]:
-    """Split feedback into (general, facts) by synthetic-URL path prefix.
+    """Split feedback into (general, facts) by synthetic-URL shape.
 
-    Quote votes (``/quote/``) are excluded from *both* buckets: they are the
-    quote feature's signal, not the ranker's and not the facts tuner's.
+    Quote votes are excluded from *both* buckets: they are the quote
+    feature's signal, not the ranker's and not the facts tuner's.
     """
     general: list[FeedbackRow] = []
     fact_rows: list[FeedbackRow] = []
     for row in rows:
         path = urlparse(str(row.article_url)).path
-        if path.startswith(_FACTS_VOTE_PATH):
+        if _FACTS_VOTE_RE.match(path):
             fact_rows.append(row)
-        elif path.startswith(_QUOTE_VOTE_PATH):
+        elif _QUOTE_VOTE_RE.match(path):
             continue
         else:
             general.append(row)
     return general, fact_rows
+
+
+def _recent_feedback_split(limit: int) -> tuple[list[FeedbackRow], list[FeedbackRow]]:
+    """Fetch and split recent feedback, ``limit`` rows per bucket.
+
+    Over-fetches by ``_SPLIT_FETCH_MULTIPLIER`` before splitting, then trims
+    each bucket (rows arrive newest-first) — so fact votes can't crowd
+    article votes out of the ranking/tuning windows, or the reverse.
+    """
+    general, fact_rows = _split_feedback(
+        db.recent_feedback(limit=limit * _SPLIT_FETCH_MULTIPLIER)
+    )
+    return general[:limit], fact_rows[:limit]
 
 # Fallback counts when no admin config is present (run_digest defaults).
 _DEFAULT_MAX_PICKS = 10
@@ -390,9 +414,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     # Recency window for ranking; tuning reads its own wider window. Synthetic
     # fact/quote votes are split out — they steer their own features, never
     # article ranking.
-    feedback, _fact_votes = _split_feedback(
-        db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
-    )
+    feedback, _fact_votes = _recent_feedback_split(_RANK_FEEDBACK_LIMIT)
     facts_state = db.get_facts_state() if config.facts_enabled else FactsState()
     issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
@@ -439,9 +461,7 @@ def _tune_profile_after_send() -> None:
     tuning must never break the send (which already happened)."""
     try:
         profile = db.get_profile()
-        tune_feedback, _fact_votes = _split_feedback(
-            db.recent_feedback(limit=_TUNE_FEEDBACK_LIMIT)
-        )
+        tune_feedback, _fact_votes = _recent_feedback_split(_TUNE_FEEDBACK_LIMIT)
         new_markdown = tune.tune_profile(profile.markdown, tune_feedback)
         if new_markdown != profile.markdown:
             db.put_profile(new_markdown)
@@ -456,9 +476,7 @@ def _tune_facts_after_send() -> None:
     Best effort: never raises, and the no-repeat topic log rides along
     unchanged."""
     try:
-        _general, fact_votes = _split_feedback(
-            db.recent_feedback(limit=_TUNE_FEEDBACK_LIMIT)
-        )
+        _general, fact_votes = _recent_feedback_split(_TUNE_FEEDBACK_LIMIT)
         if not fact_votes:
             return
         state = db.get_facts_state()
