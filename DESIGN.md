@@ -247,6 +247,30 @@ article containing ".../facts/..." never matches) and never reach article
 ranking or the general profile tuner — and general votes never reach this
 one.
 
+### `newslet.quotes`
+
+The philosophical quote of the day (epigraph): Stoics, Nietzsche,
+Einstein's reflective remarks, Buddhist and Taoist texts, and kin. Real,
+attributable quotes only (author + source demanded in the prompt; when
+unsure, the model must pick one it is certain of). Mirrors `newslet.facts`
+in every mechanism: plain model call (Haiku by default — quotes are short
+and run daily), best-effort `None`, a quotes-taste profile + no-repeat log
+on the `id="quotes"` row (`QuotesState`, log cap 120, entries
+"Author — text prefix"), and an anchored synthetic vote-URL shape
+`/quote/{issue-key}` (`VOTE_PATH_RE`/`is_quote_vote`, shared by digest and
+web).
+
+```python
+def fetch_quote(
+    quotes_profile_md: str, recent_quotes: list[str],
+    *, client=None, model: str | None = None,
+) -> Quote | None: ...
+
+def tune_quotes_profile(
+    current_md: str, feedback: list[FeedbackRow], *, client=None,
+) -> str: ...
+```
+
 ### `newslet.x_grok`
 
 X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
@@ -364,6 +388,9 @@ def render_email(
 - `web_nav=True` (the `/` homepage render only) prepends a thin
   discover/admin/emails nav strip; sent emails never set it, so their HTML
   is unchanged.
+- `Issue.quote` renders as an italic epigraph directly under the intro,
+  with a "— Author, *Source* · tradition" attribution line; its +/- links
+  sign the synthetic `{base}/quote/{issue.date}` URL.
 - The two `Issue.facts` essays render as "Tech fact of the day" (after the
   picks, before the web block) and "One more fact" (after discoveries,
   before the CTA). Their +/- links sign **synthetic** URLs —
@@ -385,7 +412,9 @@ EventBridge schedules drive it: the email digest at 10:00 UTC and the weekly
 discover rebuild on Mondays at 09:30 UTC (`{"discover": true}`). `run_digest`
 takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, `max_x_posts`, and
 the facts inputs (`facts_enabled`, `facts_profile_md`, `facts_recent_topics`,
-`facts_fn`) — read from `Config`/the `id="facts"` row — and folds in the HN,
+`facts_fn`) and quote inputs (`quote_enabled`, `quotes_profile_md`,
+`recent_quotes`, `quote_fn`) — read from `Config` and the `id="facts"` /
+`id="quotes"` rows — and folds in the HN,
 subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
 seen-filtered — alongside the RSS candidates, plus the best-effort facts
 block.
@@ -393,13 +422,14 @@ block.
 Feedback separation: `_split_feedback` partitions every feedback read by an
 anchored match on the full synthetic vote-URL shape —
 `/facts/{issue-key}/{mid|end}` rows feed `_tune_facts_after_send`
-(facts-only tune → `id="facts"`), `/quote/{issue-key}` rows are reserved
-for the quote feature, everything else is general (ranking +
-`_tune_profile_after_send`). Reads go through `_recent_feedback_split`,
+(facts-only tune → `id="facts"`), `/quote/{issue-key}` rows feed
+`_tune_quotes_after_send` (quotes-only tune → `id="quotes"`), everything
+else is general (ranking + `_tune_profile_after_send`). Reads go through `_recent_feedback_split`,
 which over-fetches 4× and trims per bucket so neither vote stream starves
-the other. The facts topic log (cap 60) advances only after a confirmed
-send (`_advance_facts_topic_log`, deduped so duplicate-send retries are
-idempotent) — a failed send never burns topics no reader saw.
+the other. The facts topic log (cap 60) and the quotes no-repeat log (cap
+120) advance only after a confirmed send (`_advance_facts_topic_log` /
+`_advance_quotes_log`, deduped so duplicate-send retries are idempotent) —
+a failed send never burns entries no reader saw.
 
 ```python
 def handler(event: dict, context: object) -> dict: ...
@@ -441,7 +471,7 @@ Routes:
   sends `Accept: application/json` — the Discover page adds in place)
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?}` → 303 `/admin` (`x_enabled`/`facts_enabled` are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?, quote_enabled?}` → 303 `/admin` (`x_enabled`/`facts_enabled`/`quote_enabled` are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -460,9 +490,9 @@ Routes:
 | Table | PK | SK | Other attrs | TTL |
 |---|---|---|---|---|
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
-| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board, `"facts"` the facts-taste profile + topic log) | — | `markdown`/counts/`theme`/`board_json`/`recent_topics_json`, `updated_at` | no |
+| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board, `"facts"` the facts-taste profile + topic log, `"quotes"` the quotes-taste profile + no-repeat log) | — | `markdown`/counts/`theme`/`board_json`/`recent_topics_json`/`recent_quotes_json`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json`, `quote_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

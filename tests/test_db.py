@@ -944,3 +944,46 @@ def test_get_issue_tolerates_legacy_issue_without_facts(dynamo: None) -> None:
     got = db.get_issue("2026-08-07")
     assert got is not None
     assert got.facts == []
+
+
+def test_quotes_state_default_and_roundtrip(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import QuotesState
+
+    state = db.get_quotes_state()
+    assert state.markdown == ""
+    assert state.recent_quotes == []
+
+    db.put_quotes_state(
+        QuotesState(markdown="- likes Stoics", recent_quotes=["Seneca — On the..."])
+    )
+    state = db.get_quotes_state()
+    assert state.markdown == "- likes Stoics"
+    assert state.recent_quotes == ["Seneca — On the..."]
+
+
+def test_issue_round_trips_quote_and_tolerates_legacy(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import Quote
+
+    issue = Issue(
+        date="2026-08-08",
+        picks=[],
+        created_at=datetime.now(UTC),
+        quote=Quote(text="Waste no more time arguing what a good man should be. Be one.",
+                    author="Marcus Aurelius", source="Meditations", tradition="Stoic"),
+    )
+    db.put_issue(issue)
+    got = db.get_issue("2026-08-08")
+    assert got is not None and got.quote is not None
+    assert got.quote.author == "Marcus Aurelius"
+
+    # Legacy row without the field loads with quote=None.
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-issues"
+    ).put_item(
+        Item={"date": "2026-08-09", "picks_json": "[]",
+              "created_at": datetime.now(UTC).isoformat()}
+    )
+    got = db.get_issue("2026-08-09")
+    assert got is not None and got.quote is None

@@ -182,6 +182,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     from newslet import discovery as discovery_mod
     from newslet import facts as facts_mod
     from newslet import hn as hn_mod
+    from newslet import quotes as quotes_mod
     from newslet import serendipity as serendipity_mod
     from newslet import summarize as summarize_mod
     from newslet import tune as tune_mod
@@ -206,6 +207,8 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     # test's shared Anthropic fake.
     monkeypatch.setattr(facts_mod, "fetch_facts", lambda *a, **k: [])
     monkeypatch.setattr(facts_mod, "tune_facts_profile", lambda md, fb, **_: md)
+    monkeypatch.setattr(quotes_mod, "fetch_quote", lambda *a, **k: None)
+    monkeypatch.setattr(quotes_mod, "tune_quotes_profile", lambda md, fb, **_: md)
 
 
 def test_full_pipeline_handler_end_to_end(aws, monkeypatch):

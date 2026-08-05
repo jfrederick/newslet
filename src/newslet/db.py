@@ -31,6 +31,8 @@ from newslet.contracts import (
     Issue,
     Pick,
     Profile,
+    Quote,
+    QuotesState,
     Subscription,
     WebArticle,
 )
@@ -225,6 +227,36 @@ def put_facts_state(state: FactsState) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Quotes state — shares the profile table under id="quotes"
+# ---------------------------------------------------------------------------
+
+
+def get_quotes_state() -> QuotesState:
+    """The quote feature's own state row. Lenient like ``get_facts_state``."""
+    resp = _t_profile().get_item(Key={"id": "quotes"})
+    item = resp.get("Item")
+    if not item:
+        return QuotesState()
+    try:
+        recent_raw = json.loads(item.get("recent_quotes_json", "[]"))
+    except json.JSONDecodeError:
+        recent_raw = []
+    recent = [str(q) for q in recent_raw] if isinstance(recent_raw, list) else []
+    return QuotesState(markdown=str(item.get("markdown", "")), recent_quotes=recent)
+
+
+def put_quotes_state(state: QuotesState) -> None:
+    _t_profile().put_item(
+        Item={
+            "id": "quotes",
+            "markdown": state.markdown,
+            "recent_quotes_json": json.dumps(state.recent_quotes),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # Config (admin knobs) — shares the profile table under a distinct id
 # ---------------------------------------------------------------------------
 
@@ -258,6 +290,8 @@ def get_config() -> Config:
             text_size=int(item.get("text_size", 100)),
             # Rows written before the tech-facts feature default it on.
             facts_enabled=bool(item.get("facts_enabled", True)),
+            # Rows written before the quote feature default it on too.
+            quote_enabled=bool(item.get("quote_enabled", True)),
         )
     except (ValidationError, ValueError, TypeError) as exc:
         log.warning("bad config row, using defaults: %s", exc)
@@ -308,6 +342,7 @@ def put_config(config: Config) -> Config:
             "theme": config.theme,
             "text_size": config.text_size,
             "facts_enabled": config.facts_enabled,
+            "quote_enabled": config.quote_enabled,
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )
@@ -355,6 +390,9 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         [json.loads(r.model_dump_json()) for r in issue.random_articles]
     )
     facts_json = json.dumps([json.loads(f.model_dump_json()) for f in issue.facts])
+    quote_json = (
+        issue.quote.model_dump_json() if issue.quote is not None else ""
+    )
     item: dict[str, Any] = {
         "date": issue.date,
         "picks_json": picks_json,
@@ -370,6 +408,7 @@ def put_issue(issue: Issue, *, manual: bool = False) -> None:
         "web_articles_json": web_articles_json,
         "random_articles_json": random_articles_json,
         "facts_json": facts_json,
+        "quote_json": quote_json,
     }
     if manual:
         # Manual ("send now") issues are stored so /rate title lookup and
@@ -435,6 +474,14 @@ def get_issue(date: str) -> Issue | None:
             facts.append(Fact.model_validate(f))
         except ValidationError as exc:
             log.warning("skipping bad fact in issue %s: %s", item.get("date"), exc)
+    # The quote is optional and lenient like every post-v1 field.
+    quote = None
+    quote_raw = item.get("quote_json", "")
+    if quote_raw:
+        try:
+            quote = Quote.model_validate_json(quote_raw)
+        except ValidationError as exc:
+            log.warning("skipping bad quote in issue %s: %s", item.get("date"), exc)
     return Issue.model_validate(
         {
             "date": item["date"],
@@ -453,6 +500,7 @@ def get_issue(date: str) -> Issue | None:
             "web_articles": web_articles,
             "random_articles": random_articles,
             "facts": facts,
+            "quote": quote,
         }
     )
 

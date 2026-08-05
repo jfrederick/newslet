@@ -61,6 +61,31 @@
           </tr>
           {% endif %}
 
+          {% if quote %}
+          {#- The quote of the day: an epigraph under the intro, votable
+              like everything else via its synthetic signed URL. -#}
+          <tr>
+            <td style="padding:20px 24px; border-bottom:1px solid {{ p.border_soft }};">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:top; padding-right:12px;">
+                    <div style="font-size:{{ fs(16) }}; line-height:1.5; font-style:italic; color:{{ p.fg }}; margin:0 0 6px 0;">
+                      &ldquo;{{ quote.text|e }}&rdquo;
+                    </div>
+                    <div style="font-size:{{ fs(13) }}; color:{{ p.muted }}; margin:0;">
+                      &mdash; {{ quote.author|e }}{% if quote.source %}, <em>{{ quote.source|e }}</em>{% endif %}{% if quote.tradition %} &middot; {{ quote.tradition|e }}{% endif %}
+                    </div>
+                  </td>
+                  <td align="right" style="vertical-align:top; white-space:nowrap; width:96px;">
+                    <a href="{{ quote.up_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:{{ fs(18) }}; line-height:1; color:{{ p.ok }}; background:{{ p.ok_bg }}; border:1px solid {{ p.ok_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">+</a>
+                    <a href="{{ quote.down_link|e }}" style="display:inline-block; padding:8px 12px; margin-left:4px; font-family:{{ t.font_mono }}; font-size:{{ fs(18) }}; line-height:1; color:{{ p.bad }}; background:{{ p.bad_bg }}; border:1px solid {{ p.bad_border }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">&#8722;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+
           {#- One tech-fact essay (mid or end slot): section header, title,
               genre subline, ~500 words of paragraphs, and the same signed
               +/- voting cell as articles. -#}

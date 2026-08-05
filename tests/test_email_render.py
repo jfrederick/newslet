@@ -436,3 +436,30 @@ def test_no_fact_blocks_when_absent(stub_sign: None) -> None:
     _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
     assert "Tech fact of the day" not in html
     assert "One more fact" not in html
+
+
+def test_quote_epigraph_renders_after_intro_before_picks(stub_sign: None) -> None:
+    from newslet.contracts import Quote
+
+    issue = Issue(
+        date=DATE,
+        picks=[_pick("https://a.example.com/1", "FirstPick", "B")],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        intro="An intro line.",
+        quote=Quote(text="Know thyself deeply.", author="Marcus Aurelius",
+                    source="Meditations", tradition="Stoic"),
+    )
+    _, html = render_email(issue, BASE_URL)
+    i_intro = html.index("An intro line.")
+    i_quote = html.index("Know thyself deeply.")
+    assert i_intro < i_quote < html.index("FirstPick")
+    assert "Marcus Aurelius" in html
+    assert "Meditations" in html
+    q_url = quote(f"{BASE_URL}/quote/{DATE}", safe="")
+    assert f"{BASE_URL}/rate?a={q_url}&amp;d={DATE}&amp;v=up" in html
+
+
+def test_no_quote_block_when_absent(stub_sign: None) -> None:
+    _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
+    assert "&ldquo;" not in html
+    assert quote(f"{BASE_URL}/quote/{DATE}", safe="") not in html

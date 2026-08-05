@@ -142,6 +142,20 @@ def render_email(
     fact_mid = next((_fact_ctx(f) for f in issue.facts if f.slot == "mid"), None)
     fact_end = next((_fact_ctx(f) for f in issue.facts if f.slot == "end"), None)
 
+    # The quote of the day (epigraph): same synthetic-signed-URL voting as
+    # facts, path shape /quote/{issue-key} (see newslet.quotes.VOTE_PATH_RE).
+    quote_ctx = None
+    if issue.quote is not None:
+        q_up, q_down = _rate_links(f"{base}/quote/{issue.date}")
+        quote_ctx = {
+            "text": issue.quote.text,
+            "author": issue.quote.author,
+            "source": issue.quote.source,
+            "tradition": issue.quote.tradition,
+            "up_link": q_up,
+            "down_link": q_down,
+        }
+
     ctx_discoveries = []
     for d in issue.discoveries:
         feed_str = str(d.feed_url)
@@ -178,5 +192,6 @@ def render_email(
         web_nav=web_nav,
         fact_mid=fact_mid,
         fact_end=fact_end,
+        quote=quote_ctx,
     )
     return subject, html

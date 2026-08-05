@@ -735,13 +735,14 @@ def test_split_feedback_routes_by_path():
     general = _fb("https://ex.com/article")
     fact = _fb("https://api.example.com/facts/2026-08-06/mid")
     quote = _fb("https://api.example.com/quote/2026-08-06")
-    got_general, got_facts = _split_feedback([general, fact, quote])
+    got_general, got_facts, got_quotes = _split_feedback([general, fact, quote])
     assert [str(r.article_url) for r in got_general] == ["https://ex.com/article"]
     assert [str(r.article_url) for r in got_facts] == [
         "https://api.example.com/facts/2026-08-06/mid"
     ]
-    # Quote votes are reserved for the quote feature (PR 3): not general,
-    # not facts.
+    assert [str(r.article_url) for r in got_quotes] == [
+        "https://api.example.com/quote/2026-08-06"
+    ]
 
 
 def _facts_pair():
@@ -955,10 +956,11 @@ def test_split_feedback_keeps_external_facts_paths_general():
         _fb("https://example.com/facts/2026/BAD/extra/mid"),
         _fb("https://api.example.com/facts/manual-20260806-042944-7c43c81f/end"),
     ]
-    general, fact_rows = _split_feedback(rows)
+    general, fact_rows, quote_rows = _split_feedback(rows)
     assert [str(r.article_url) for r in fact_rows] == [
         "https://api.example.com/facts/manual-20260806-042944-7c43c81f/end"
     ]
+    assert quote_rows == []
     assert len(general) == 3
 
 
@@ -981,10 +983,128 @@ def test_recent_feedback_split_overfetches_so_facts_cannot_starve_ranking(
         return rows[:limit]
 
     monkeypatch.setattr(digest.db, "recent_feedback", fake_recent_feedback)
-    general, fact_rows = digest._recent_feedback_split(2)
+    general, fact_rows, _quote_rows = digest._recent_feedback_split(2)
     # Over-fetched past the 6-fact streak…
     assert captured["limit"] == 2 * digest._SPLIT_FETCH_MULTIPLIER
     # …so the general bucket still fills, trimmed newest-first per bucket.
     assert [r.title for r in general] == ["G0", "G1"]
     assert [r.title for r in fact_rows] == ["F0", "F1"]
     assert db is not None  # keep the aws fixture meaningfully used
+
+
+# --- Quote of the day: wiring, log, tune ---
+
+
+def _quote():
+    from newslet.contracts import Quote
+
+    return Quote(text="Be here now, fully.", author="Ram Dass",
+                 source="Be Here Now", tradition="kin")
+
+
+def test_run_digest_attaches_quote(env):
+    from newslet.handlers.digest import run_digest
+
+    captured = {}
+
+    def fake_quote(profile_md, recent, **_):
+        captured["args"] = (profile_md, recent)
+        return _quote()
+
+    issue, _ = run_digest(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=lambda *_a, **_k: [],
+        quote_fn=fake_quote,
+        quotes_profile_md="- likes Stoics",
+        recent_quotes=["Old — entry"],
+    )
+    assert issue.quote is not None and issue.quote.author == "Ram Dass"
+    assert captured["args"] == ("- likes Stoics", ["Old — entry"])
+
+
+def test_run_digest_quote_exception_and_disable(env):
+    from newslet.handlers.digest import run_digest
+
+    common = dict(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=lambda *_a, **_k: [],
+    )
+
+    def boom(*_a, **_k):
+        raise RuntimeError("down")
+
+    issue, _ = run_digest(**common, quote_fn=boom)
+    assert issue.quote is None
+
+    def must_not_run(*_a, **_k):
+        raise AssertionError("quote_fn must not run when disabled")
+
+    issue, _ = run_digest(**common, quote_fn=must_not_run, quote_enabled=False)
+    assert issue.quote is None
+
+
+def test_advance_quotes_log_dedupes_and_caps(aws):
+    from newslet import db
+    from newslet.contracts import QuotesState
+    from newslet.handlers import digest
+
+    db.put_quotes_state(
+        QuotesState(markdown="- m", recent_quotes=[f"q{i}" for i in range(119)])
+    )
+    issue = Issue(
+        date="2026-08-08", picks=[], created_at=datetime.now(UTC), quote=_quote()
+    )
+    digest._advance_quotes_log(issue)
+    state = db.get_quotes_state()
+    assert len(state.recent_quotes) == 120
+    assert state.recent_quotes[-1].startswith("Ram Dass — ")
+    assert state.markdown == "- m"
+
+    digest._advance_quotes_log(issue)
+    assert db.get_quotes_state().recent_quotes == state.recent_quotes
+
+
+def test_tune_quotes_after_send_updates_only_quotes_row(aws, monkeypatch):
+    from newslet import db, quotes
+    from newslet.contracts import QuotesState
+    from newslet.handlers import digest
+
+    db.put_profile("# me")
+    db.put_quotes_state(QuotesState(markdown="- old", recent_quotes=["a"]))
+    db.put_feedback(_fb("https://api.example.com/quote/2026-08-08", title="Quote: X"))
+    db.put_feedback(_fb("https://ex.com/article", title="General"))
+
+    captured = {}
+
+    def fake_tune(current_md, feedback, **_):
+        captured["titles"] = [r.title for r in feedback]
+        return "- new"
+
+    monkeypatch.setattr(quotes, "tune_quotes_profile", fake_tune)
+    digest._tune_quotes_after_send()
+
+    assert captured["titles"] == ["Quote: X"]
+    state = db.get_quotes_state()
+    assert state.markdown == "- new"
+    assert state.recent_quotes == ["a"]
+    assert db.get_profile().markdown == "# me"

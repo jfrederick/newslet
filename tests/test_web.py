@@ -1279,3 +1279,50 @@ def test_rate_article_under_facts_like_path_uses_pick_title(client):
     assert f'<a href="{url}"' in r.text  # normal linked thanks page
     rows = db.recent_feedback(limit=5)
     assert rows[0].title == "A real article"
+
+
+def test_config_quote_enabled_roundtrip(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5",
+              "web_variety": "30", "quote_enabled": "true"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().quote_enabled is True
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5", "web_variety": "30"},
+    )
+    assert db.get_config().quote_enabled is False
+    assert 'name="quote_enabled"' in client.get("/admin").text
+
+
+def test_rate_quote_vote_titles_and_labels(client):
+    from datetime import UTC, datetime
+
+    from newslet import db, tokens
+    from newslet.contracts import Issue, Quote
+
+    db.put_issue(
+        Issue(
+            date="2026-08-08",
+            picks=[],
+            created_at=datetime.now(UTC),
+            quote=Quote(text="It is not that we have a short time to live",
+                        author="Seneca", source="Letters", tradition="Stoic"),
+        )
+    )
+    quote_url = "https://api.example.com/quote/2026-08-08"
+    token = tokens.sign(quote_url, "2026-08-08")
+    r = client.get(
+        "/rate", params={"a": quote_url, "d": "2026-08-08", "v": "up", "t": token}
+    )
+    assert r.status_code == 200
+    assert "Quote: Seneca" in r.text
+    assert f'<a href="{quote_url}"' not in r.text  # no dead link
+    rows = db.recent_feedback(limit=5)
+    # The title carries a text prefix so the tuner knows which line landed.
+    assert rows[0].title == "Quote: Seneca — It is not that we have a short time to live"

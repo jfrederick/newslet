@@ -406,6 +406,37 @@ issue without fact blocks, never a blocked send.
 
 :::
 
+### Quote of the day
+
+Right under the morning's intro sits a single quote — Marcus Aurelius one
+day, Zhuangzi or Nietzsche the next. Philosophy and wisdom, not tech trivia:
+Stoics, Buddhist and Taoist texts, Einstein in his reflective moods, and
+their kin. Every quote is real and attributed, with its author and source.
+
+Like the tech facts, the quote has its own taste memory: vote on one and you
+tune which traditions and themes show up — without touching how your
+articles get ranked.
+
+:::tier little
+
+Quotes rotate across traditions, avoid repeating anything shown in the last
+few months, and can be switched off in the admin console. The prompt demands
+genuine, verifiable quotes — if the model isn't certain a line is authentic,
+it must pick another.
+
+:::
+
+:::tier medium
+
+`quotes.fetch_quote()` mirrors `facts.fetch_facts()`: a plain fast-model
+call returning JSON, best-effort `None`, riding on `Issue.quote`. Its vote
+link signs the synthetic `/quote/{date}` URL; `digest._split_feedback`
+routes those rows to `quotes.tune_quotes_profile`, which maintains the
+`id="quotes"` row (taste bullets + a 120-entry no-repeat log advanced only
+after a confirmed send).
+
+:::
+
 ### Newsletter subscriptions
 
 Plenty of good writing only arrives by email newsletter, never as an RSS feed.

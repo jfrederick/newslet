@@ -93,6 +93,32 @@ class FactsState(BaseModel):
     recent_topics: list[str] = Field(default_factory=list)
 
 
+class Quote(BaseModel):
+    """The philosophical quote of the day — see ``newslet.quotes``.
+
+    ``tradition`` is a loose label (Stoic, Taoist, Nietzsche, ...) used only
+    for display and taste-tuning; a plain string so old issues always load.
+    """
+
+    text: str
+    author: str
+    source: str = ""
+    tradition: str = ""
+
+
+class QuotesState(BaseModel):
+    """The quote feature's persisted state (profile row ``id="quotes"``).
+
+    ``markdown`` is the auto-managed quotes-taste profile — tuned only by
+    votes on quotes. ``recent_quotes`` is the rolling no-repeat log
+    ("Author — text prefix" entries), newest last, capped by the digest at
+    120.
+    """
+
+    markdown: str = ""
+    recent_quotes: list[str] = Field(default_factory=list)
+
+
 class Discovery(BaseModel):
     """A new candidate source/article surfaced outside the user's feeds.
 
@@ -138,6 +164,9 @@ class Issue(BaseModel):
     # Optional with a default so issues persisted before this field existed
     # still load.
     facts: list[Fact] = Field(default_factory=list)
+    # The philosophical quote of the day (epigraph) — see ``newslet.quotes``.
+    # Optional for the same lenient-load reason.
+    quote: Quote | None = None
 
 
 class FeedbackRow(BaseModel):
@@ -215,6 +244,8 @@ class Config(BaseModel):
       ``themes.TEXT_SIZE_MIN``/``MAX``.
     - ``facts_enabled`` — whether each issue carries the two ~500-word tech
       fact essays (see ``newslet.facts``).
+    - ``quote_enabled`` — whether each issue carries the philosophical quote
+      of the day (see ``newslet.quotes``).
     """
 
     max_rss_articles: int = Field(default=10, ge=1, le=40)
@@ -226,6 +257,7 @@ class Config(BaseModel):
     theme: str = Field(default="foundry")
     text_size: int = Field(default=100, ge=75, le=150)
     facts_enabled: bool = Field(default=True)
+    quote_enabled: bool = Field(default=True)
 
 
 class DiscoverFeed(BaseModel):
