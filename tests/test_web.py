@@ -623,6 +623,21 @@ def test_homepage_renders_latest_issue_email(client):
     assert "/rate?" in r.text
 
 
+def test_homepage_prefers_newest_sent_issue(client):
+    """A stored-but-unsent issue (a daily run that failed before the send)
+    must not appear on the homepage; the newest delivered edition wins."""
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("2026-08-01")
+    db.mark_issue_sent("2026-08-01")
+    _seed_issue("2026-08-03")  # stored, never sent
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "2026-08-01" in r.text
+    assert "2026-08-03" not in r.text
+
+
 def test_homepage_empty_state(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.get("/")

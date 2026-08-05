@@ -369,11 +369,13 @@ Routes:
   selectable technical-detail levels. Linked from `/admin`.
 - `GET /docs/content.md` — the canonical product-guide markdown
   (`newslet/docs/product.md`), served as `text/markdown` for the viewer to fetch
-- `GET /` — the homepage: the newest stored issue re-rendered as the email
-  HTML via `render_email(web_nav=True)` (thin discover/admin/emails nav on
-  top; voting via the same signed `/rate` links, re-signed with the current
-  key). No rebuild, no LLM calls; before today's send it shows yesterday's
-  issue, clearly dated. A friendly "no editions yet" page when the issues
+- `GET /` — the homepage: the newest **sent** issue (fallback: newest stored,
+  for installs where nothing has been marked sent yet) re-rendered as the
+  email HTML via `render_email(web_nav=True)` (thin discover/admin/emails nav
+  on top; voting via the same signed `/rate` links, re-signed with the
+  current key). No rebuild, no LLM calls; before today's send it shows
+  yesterday's issue, clearly dated, and an issue stored by a failed run stays
+  off the page until a retry delivers it. A friendly "no editions yet" page when the issues
   table is empty. Requires the `admin_token` cookie.
 - `GET /admin` — admin UI (feeds, profile, daily-email settings, theme picker, send now)
 - `POST /login` — sets cookie if body token matches `settings().admin_token`

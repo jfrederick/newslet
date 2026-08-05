@@ -220,14 +220,21 @@ def home(
 ) -> HTMLResponse:
     """The homepage: the latest daily email, rendered fresh with a web nav.
 
-    Always the newest stored issue (before today's send that is yesterday's,
-    clearly dated in the header) — no rebuild, no LLM calls, no staleness
-    logic. Same re-render as ``/emails/{date}`` (including its rate-link
-    re-signing caveat), plus the ``web_nav`` strip.
+    Always the newest *delivered* issue (before today's send that is
+    yesterday's, clearly dated in the header) — no rebuild, no LLM calls, no
+    staleness logic. Same re-render as ``/emails/{date}`` (including its
+    rate-link re-signing caveat), plus the ``web_nav`` strip.
+
+    Preferring ``sent_at`` rows keeps the page honest when a daily run
+    stored its issue but failed before the send: that undelivered edition
+    stays off the homepage until a retry actually lands it. The fallback to
+    the newest stored row covers a fresh install where nothing has ever
+    been marked sent.
     """
     _require_admin(admin_token)
-    rows = db.list_issues(limit=1)
-    issue = db.get_issue(rows[0]["date"]) if rows else None
+    rows = db.list_issues(limit=5)
+    row = next((r for r in rows if r.get("sent_at")), rows[0] if rows else None)
+    issue = db.get_issue(row["date"]) if row else None
     if issue is None:
         return HTMLResponse(_NO_ISSUES_HTML)
     _, html = email_render.render_email(
