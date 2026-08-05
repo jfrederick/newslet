@@ -987,3 +987,25 @@ def test_issue_round_trips_quote_and_tolerates_legacy(dynamo: None) -> None:
     )
     got = db.get_issue("2026-08-09")
     assert got is not None and got.quote is None
+
+
+def test_issue_round_trips_weather_line_and_tolerates_legacy(dynamo: None) -> None:
+    from newslet import db
+
+    db.put_issue(
+        Issue(date="2026-08-10", picks=[], created_at=datetime.now(UTC),
+              weather_line="78° sunny, tonight 64° clear")
+    )
+    got = db.get_issue("2026-08-10")
+    assert got is not None
+    assert got.weather_line == "78° sunny, tonight 64° clear"
+
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-issues"
+    ).put_item(
+        Item={"date": "2026-08-11", "picks_json": "[]",
+              "created_at": datetime.now(UTC).isoformat()}
+    )
+    got = db.get_issue("2026-08-11")
+    assert got is not None
+    assert got.weather_line == ""

@@ -191,6 +191,7 @@ def test_run_digest_hn_exception_is_swallowed(env):
         hn_fn=boom_hn,
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
+        weather_fn=lambda **_: None,
     )
     # Despite HN failure, we get a valid issue
     assert issue.picks == []  # no candidates means no picks from rank
@@ -213,6 +214,7 @@ def test_run_digest_summarize_exception_is_swallowed(env):
         hn_fn=lambda **_: [_article("https://hn.example.com/x")],
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
+        weather_fn=lambda **_: None,
     )
     # Issue built despite summarize failure
     assert issue.subject == ""
@@ -236,6 +238,7 @@ def test_run_digest_discovery_exception_is_swallowed(env):
         hn_fn=lambda **_: [_article("https://hn.example.com/x")],
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
+        weather_fn=lambda **_: None,
     )
     assert issue.discoveries == []
 
@@ -258,6 +261,7 @@ def test_run_digest_websearch_exception_is_swallowed(env):
         websearch_fn=boom_web,
         newsletters_fn=lambda _s: [],
         max_web=5,
+        weather_fn=lambda **_: None,
     )
     assert issue.web_articles == []
 
@@ -279,6 +283,7 @@ def test_run_digest_newsletters_exception_is_swallowed(env):
         hn_fn=lambda **_: [_article("https://hn.example.com/x")],
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=boom_nl,
+        weather_fn=lambda **_: None,
     )
     # Still produces a valid issue
     assert isinstance(issue, Issue)
@@ -295,6 +300,7 @@ def test_run_digest_no_candidates_returns_empty_issue(env):
         rank_fn=lambda **_: _rank_response([]),
         hn_fn=lambda **_: [],
         newsletters_fn=lambda _s: [],
+        weather_fn=lambda **_: None,
     )
     assert issue.picks == []
     assert candidates == []
@@ -321,6 +327,7 @@ def test_run_digest_serendipity_returns_random_articles(env):
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
         serendipity_fn=lambda *_a, **_k: random_articles,
+        weather_fn=lambda **_: None,
     )
     assert issue.random_articles == random_articles
 
@@ -343,6 +350,7 @@ def test_run_digest_serendipity_exception_is_swallowed(env):
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
         serendipity_fn=boom_serendipity,
+        weather_fn=lambda **_: None,
     )
     # Issue built despite serendipity failure
     assert issue.random_articles == []
@@ -367,6 +375,7 @@ def test_run_digest_max_random_zero_skips_serendipity(env):
         newsletters_fn=lambda _s: [],
         serendipity_fn=boom_if_called,
         max_random=0,
+        weather_fn=lambda **_: None,
     )
     assert issue.random_articles == []
 
@@ -393,6 +402,7 @@ def test_run_digest_serendipity_seen_result_is_dropped(env):
         websearch_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
         serendipity_fn=lambda *_a, **_k: random_articles,
+        weather_fn=lambda **_: None,
     )
     assert [str(r.url) for r in issue.random_articles] == ["https://off.example.com/fresh"]
 
@@ -418,6 +428,7 @@ def test_run_digest_max_web_zero_skips_websearch(env):
         websearch_fn=spy_web,
         newsletters_fn=lambda _s: [],
         max_web=0,
+        weather_fn=lambda **_: None,
     )
     assert called == []
 
@@ -778,6 +789,7 @@ def test_run_digest_attaches_facts(env):
         facts_fn=fake_facts,
         facts_profile_md="- loves lore",
         facts_recent_topics=["Old"],
+        weather_fn=lambda **_: None,
     )
     assert [f.slot for f in issue.facts] == ["mid", "end"]
     assert captured["args"] == ("- loves lore", ["Old"])
@@ -802,6 +814,7 @@ def test_run_digest_facts_exception_is_swallowed(env):
         serendipity_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
         facts_fn=boom_facts,
+        weather_fn=lambda **_: None,
     )
     assert issue.facts == []
 
@@ -809,8 +822,13 @@ def test_run_digest_facts_exception_is_swallowed(env):
 def test_run_digest_facts_disabled_skips_call(env):
     from newslet.handlers.digest import run_digest
 
+    calls: list[int] = []
+
     def must_not_run(*_a, **_k):
-        raise AssertionError("facts_fn must not be called when disabled")
+        # Recording, not raising: the pipeline's except Exception would
+        # swallow an AssertionError and make this test vacuous.
+        calls.append(1)
+        return _facts_pair()
 
     issue, _ = run_digest(
         feed_urls=[],
@@ -826,8 +844,10 @@ def test_run_digest_facts_disabled_skips_call(env):
         newsletters_fn=lambda _s: [],
         facts_fn=must_not_run,
         facts_enabled=False,
+        weather_fn=lambda **_: None,
     )
     assert issue.facts == []
+    assert calls == []
 
 
 def test_fresh_issue_does_not_burn_topics_before_send(aws, monkeypatch):
@@ -1027,6 +1047,7 @@ def test_run_digest_attaches_quote(env):
         quote_fn=fake_quote,
         quotes_profile_md="- likes Stoics",
         recent_quotes=["Old — entry"],
+        weather_fn=lambda **_: None,
     )
     assert issue.quote is not None and issue.quote.author == "Ram Dass"
     assert captured["args"] == ("- likes Stoics", ["Old — entry"])
@@ -1048,6 +1069,7 @@ def test_run_digest_quote_exception_and_disable(env):
         serendipity_fn=lambda *_a, **_k: [],
         newsletters_fn=lambda _s: [],
         facts_fn=lambda *_a, **_k: [],
+        weather_fn=lambda **_: None,
     )
 
     def boom(*_a, **_k):
@@ -1056,11 +1078,15 @@ def test_run_digest_quote_exception_and_disable(env):
     issue, _ = run_digest(**common, quote_fn=boom)
     assert issue.quote is None
 
-    def must_not_run(*_a, **_k):
-        raise AssertionError("quote_fn must not run when disabled")
+    quote_calls: list[int] = []
 
-    issue, _ = run_digest(**common, quote_fn=must_not_run, quote_enabled=False)
+    def recording_quote(*_a, **_k):
+        quote_calls.append(1)
+        return _quote()
+
+    issue, _ = run_digest(**common, quote_fn=recording_quote, quote_enabled=False)
     assert issue.quote is None
+    assert quote_calls == []
 
 
 def test_advance_quotes_log_dedupes_and_caps(aws):
@@ -1108,3 +1134,50 @@ def test_tune_quotes_after_send_updates_only_quotes_row(aws, monkeypatch):
     assert state.markdown == "- new"
     assert state.recent_quotes == ["a"]
     assert db.get_profile().markdown == "# me"
+
+
+# --- Weather line ---
+
+
+def test_run_digest_attaches_weather_line(env):
+    from newslet.handlers.digest import run_digest
+
+    common = dict(
+        feed_urls=[],
+        profile=Profile(markdown="test", updated_at=datetime.now(UTC)),
+        feedback=[],
+        is_seen=lambda _: False,
+        rank_fn=lambda **_: _rank_response([_pick("https://a.example.com/1")]),
+        summarize_fn=lambda *_a, **_k: ("s", "i"),
+        discovery_fn=lambda *_a, **_k: [],
+        hn_fn=lambda **_: [_article("https://hn.example.com/x")],
+        websearch_fn=lambda *_a, **_k: [],
+        serendipity_fn=lambda *_a, **_k: [],
+        newsletters_fn=lambda _s: [],
+        facts_fn=lambda *_a, **_k: [],
+        quote_fn=lambda *_a, **_k: None,
+    )
+    issue, _ = run_digest(**common, weather_fn=lambda **_: "78° sunny, tonight 64° clear")
+    assert issue.weather_line == "78° sunny, tonight 64° clear"
+
+    def boom(**_):
+        raise RuntimeError("nws down")
+
+    issue, _ = run_digest(**common, weather_fn=boom)
+    assert issue.weather_line == ""
+
+    # Record calls rather than raising: the pipeline's except Exception
+    # would swallow an AssertionError and make this check vacuous.
+    calls: list[int] = []
+
+    def recording(**_):
+        calls.append(1)
+        return "x"
+
+    issue, _ = run_digest(**common, weather_fn=recording, weather_enabled=False)
+    assert issue.weather_line == ""
+    assert calls == []
+
+    # None from the fetcher stores as the empty string, not "None".
+    issue, _ = run_digest(**common, weather_fn=lambda **_: None)
+    assert issue.weather_line == ""

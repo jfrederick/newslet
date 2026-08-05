@@ -463,3 +463,18 @@ def test_no_quote_block_when_absent(stub_sign: None) -> None:
     _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
     assert "&ldquo;" not in html
     assert quote(f"{BASE_URL}/quote/{DATE}", safe="") not in html
+
+
+def test_weather_line_renders_in_header(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")]).model_copy(
+        update={"weather_line": "78° chance light rain, tonight 64° mostly clear"}
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "78° chance light rain, tonight 64° mostly clear" in html
+    # Above the first pick (it lives in the header).
+    assert html.index("78° chance light rain") < html.index('">T</a>')
+
+
+def test_no_weather_line_when_absent(stub_sign: None) -> None:
+    _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
+    assert "chance light rain" not in html
