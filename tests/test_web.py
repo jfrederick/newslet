@@ -52,6 +52,12 @@ def aws(env):
             BillingMode="PAY_PER_REQUEST",
         )
         ddb.create_table(
+            TableName="newslet-requests",
+            KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
             TableName="newslet-issues",
             KeySchema=[{"AttributeName": "date", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "date", "AttributeType": "S"}],
@@ -1345,3 +1351,52 @@ def test_config_weather_enabled_roundtrip(client):
     )
     assert db.get_config().weather_enabled is False
     assert 'name="weather_enabled"' in client.get("/admin").text
+
+
+# ---------------------------------------------------------------------------
+# Deep-dive request box
+# ---------------------------------------------------------------------------
+
+
+def test_deepdive_request_roundtrip_and_homepage_count(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("2026-08-12")
+    db.mark_issue_sent("2026-08-12")
+
+    r = client.get("/")
+    assert "Request a deep dive" in r.text
+    assert "it arrives in the next edition" in r.text
+
+    r = client.post("/api/deepdive", data={"topic": "  how does BGP work?  "})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+    pending = db.oldest_pending_deepdive()
+    assert pending is not None and pending["topic"] == "how does BGP work?"
+
+    r = client.get("/")
+    assert "1 queued" in r.text
+
+
+def test_deepdive_request_validation_and_auth(client):
+    client.cookies.set("admin_token", "supersecret")
+    assert client.post("/api/deepdive", data={"topic": "   "}).status_code == 400
+    assert client.post("/api/deepdive", data={"topic": "x" * 201}).status_code == 400
+    client.cookies.clear()
+    r = client.post("/api/deepdive", data={"topic": "x"})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_deepdive_box_hidden_when_disabled(client):
+    from newslet import db
+    from newslet.contracts import Config
+
+    client.cookies.set("admin_token", "supersecret")
+    _seed_issue("2026-08-12")
+    db.mark_issue_sent("2026-08-12")
+    db.put_config(Config(deepdive_enabled=False))
+    r = client.get("/")
+    assert "Request a deep dive" not in r.text
+    assert 'name="deepdive_enabled"' in client.get("/admin").text

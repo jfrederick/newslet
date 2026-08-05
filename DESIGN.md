@@ -271,6 +271,23 @@ def tune_quotes_profile(
 ) -> str: ...
 ```
 
+### `newslet.deepdive`
+
+Reader-requested ~500-word explainers ("You asked"). The homepage's
+request box queues topics in the requests table; each digest build pops
+the **oldest pending** request, generates one explainer with the main
+model, and opens the issue with it. The request flips to served only
+after a confirmed send (`digest._mark_deepdive_served`, matched by topic,
+idempotent on retries) — a failed generation or failed send leaves it
+queued. Not votable (explicitly requested content has no taste to learn).
+Best-effort `None`; `strict=False` JSON parse; `stop_reason` logged.
+
+```python
+def fetch_deepdive(
+    topic: str, *, client=None, model: str | None = None,
+) -> DeepDive | None: ...
+```
+
 ### `newslet.weather`
 
 One terse forecast line from the free, keyless National Weather Service
@@ -407,6 +424,12 @@ def render_email(
   is unchanged.
 - `Issue.weather_line` renders as one muted line under the dateline in
   the header (not votable).
+- `Issue.deepdive` renders as the "You asked" block (topic subline, title,
+  paragraphs; not votable) between the epigraph and the picks.
+- `deepdive_pending` (int | None, web only): when not None, the page ends
+  with the "Request a deep dive" form posting to `/api/deepdive`, with the
+  count in its status line. Sent emails leave it None, so the form can
+  never ship in mail.
 - `Issue.quote` renders as an italic epigraph directly under the intro,
   with a "— Author, *Source* · tradition" attribution line; its +/- links
   sign the synthetic `{base}/quote/{issue.date}` URL.
@@ -490,7 +513,7 @@ Routes:
   sends `Accept: application/json` — the Discover page adds in place)
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?, quote_enabled?, weather_enabled?}` → 303 `/admin` (the boolean toggles are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?, quote_enabled?, weather_enabled?, deepdive_enabled?}` → 303 `/admin` (the boolean toggles are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -498,6 +521,8 @@ Routes:
 - `GET /emails/{date}` — the as-sent daily email HTML (archive view; no nav
   strip, unlike `/`)
 - `GET /api/hn` — admin-authed live Hacker News front page → JSON cards
+- `POST /api/deepdive` — `{topic}` (1–200 chars) queues a deep-dive request
+  → 303 `/`; the next digest build answers it
 - `GET /discover` — the Discover page: the stored board of recommended RSS
   feeds (one-click add via `/api/feeds`; already-followed feeds hidden) and
   X accounts (profile links). Renders instantly from storage. Admin cookie.
@@ -511,10 +536,14 @@ Routes:
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
 | `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board, `"facts"` the facts-taste profile + topic log, `"quotes"` the quotes-taste profile + no-repeat log) | — | `markdown`/counts/`theme`/`board_json`/`recent_topics_json`/`recent_quotes_json`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json`, `quote_json`, `weather_line` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json`, `quote_json`, `deepdive_json`, `weather_line` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |
+
+`newslet-requests` (PK `id` = `{created_at iso}#{rand}` so lexicographic
+order is age order) holds deep-dive requests: `topic`, `status`
+(pending|served), `created_at`, `served_date`.
 
 `newslet-inbox` has a GSI `inbox-by-ts` (HASH `bucket` = year, RANGE
 `received_at`) so `recent_inbox_articles` reads a time range without a scan —

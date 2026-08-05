@@ -57,6 +57,12 @@ def dynamo(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             BillingMode="PAY_PER_REQUEST",
         )
         ddb.create_table(
+            TableName="newslet-requests",
+            KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
             TableName="newslet-issues",
             KeySchema=[{"AttributeName": "date", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "date", "AttributeType": "S"}],
@@ -1009,3 +1015,46 @@ def test_issue_round_trips_weather_line_and_tolerates_legacy(dynamo: None) -> No
     got = db.get_issue("2026-08-11")
     assert got is not None
     assert got.weather_line == ""
+
+
+def test_deepdive_request_lifecycle(dynamo: None) -> None:
+    from newslet import db
+
+    assert db.oldest_pending_deepdive() is None
+    assert db.count_pending_deepdives() == 0
+
+    first = db.add_deepdive_request("how does BGP work?")
+    db.add_deepdive_request("what is a bloom filter?")
+    assert db.count_pending_deepdives() == 2
+
+    oldest = db.oldest_pending_deepdive()
+    assert oldest is not None
+    assert oldest["id"] == first
+    assert oldest["topic"] == "how does BGP work?"
+
+    db.mark_deepdive_served(first, "2026-08-12")
+    assert db.count_pending_deepdives() == 1
+    nxt = db.oldest_pending_deepdive()
+    assert nxt is not None and nxt["topic"] == "what is a bloom filter?"
+
+
+def test_issue_round_trips_deepdive_and_tolerates_legacy(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import DeepDive
+
+    db.put_issue(
+        Issue(date="2026-08-12", picks=[], created_at=datetime.now(UTC),
+              deepdive=DeepDive(topic="bgp", title="T", body_md="B"))
+    )
+    got = db.get_issue("2026-08-12")
+    assert got is not None and got.deepdive is not None
+    assert got.deepdive.topic == "bgp"
+
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-issues"
+    ).put_item(
+        Item={"date": "2026-08-13", "picks_json": "[]",
+              "created_at": datetime.now(UTC).isoformat()}
+    )
+    got = db.get_issue("2026-08-13")
+    assert got is not None and got.deepdive is None

@@ -57,6 +57,7 @@ class Settings:
     table_profile: str
     table_seen: str
     table_issues: str
+    table_requests: str
     table_feedback: str
     table_subscriptions: str
     table_inbox: str
@@ -137,6 +138,7 @@ def settings() -> Settings:
         table_profile=os.environ.get("TABLE_PROFILE", "newslet-profile"),
         table_seen=os.environ.get("TABLE_SEEN", "newslet-seen-articles"),
         table_issues=os.environ.get("TABLE_ISSUES", "newslet-issues"),
+        table_requests=os.environ.get("TABLE_REQUESTS", "newslet-requests"),
         table_feedback=os.environ.get("TABLE_FEEDBACK", "newslet-feedback"),
         table_subscriptions=os.environ.get(
             "TABLE_SUBSCRIPTIONS", "newslet-subscriptions"

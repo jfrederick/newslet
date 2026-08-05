@@ -406,6 +406,34 @@ issue without fact blocks, never a blocked send.
 
 :::
 
+### Deep dives on request
+
+At the bottom of the homepage sits a small box: type a topic — "how does
+BGP routing actually work?" — and tomorrow's edition opens with a ~500-word
+explainer on it, under a "You asked" heading. One request per edition,
+answered oldest-first; the box shows how many are queued.
+
+:::tier little
+
+Requests wait in a small queue. Each morning's build takes the oldest one,
+writes the explainer, and marks the request done only once the email has
+actually been delivered — so a failed morning never swallows your question.
+There are no vote buttons on it; you asked for it, so it just arrives.
+
+:::
+
+:::tier medium
+
+`POST /api/deepdive` queues rows in the requests table;
+`deepdive.fetch_deepdive()` answers the oldest pending topic during the
+digest build (main model, best-effort — a failure leaves the request
+pending), riding on `Issue.deepdive`. `digest._mark_deepdive_served` flips
+the row post-send, matched by topic and idempotent on retries. The form
+renders only on `/` (never in sent emails) and hides when the admin toggle
+is off.
+
+:::
+
 ### The weather line
 
 One quiet line under the date: `today 78° chance light rain, tonight 64°
@@ -774,8 +802,8 @@ whenever the code it describes changes.
 :::tier medium
 
 The stack is AWS SAM: three Lambdas (digest, web, inbound), an HTTP API in front
-of the web Lambda, seven DynamoDB tables (feeds, profile, seen-articles, issues,
-feedback, subscriptions, inbox), an S3 bucket for raw inbound mail, and SES
+of the web Lambda, eight DynamoDB tables (feeds, profile, seen-articles, issues,
+feedback, subscriptions, requests, inbox), an S3 bucket for raw inbound mail, and SES
 inbound for the newsletter source. Two EventBridge crons drive the cadence
 (email daily at 10:00 UTC, Discover board weekly on Mondays at 09:30 UTC). External dependencies
 are Anthropic (ranking, summaries, discovery, web search) and Resend (delivery).

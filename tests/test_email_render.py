@@ -478,3 +478,36 @@ def test_weather_line_renders_in_header(stub_sign: None) -> None:
 def test_no_weather_line_when_absent(stub_sign: None) -> None:
     _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
     assert "chance light rain" not in html
+
+
+def test_deepdive_block_renders_after_intro_before_picks(stub_sign: None) -> None:
+    from newslet.contracts import DeepDive
+
+    issue = Issue(
+        date=DATE,
+        picks=[_pick("https://a.example.com/1", "FirstPick", "B")],
+        created_at=datetime(2026, 5, 17, tzinfo=UTC),
+        intro="An intro line.",
+        deepdive=DeepDive(topic="how does BGP work?",
+                          title="BGP: the internet's rumor mill",
+                          body_md="Para one.\n\nPara two."),
+    )
+    _, html = render_email(issue, BASE_URL)
+    assert "You asked" in html
+    assert "how does BGP work?" in html
+    i_dd = html.index("BGP: the internet")
+    assert html.index("An intro line.") < i_dd < html.index("FirstPick")
+    # Not votable: no rate link for a synthetic /deepdive path.
+    assert "/deepdive" not in html
+
+
+def test_deepdive_form_renders_only_on_web(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, email_html = render_email(issue, BASE_URL)
+    assert "Request a deep dive" not in email_html
+    _, web_html = render_email(issue, BASE_URL, web_nav=True, deepdive_pending=0)
+    assert "Request a deep dive" in web_html
+    assert 'action="/api/deepdive"' in web_html
+    assert "it arrives in the next edition" in web_html
+    _, queued_html = render_email(issue, BASE_URL, web_nav=True, deepdive_pending=2)
+    assert "2 queued" in queued_html

@@ -191,6 +191,19 @@ Resources:
         - AttributeName: date
           KeyType: HASH
 
+  # Reader-requested deep-dive topics ("You asked"). Tiny: one row per
+  # request, flipped to served after the answering issue is delivered.
+  RequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
   FeedbackTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -319,6 +332,8 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref IssuesTable
         - DynamoDBCrudPolicy:
+            TableName: !Ref RequestsTable
+        - DynamoDBCrudPolicy:
             TableName: !Ref FeedbackTable
         # The digest folds subscribed-newsletter links (stored by the inbound
         # Lambda) into its ranking pool, so it reads the inbox table.
@@ -344,6 +359,7 @@ Resources:
           TABLE_PROFILE: !Ref ProfileTable
           TABLE_SEEN: !Ref SeenArticlesTable
           TABLE_ISSUES: !Ref IssuesTable
+          TABLE_REQUESTS: !Ref RequestsTable
           TABLE_FEEDBACK: !Ref FeedbackTable
           TABLE_INBOX: !Ref InboxTable
           FROM_EMAIL: !Sub '{{resolve:ssm:/newslet/from-email}}'
@@ -387,6 +403,8 @@ Resources:
             TableName: !Ref FeedbackTable
         - DynamoDBCrudPolicy:
             TableName: !Ref IssuesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RequestsTable
         # The admin UI creates/lists/deletes newsletter subscriptions.
         - DynamoDBCrudPolicy:
             TableName: !Ref SubscriptionsTable
@@ -416,6 +434,7 @@ Resources:
           TABLE_PROFILE: !Ref ProfileTable
           TABLE_SEEN: !Ref SeenArticlesTable
           TABLE_ISSUES: !Ref IssuesTable
+          TABLE_REQUESTS: !Ref RequestsTable
           TABLE_FEEDBACK: !Ref FeedbackTable
           TABLE_SUBSCRIPTIONS: !Ref SubscriptionsTable
           # Lets the admin UI mint addresses under the right domain (and grey

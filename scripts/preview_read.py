@@ -107,6 +107,12 @@ def main() -> int:
             BillingMode="PAY_PER_REQUEST",
         )
         ddb.create_table(
+            TableName="newslet-requests",
+            KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
             TableName="newslet-issues",
             KeySchema=[{"AttributeName": "date", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "date", "AttributeType": "S"}],
