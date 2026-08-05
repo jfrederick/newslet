@@ -24,7 +24,7 @@ os.environ.setdefault("SIGNING_KEY", "dry-run-signing-key")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://api.example.com")
 
 from newslet import email_render, themes  # noqa: E402
-from newslet.contracts import Discovery, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import Discovery, Fact, Issue, Pick, WebArticle  # noqa: E402
 
 FIXTURE_PICKS = [
     Pick(
@@ -92,6 +92,32 @@ FIXTURE_DISCOVERIES = [
 ]
 
 
+FIXTURE_FACT_BODY = (
+    "In the early days of the ARPANET, congestion collapse was not a "
+    "theoretical worry but a lived experience: throughput across the whole "
+    "network could fall by three orders of magnitude while every host kept "
+    "retransmitting as fast as it could.\n\n"
+    "This fixture paragraph stands in for a ~500-word essay so the fact "
+    "blocks render with realistic multi-paragraph structure in the dry-run "
+    "output. Vote links are signed exactly like article links."
+)
+
+FIXTURE_FACTS = [
+    Fact(
+        title="Why congestion collapse nearly killed the early internet",
+        body_md=FIXTURE_FACT_BODY,
+        genre="networks & protocols",
+        slot="mid",
+    ),
+    Fact(
+        title="The moth that named the bug",
+        body_md=FIXTURE_FACT_BODY,
+        genre="computing history & lore",
+        slot="end",
+    ),
+]
+
+
 def main() -> int:
     issue = Issue(
         date=datetime.now(UTC).strftime("%Y-%m-%d"),
@@ -104,6 +130,7 @@ def main() -> int:
             "Postgres 19's async I/O."
         ),
         discoveries=FIXTURE_DISCOVERIES,
+        facts=FIXTURE_FACTS,
         # Only a couple here; the web view is where these (plus the rest of the
         # ranked picks) really live. Their presence makes the email's "Read all
         # on the web" link render.

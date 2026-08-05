@@ -124,6 +124,24 @@ def render_email(
             }
         )
 
+    # The two tech-fact essays: votable like articles, but their "URLs" are
+    # synthetic (/facts/{date}/{slot}) — real HTTPS paths under the app's own
+    # base so the signed /rate flow and FeedbackRow's HttpUrl both hold, and
+    # the path prefix lets the digest route these votes to the facts-only
+    # feedback loop instead of the general profile.
+    def _fact_ctx(fact) -> dict:
+        up_link, down_link = _rate_links(f"{base}/facts/{issue.date}/{fact.slot}")
+        return {
+            "title": fact.title,
+            "genre": fact.genre,
+            "paragraphs": [p.strip() for p in fact.body_md.split("\n\n") if p.strip()],
+            "up_link": up_link,
+            "down_link": down_link,
+        }
+
+    fact_mid = next((_fact_ctx(f) for f in issue.facts if f.slot == "mid"), None)
+    fact_end = next((_fact_ctx(f) for f in issue.facts if f.slot == "end"), None)
+
     ctx_discoveries = []
     for d in issue.discoveries:
         feed_str = str(d.feed_url)
@@ -158,5 +176,7 @@ def render_email(
         # web experience) — not this issue's page.
         home_url=f"{base}/",
         web_nav=web_nav,
+        fact_mid=fact_mid,
+        fact_end=fact_end,
     )
     return subject, html

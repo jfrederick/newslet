@@ -209,6 +209,44 @@ Returns `[]` on any failure (best-effort) and immediately when
 `Issue.random_articles` as their own block on both surfaces — not folded
 into the ranked pool, where the profile-driven ranker would bury them.
 
+### `newslet.facts`
+
+The two ~500-word tech-fact essays per issue, from model knowledge alone
+(no `web_search` tool — cheaper, and it steers the model toward durable,
+well-established material). The methodology: a fixed eight-genre taxonomy
+(`GENRES`), two *different* genres per issue weighted by the facts-taste
+profile, a rolling no-repeat log of the last 60 covered topics passed as
+exclusions, and a timeless/no-news content rule in the prompt.
+
+```python
+GENRES: tuple[str, ...]  # 8 fixed genres
+
+def fetch_facts(
+    facts_profile_md: str, recent_topics: list[str],
+    *, client=None, model: str | None = None,
+) -> list[Fact]: ...
+
+def tune_facts_profile(
+    current_md: str, feedback: list[FeedbackRow], *, client=None,
+) -> str: ...
+```
+
+`fetch_facts` is all-or-nothing: exactly two valid facts with distinct
+slots (`mid`/`end`) or `[]` (best-effort — API error, unparsable reply, or
+a half-result never blocks the send). Results ride on `Issue.facts`.
+
+`tune_facts_profile` maintains the **separate facts feedback loop**: the
+whole markdown is auto-managed (no sentinels, unlike `tune.tune_profile`),
+fed only votes on facts, and stored on the profile-table row `id="facts"`
+(`db.get_facts_state`/`put_facts_state`, model `FactsState`) alongside the
+topic log. Fact votes are identified by an anchored match on the full
+synthetic vote-URL shape `/facts/{issue-key}/{mid|end}` (`VOTE_PATH_RE` /
+`vote_slot`, shared by `handlers.digest._split_feedback` and the web
+handler; the issue key is `YYYY-MM-DD` or a `manual-…` key, so a real
+article containing ".../facts/..." never matches) and never reach article
+ranking or the general profile tuner — and general votes never reach this
+one.
+
 ### `newslet.x_grok`
 
 X (Twitter) as a ranking-pool source via xAI's Grok **`x_search` tool** (the
@@ -326,6 +364,12 @@ def render_email(
 - `web_nav=True` (the `/` homepage render only) prepends a thin
   discover/admin/emails nav strip; sent emails never set it, so their HTML
   is unchanged.
+- The two `Issue.facts` essays render as "Tech fact of the day" (after the
+  picks, before the web block) and "One more fact" (after discoveries,
+  before the CTA). Their +/- links sign **synthetic** URLs —
+  `{base}/facts/{issue.date}/{mid|end}` — real HTTPS paths so
+  `FeedbackRow.article_url` (HttpUrl) holds and the anchored full-shape
+  match routes the vote to the facts-only feedback loop.
 - Subject: `f"newslet — {issue.date}"` unless the issue carries one.
 
 ### `newslet.handlers.digest`
@@ -339,10 +383,23 @@ build keeps the previous board). A stray `event={"home": true}` (the retired
 homepage-rebuild mode) falls through to the idempotent daily path. Two
 EventBridge schedules drive it: the email digest at 10:00 UTC and the weekly
 discover rebuild on Mondays at 09:30 UTC (`{"discover": true}`). `run_digest`
-takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, and `max_x_posts`
-(read from `Config`), and folds in the HN, subscribed-newsletter, and X
-(`x_fn`) sources — each best-effort and seen-filtered — alongside the RSS
-candidates.
+takes `max_picks`, `max_web`, `web_variety`, `x_enabled`, `max_x_posts`, and
+the facts inputs (`facts_enabled`, `facts_profile_md`, `facts_recent_topics`,
+`facts_fn`) — read from `Config`/the `id="facts"` row — and folds in the HN,
+subscribed-newsletter, and X (`x_fn`) sources — each best-effort and
+seen-filtered — alongside the RSS candidates, plus the best-effort facts
+block.
+
+Feedback separation: `_split_feedback` partitions every feedback read by an
+anchored match on the full synthetic vote-URL shape —
+`/facts/{issue-key}/{mid|end}` rows feed `_tune_facts_after_send`
+(facts-only tune → `id="facts"`), `/quote/{issue-key}` rows are reserved
+for the quote feature, everything else is general (ranking +
+`_tune_profile_after_send`). Reads go through `_recent_feedback_split`,
+which over-fetches 4× and trims per bucket so neither vote stream starves
+the other. The facts topic log (cap 60) advances only after a confirmed
+send (`_advance_facts_topic_log`, deduped so duplicate-send retries are
+idempotent) — a failed send never burns topics no reader saw.
 
 ```python
 def handler(event: dict, context: object) -> dict: ...
@@ -384,7 +441,7 @@ Routes:
   sends `Accept: application/json` — the Discover page adds in place)
 - `POST /api/feeds/delete` — `{url}` → 303 `/admin`
 - `POST /api/profile` — `{markdown}` → 303 `/admin`
-- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?}` → 303 `/admin` (`x_enabled` is a checkbox: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
+- `POST /api/config` — `{max_rss_articles, max_web_articles, web_variety, x_enabled?, max_x_articles?, max_random_articles?, theme?, text_size?, facts_enabled?}` → 303 `/admin` (`x_enabled`/`facts_enabled` are checkboxes: absent = off; `theme` must be a known theme key and `text_size` 75–150, else 400)
 - `POST /api/subscriptions` — `{source}` → mints an address (needs `MAIL_DOMAIN`) → 303 `/admin`
 - `POST /api/subscriptions/delete` — `{address}` → 303 `/admin`
 - `GET /rate` — `?a=&d=&v=&t=` → "thanks" HTML; verifies `t` and writes feedback
@@ -403,9 +460,9 @@ Routes:
 | Table | PK | SK | Other attrs | TTL |
 |---|---|---|---|---|
 | `newslet-feeds` | `url` (S) | — | `title`, `added_at` | no |
-| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board) | — | `markdown`/counts/`theme`/`board_json`, `updated_at` | no |
+| `newslet-profile` | `id` (S: `"me"` profile, `"config"` admin knobs, `"discover"` the Discover board, `"facts"` the facts-taste profile + topic log) | — | `markdown`/counts/`theme`/`board_json`/`recent_topics_json`, `updated_at` | no |
 | `newslet-seen-articles` | `url_hash` (S) | — | `url`, `expires_at` (N) | `expires_at` |
-| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json` | no |
+| `newslet-issues` | `date` (S) | — | `picks_json`, `created_at`, `subject`, `intro`, `theme`, `text_size`, `discoveries_json`, `web_articles_json`, `random_articles_json`, `facts_json` | no |
 | `newslet-feedback` | `article_url` (S) | `ts` (S, ISO8601) | `title`, `rating` | no |
 | `newslet-subscriptions` | `address` (S, lowercased) | — | `source`, `status`, `created_at`, `confirmed_at`, `last_received_at` | no |
 | `newslet-inbox` | `message_id` (S) | — | `received_at`, `source`, `address`, `articles_json`, `bucket` (year), `expires_at` (N) | `expires_at` (30d) |

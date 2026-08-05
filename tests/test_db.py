@@ -876,3 +876,71 @@ def test_list_issues_paginates_scan(dynamo: None, monkeypatch: pytest.MonkeyPatc
     rows = db.list_issues(limit=10)
     assert [r["date"] for r in rows] == ["2026-08-02", "2026-08-01"]
     assert calls[1]["ExclusiveStartKey"] == {"date": "2026-08-01"}
+
+
+def test_facts_state_default_and_roundtrip(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import FactsState
+
+    # Missing row → defaults.
+    state = db.get_facts_state()
+    assert state.markdown == ""
+    assert state.recent_topics == []
+
+    db.put_facts_state(
+        FactsState(markdown="- enjoys protocol lore", recent_topics=["ARPANET", "RSA"])
+    )
+    state = db.get_facts_state()
+    assert state.markdown == "- enjoys protocol lore"
+    assert state.recent_topics == ["ARPANET", "RSA"]
+
+
+def test_facts_state_tolerates_bad_topics_json(dynamo: None) -> None:
+    from newslet import db
+
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-profile"
+    ).put_item(Item={"id": "facts", "markdown": "m", "recent_topics_json": "not-json"})
+    state = db.get_facts_state()
+    assert state.markdown == "m"
+    assert state.recent_topics == []
+
+
+def test_issue_round_trips_facts(dynamo: None) -> None:
+    from newslet import db
+    from newslet.contracts import Fact
+
+    issue = Issue(
+        date="2026-08-06",
+        picks=[],
+        created_at=datetime.now(UTC),
+        facts=[
+            Fact(title="Why TCP has a three-way handshake", body_md="Para one.\n\nPara two.",
+                 genre="networks & protocols", slot="mid"),
+            Fact(title="The first computer bug was a moth", body_md="Body.",
+                 genre="computing history & lore", slot="end"),
+        ],
+    )
+    db.put_issue(issue)
+    got = db.get_issue("2026-08-06")
+    assert got is not None
+    assert [f.slot for f in got.facts] == ["mid", "end"]
+    assert got.facts[0].title == "Why TCP has a three-way handshake"
+    assert got.facts[0].body_md == "Para one.\n\nPara two."
+
+
+def test_get_issue_tolerates_legacy_issue_without_facts(dynamo: None) -> None:
+    from newslet import db
+
+    boto3.resource("dynamodb", region_name="us-east-1").Table(
+        "newslet-issues"
+    ).put_item(
+        Item={
+            "date": "2026-08-07",
+            "picks_json": "[]",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    got = db.get_issue("2026-08-07")
+    assert got is not None
+    assert got.facts == []

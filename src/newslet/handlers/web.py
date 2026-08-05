@@ -12,6 +12,7 @@ import hmac
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import boto3
 from fastapi import Cookie, FastAPI, Form, HTTPException, Query, Request, Response
@@ -22,7 +23,7 @@ from markupsafe import Markup
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from newslet import clock, db, email_render, hn, newsletters, themes, tokens
+from newslet import clock, db, email_render, facts, hn, newsletters, themes, tokens
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -456,10 +457,13 @@ def save_config(
     max_random_articles: int = Form(default=4),
     theme: str = Form(default=themes.DEFAULT_THEME),
     text_size: int = Form(default=themes.TEXT_SIZE_DEFAULT),
+    facts_enabled: bool = Form(default=False),
     admin_token: str | None = Cookie(default=None),
 ) -> Response:
     """Persist the daily-email article counts, web-search variety, X source,
-    the off-your-beat count, and the app appearance (theme + text size)."""
+    the off-your-beat count, the tech-facts toggle, and the app appearance
+    (theme + text size). Checkbox semantics: an unchecked box submits
+    nothing, so ``facts_enabled``/``x_enabled`` absent means off."""
     _require_admin(admin_token)
     # Strict on write (the read path is the lenient one): reject names the
     # picker could never have sent.
@@ -475,6 +479,7 @@ def save_config(
             max_random_articles=max_random_articles,
             theme=theme,
             text_size=text_size,
+            facts_enabled=facts_enabled,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -553,8 +558,7 @@ _THANKS_HTML_TEMPLATE = (
     "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}"
     "textarea{font:inherit;width:90%;max-width:32rem;height:4rem}"
     "form{margin-top:1.5rem}</style></head>"
-    '<body><h1>thanks</h1><p>recorded your __RATING__ for<br>'
-    '<a href="__URL__">__URL__</a></p>'
+    "<body><h1>thanks</h1><p>recorded your __RATING__ for<br>__TARGET__</p>"
     '<form method="post" action="/rate/note">'
     '<input type="hidden" name="a" value="__URL__">'
     '<input type="hidden" name="d" value="__DATE__">'
@@ -566,11 +570,26 @@ _THANKS_HTML_TEMPLATE = (
 )
 
 
-def _thanks_html(rating: str, url: str, issue_date: str, token: str) -> str:
+def _thanks_html(
+    rating: str, url: str, issue_date: str, token: str, label: str = ""
+) -> str:
+    """The post-vote thanks page.
+
+    ``label`` (used for synthetic vote targets like facts) shows a plain
+    title instead of a link — the synthetic /facts/... path has no route,
+    so linking it would 404. The hidden note-form fields always carry the
+    original ``url`` + token: that is what the HMAC signed.
+    """
     from html import escape
 
+    if label:
+        target = f"<strong>{escape(label)}</strong>"
+    else:
+        escaped = escape(url, quote=True)
+        target = f'<a href="{escaped}">{escaped}</a>'
     return (
         _THANKS_HTML_TEMPLATE.replace("__RATING__", escape(rating))
+        .replace("__TARGET__", target)
         .replace("__URL__", escape(url, quote=True))
         .replace("__DATE__", escape(issue_date, quote=True))
         .replace("__TOKEN__", escape(token, quote=True))
@@ -603,14 +622,28 @@ def rate(
     # the thanks page lands on this exact row regardless of HttpUrl rewrites.
     article_url = db.normalize_url(a)
 
+    # Fact votes carry synthetic /facts/{issue-key}/{slot} URLs (see
+    # email_render); they get a title lookup by slot and a link-free thanks
+    # page (the synthetic path has no route to link to). The match uses the
+    # same anchored full-shape regex the digest's feedback routing uses
+    # (newslet.facts.vote_slot), so a real article whose path merely ends
+    # ".../facts/<x>/end" still takes the normal picks branch.
+    fact_slot = facts.vote_slot(urlparse(article_url).path)
+    is_fact_vote = fact_slot is not None
+
     # Best-effort title lookup from the stored issue
     title = ""
     issue = db.get_issue(d)
     if issue:
-        for pick in issue.picks:
-            if str(pick.url) == article_url:
-                title = pick.title
-                break
+        if is_fact_vote:
+            title = next(
+                (f.title for f in issue.facts if f.slot == fact_slot), ""
+            )
+        else:
+            for pick in issue.picks:
+                if str(pick.url) == article_url:
+                    title = pick.title
+                    break
 
     db.put_feedback(
         FeedbackRow(
@@ -623,7 +656,8 @@ def rate(
     )
     # The note form carries the original ``a`` + token (what the HMAC signed),
     # not the normalized key, so /rate/note's token check still passes.
-    return HTMLResponse(_thanks_html(v, a, d, t))
+    label = (title or "this fact") if is_fact_vote else ""
+    return HTMLResponse(_thanks_html(v, a, d, t, label=label))
 
 
 @app.post("/rate/note", response_class=HTMLResponse)

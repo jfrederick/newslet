@@ -180,6 +180,7 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     focused on the behaviour it asserts.
     """
     from newslet import discovery as discovery_mod
+    from newslet import facts as facts_mod
     from newslet import hn as hn_mod
     from newslet import serendipity as serendipity_mod
     from newslet import summarize as summarize_mod
@@ -200,6 +201,11 @@ def _stub_enrichment(monkeypatch, *, summarize=None, discoveries=None, tune=None
     monkeypatch.setattr(serendipity_mod, "fetch_serendipity", lambda *a, **k: [])
     # The X source reaches xAI in production; stub to an offline empty too.
     monkeypatch.setattr(x_grok_mod, "fetch_x_articles", lambda *a, **k: [])
+    # The facts block and its tuner call anthropic.Anthropic directly, like
+    # summarize/tune — stub both so they stay offline and never consume a
+    # test's shared Anthropic fake.
+    monkeypatch.setattr(facts_mod, "fetch_facts", lambda *a, **k: [])
+    monkeypatch.setattr(facts_mod, "tune_facts_profile", lambda md, fb, **_: md)
 
 
 def test_full_pipeline_handler_end_to_end(aws, monkeypatch):

@@ -1164,3 +1164,118 @@ def test_email_archive_keeps_send_time_text_size(client):
     r = client.get("/emails/2026-05-24")
     assert r.status_code == 200
     assert "font-size:22px" in r.text  # round(17 * 1.30), not 17 * 0.75
+
+
+# ---------------------------------------------------------------------------
+# Tech facts: config toggle + fact vote title lookup
+# ---------------------------------------------------------------------------
+
+
+def test_config_facts_enabled_roundtrip(client):
+    from newslet import db
+
+    client.cookies.set("admin_token", "supersecret")
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5",
+              "web_variety": "30", "facts_enabled": "true"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().facts_enabled is True
+
+    # Unchecked checkbox submits nothing → off.
+    r = client.post(
+        "/api/config",
+        data={"max_rss_articles": "10", "max_web_articles": "5",
+              "web_variety": "30"},
+    )
+    assert r.status_code == 303
+    assert db.get_config().facts_enabled is False
+
+    r = client.get("/admin")
+    assert 'name="facts_enabled"' in r.text
+
+
+def test_rate_fact_vote_records_fact_title(client):
+    from datetime import UTC, datetime
+
+    from newslet import db, tokens
+    from newslet.contracts import Fact, Issue
+
+    client.cookies.set("admin_token", "supersecret")
+    db.put_issue(
+        Issue(
+            date="2026-08-06",
+            picks=[],
+            created_at=datetime.now(UTC),
+            facts=[
+                Fact(title="Why TCP shakes hands three times", body_md="B",
+                     genre="networks & protocols", slot="mid"),
+                Fact(title="The moth in the relay", body_md="B",
+                     genre="computing history & lore", slot="end"),
+            ],
+        )
+    )
+    fact_url = "https://api.example.com/facts/2026-08-06/mid"
+    token = tokens.sign(fact_url, "2026-08-06")
+    r = client.get(
+        "/rate",
+        params={"a": fact_url, "d": "2026-08-06", "v": "up", "t": token},
+    )
+    assert r.status_code == 200
+    rows = db.recent_feedback(limit=5)
+    assert rows[0].title == "Why TCP shakes hands three times"
+    assert rows[0].rating == "up"
+
+
+def test_rate_fact_vote_thanks_page_shows_title_not_dead_link(client):
+    from datetime import UTC, datetime
+
+    from newslet import db, tokens
+    from newslet.contracts import Fact, Issue
+
+    db.put_issue(
+        Issue(
+            date="2026-08-06",
+            picks=[],
+            created_at=datetime.now(UTC),
+            facts=[Fact(title="The moth in the relay", body_md="B",
+                        genre="computing history & lore", slot="end")],
+        )
+    )
+    fact_url = "https://api.example.com/facts/2026-08-06/end"
+    token = tokens.sign(fact_url, "2026-08-06")
+    r = client.get(
+        "/rate",
+        params={"a": fact_url, "d": "2026-08-06", "v": "up", "t": token},
+    )
+    assert r.status_code == 200
+    assert "The moth in the relay" in r.text
+    # No dead anchor to the synthetic path; the note form still carries it.
+    assert f'<a href="{fact_url}"' not in r.text
+    assert f'value="{fact_url}"' in r.text
+
+
+def test_rate_article_under_facts_like_path_uses_pick_title(client):
+    """A real article whose path merely resembles the synthetic shape must
+    take the normal picks branch (linked thanks page, pick title)."""
+    from datetime import UTC, datetime
+
+    from newslet import db, tokens
+    from newslet.contracts import Issue, Pick
+
+    url = "https://someblog.example.com/blog/facts/report/end"
+    db.put_issue(
+        Issue(
+            date="2026-08-06",
+            picks=[Pick(url=url, title="A real article", blurb="b",
+                        source="Blog", score=0.5)],
+            created_at=datetime.now(UTC),
+        )
+    )
+    token = tokens.sign(url, "2026-08-06")
+    r = client.get("/rate", params={"a": url, "d": "2026-08-06", "v": "up", "t": token})
+    assert r.status_code == 200
+    assert f'<a href="{url}"' in r.text  # normal linked thanks page
+    rows = db.recent_feedback(limit=5)
+    assert rows[0].title == "A real article"

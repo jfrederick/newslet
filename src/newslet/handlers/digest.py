@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from newslet import (
     discover,
     discovery,
     email_render,
+    facts,
     feeds,
     hn,
     rank,
@@ -36,6 +38,8 @@ from newslet.config import settings
 from newslet.contracts import (
     Article,
     Discovery,
+    Fact,
+    FactsState,
     FeedbackRow,
     Issue,
     Pick,
@@ -51,6 +55,59 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 # (what is my *durable* taste?). They read the same table with different windows.
 _RANK_FEEDBACK_LIMIT = 50
 _TUNE_FEEDBACK_LIMIT = 200
+
+# Synthetic vote URLs (minted by email_render for non-article blocks) match
+# exact, anchored path shapes — the middle segment is an issue key (a date
+# or a manual-send key). They belong to their feature's own feedback loop
+# and must never steer article ranking or the general profile; full-shape
+# matching keeps a real article at e.g. example.com/facts/tcp classified as
+# general. The facts shape lives in newslet.facts (shared with the web
+# handler); the quote pattern is reserved for the quote-of-the-day feature.
+_FACTS_VOTE_RE = facts.VOTE_PATH_RE
+_QUOTE_VOTE_RE = re.compile(rf"^/quote/{facts._ISSUE_KEY_RE}$")
+
+# The facts no-repeat log keeps this many recently-covered topics.
+_FACTS_TOPIC_LOG_CAP = 60
+
+# Synthetic rows are dropped from a bucket *after* fetching, so fetch a
+# multiple of the wanted window — otherwise a streak of fact clicks could
+# fill the fetch limit and starve article ranking/tuning of feedback that
+# exists just past it (and vice versa).
+_SPLIT_FETCH_MULTIPLIER = 4
+
+
+def _split_feedback(
+    rows: list[FeedbackRow],
+) -> tuple[list[FeedbackRow], list[FeedbackRow]]:
+    """Split feedback into (general, facts) by synthetic-URL shape.
+
+    Quote votes are excluded from *both* buckets: they are the quote
+    feature's signal, not the ranker's and not the facts tuner's.
+    """
+    general: list[FeedbackRow] = []
+    fact_rows: list[FeedbackRow] = []
+    for row in rows:
+        path = urlparse(str(row.article_url)).path
+        if _FACTS_VOTE_RE.match(path):
+            fact_rows.append(row)
+        elif _QUOTE_VOTE_RE.match(path):
+            continue
+        else:
+            general.append(row)
+    return general, fact_rows
+
+
+def _recent_feedback_split(limit: int) -> tuple[list[FeedbackRow], list[FeedbackRow]]:
+    """Fetch and split recent feedback, ``limit`` rows per bucket.
+
+    Over-fetches by ``_SPLIT_FETCH_MULTIPLIER`` before splitting, then trims
+    each bucket (rows arrive newest-first) — so fact votes can't crowd
+    article votes out of the ranking/tuning windows, or the reverse.
+    """
+    general, fact_rows = _split_feedback(
+        db.recent_feedback(limit=limit * _SPLIT_FETCH_MULTIPLIER)
+    )
+    return general[:limit], fact_rows[:limit]
 
 # Fallback counts when no admin config is present (run_digest defaults).
 _DEFAULT_MAX_PICKS = 10
@@ -103,6 +160,7 @@ def _build_issue(
     discoveries: list[Discovery] | None = None,
     web_articles: list[WebArticle] | None = None,
     random_articles: list[WebArticle] | None = None,
+    facts_list: list[Fact] | None = None,
 ) -> Issue:
     return Issue(
         date=date,
@@ -113,6 +171,7 @@ def _build_issue(
         discoveries=discoveries or [],
         web_articles=web_articles or [],
         random_articles=random_articles or [],
+        facts=facts_list or [],
     )
 
 
@@ -158,6 +217,10 @@ def run_digest(
     newsletters_fn=None,
     x_fn=None,
     serendipity_fn=None,
+    facts_fn=None,
+    facts_profile_md: str = "",
+    facts_recent_topics: list[str] | None = None,
+    facts_enabled: bool = True,
     x_enabled: bool = True,
     max_x_posts: int = _X_MAX_POSTS,
     max_picks: int = _DEFAULT_MAX_PICKS,
@@ -186,6 +249,7 @@ def run_digest(
     newsletters_fn = newsletters_fn or db.recent_inbox_articles
     x_fn = x_fn or x_grok.fetch_x_articles
     serendipity_fn = serendipity_fn or serendipity.fetch_serendipity
+    facts_fn = facts_fn or facts.fetch_facts
 
     now = now or datetime.now(UTC)
     since = now - timedelta(hours=24)
@@ -299,6 +363,16 @@ def run_digest(
             log.exception("serendipity failed; sending without the off-beat block")
     random_articles = [r for r in random_articles if not is_seen(str(r.url))]
 
+    # The two tech-fact essays (mid + end) — model knowledge only, steered by
+    # the facts-taste profile and the no-repeat topic log (see newslet.facts).
+    # Best-effort like every enrichment block; the admin toggle disables it.
+    issue_facts: list[Fact] = []
+    if facts_enabled:
+        try:
+            issue_facts = facts_fn(facts_profile_md, facts_recent_topics or [])
+        except Exception:  # noqa: BLE001 - best effort, never block the send
+            log.exception("facts failed; sending without the fact blocks")
+
     issue = _build_issue(
         response.picks,
         date=date,
@@ -307,6 +381,7 @@ def run_digest(
         discoveries=discoveries,
         web_articles=web_articles,
         random_articles=random_articles,
+        facts_list=issue_facts,
     )
     return issue, candidates
 
@@ -335,8 +410,11 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
     feeds_list = db.list_feeds()
     profile = db.get_profile()
     config = db.get_config()
-    # Recency window for ranking; tuning reads its own wider window.
-    feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
+    # Recency window for ranking; tuning reads its own wider window. Synthetic
+    # fact/quote votes are split out — they steer their own features, never
+    # article ranking.
+    feedback, _fact_votes = _recent_feedback_split(_RANK_FEEDBACK_LIMIT)
+    facts_state = db.get_facts_state() if config.facts_enabled else FactsState()
     issue, candidates = run_digest(
         feed_urls=[str(f.url) for f in feeds_list],
         profile=profile,
@@ -348,8 +426,12 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         web_variety=config.web_variety,
         x_enabled=config.x_enabled,
         max_x_posts=config.max_x_articles,
+        facts_profile_md=facts_state.markdown,
+        facts_recent_topics=facts_state.recent_topics,
+        facts_enabled=config.facts_enabled,
         now=now,
     )
+
     # Stamp the appearance (theme + text size) the issue will be sent with,
     # so the stored row keeps the /emails/{date} archive faithful to the
     # as-sent look even after the admin changes appearance settings.
@@ -366,12 +448,65 @@ def _tune_profile_after_send() -> None:
     tuning must never break the send (which already happened)."""
     try:
         profile = db.get_profile()
-        tune_feedback = db.recent_feedback(limit=_TUNE_FEEDBACK_LIMIT)
+        tune_feedback, _fact_votes = _recent_feedback_split(_TUNE_FEEDBACK_LIMIT)
         new_markdown = tune.tune_profile(profile.markdown, tune_feedback)
         if new_markdown != profile.markdown:
             db.put_profile(new_markdown)
     except Exception:  # noqa: BLE001 - tuning is best effort, never raise
         log.exception("profile tuning failed after send")
+
+
+def _advance_facts_topic_log(issue: Issue) -> None:
+    """Append the sent issue's fact titles to the no-repeat log.
+
+    Called only after a confirmed send (like ``mark_seen`` and the tuners) so
+    a failed send never burns topics no reader saw. Skips titles already
+    present so a duplicate-send retry stays idempotent. Re-reading the state
+    row at write time keeps the window between read and write to
+    milliseconds (there is no model call in between); it narrows — but does
+    not eliminate — the lost-update race with a concurrent run's tune write.
+    Best effort.
+    """
+    if not issue.facts:
+        return
+    try:
+        state = db.get_facts_state()
+        new_titles = [
+            f.title for f in issue.facts if f.title not in state.recent_topics
+        ]
+        if not new_titles:
+            return
+        topics = (state.recent_topics + new_titles)[-_FACTS_TOPIC_LOG_CAP:]
+        db.put_facts_state(
+            FactsState(markdown=state.markdown, recent_topics=topics)
+        )
+    except Exception:  # noqa: BLE001 - the log is best effort
+        log.exception("failed to update the facts topic log")
+
+
+def _tune_facts_after_send() -> None:
+    """Re-tune the facts-taste profile from fact votes only, after a
+    confirmed send. The general profile tuner never sees these rows and
+    this tuner never sees general rows — the two loops stay disjoint.
+    Best effort: never raises, and the no-repeat topic log rides along
+    unchanged."""
+    try:
+        _general, fact_votes = _recent_feedback_split(_TUNE_FEEDBACK_LIMIT)
+        if not fact_votes:
+            return
+        state = db.get_facts_state()
+        new_markdown = facts.tune_facts_profile(state.markdown, fact_votes)
+        if new_markdown != state.markdown:
+            # Re-read before writing: the tune model call above takes
+            # seconds, and this run's own _advance_facts_topic_log (or a
+            # concurrent run's) may have appended topics in the meantime —
+            # carrying the pre-call copy would revert them.
+            fresh = db.get_facts_state()
+            db.put_facts_state(
+                FactsState(markdown=new_markdown, recent_topics=fresh.recent_topics)
+            )
+    except Exception:  # noqa: BLE001 - tuning is best effort, never raise
+        log.exception("facts tuning failed after send")
 
 
 def _run_manual(s: Any) -> dict:
@@ -405,7 +540,9 @@ def _run_manual(s: Any) -> dict:
     )
     _send_email(subject, html)
     # Intentionally no mark_issue_sent / mark_seen here — see docstring.
+    _advance_facts_topic_log(issue)
     _tune_profile_after_send()
+    _tune_facts_after_send()
 
     log.info("manual send %s with %d picks", issue.date, len(issue.picks))
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
@@ -524,7 +661,9 @@ def handler(event: dict, context: Any) -> dict:
     if seen_urls:
         db.mark_seen(seen_urls)
 
+    _advance_facts_topic_log(issue)
     _tune_profile_after_send()
+    _tune_facts_after_send()
 
     log.info("sent issue %s with %d picks", issue.date, len(issue.picks))
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
@@ -639,6 +778,22 @@ def _fake_serendipity(profile_md: str, **_) -> list[WebArticle]:
     ]
 
 
+def _fake_facts(profile_md: str, topics: list[str], **_) -> list[Fact]:
+    """Deterministic, offline tech facts for --dry-run."""
+    body = (
+        "In 1971, engineers discovered something surprising about the way "
+        "early networks handled congestion.\n\n"
+        "This sample essay stands in for a ~500-word fact in the dry-run "
+        "output, so the mid and end blocks render with realistic structure."
+    )
+    return [
+        Fact(title="A sample mid-issue tech fact", body_md=body,
+             genre="networks & protocols", slot="mid"),
+        Fact(title="A sample closing tech fact", body_md=body,
+             genre="computing history & lore", slot="end"),
+    ]
+
+
 def _dry_run_env() -> None:
     """Force dry-run env values.
 
@@ -701,6 +856,7 @@ def main(argv: list[str] | None = None) -> int:
         newsletters_fn=_fake_newsletters,
         x_fn=_fake_x,
         serendipity_fn=_fake_serendipity,
+        facts_fn=_fake_facts,
     )
 
     if not issue.picks:
