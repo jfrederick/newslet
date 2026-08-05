@@ -851,3 +851,28 @@ def test_get_issue_tolerates_malformed_text_size(dynamo: None) -> None:
     assert got is not None
     assert got.theme == "dos"
     assert got.text_size == 100
+
+
+def test_list_issues_paginates_scan(dynamo: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The homepage's newest-sent selection needs the *complete* issue list;
+    a scan that stops at DynamoDB's first page would silently drop rows."""
+    from newslet import db
+
+    pages = [
+        {
+            "Items": [{"date": "2026-08-01", "picks_json": "[]"}],
+            "LastEvaluatedKey": {"date": "2026-08-01"},
+        },
+        {"Items": [{"date": "2026-08-02", "picks_json": "[]", "sent_at": "t"}]},
+    ]
+    calls: list[dict] = []
+
+    class _PagedTable:
+        def scan(self, **kwargs):
+            calls.append(kwargs)
+            return pages[len(calls) - 1]
+
+    monkeypatch.setattr(db, "_t_issues", lambda: _PagedTable())
+    rows = db.list_issues(limit=10)
+    assert [r["date"] for r in rows] == ["2026-08-02", "2026-08-01"]
+    assert calls[1]["ExclusiveStartKey"] == {"date": "2026-08-01"}

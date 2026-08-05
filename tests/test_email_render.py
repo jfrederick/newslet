@@ -373,3 +373,16 @@ def test_text_size_scales_inline_font_sizes(stub_sign: None) -> None:
     # Out-of-range values are clamped, not applied raw.
     _, html = render_email(issue, BASE_URL, text_size=10_000)
     assert "font-size:26px" in html  # round(17 * 1.5)
+
+
+def test_web_nav_off_by_default(stub_sign: None) -> None:
+    _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
+    assert 'href="/admin"' not in html
+
+
+def test_web_nav_renders_nav_strip(stub_sign: None) -> None:
+    issue = _issue([_pick("https://a.example.com/1", "T", "B")])
+    _, html = render_email(issue, BASE_URL, web_nav=True)
+    assert 'href="/discover"' in html
+    assert 'href="/admin"' in html
+    assert 'href="/emails"' in html

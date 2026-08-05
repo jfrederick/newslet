@@ -22,7 +22,7 @@ from markupsafe import Markup
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from newslet import clock, db, email_render, hn, newsletters, themes, tokens, websearch
+from newslet import clock, db, email_render, hn, newsletters, themes, tokens
 from newslet.config import settings
 from newslet.contracts import Config, FeedbackRow
 
@@ -84,35 +84,6 @@ class _CanonicalHostMiddleware(BaseHTTPMiddleware):
 # still decorates the 301 response.
 app.add_middleware(_CanonicalHostMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
-
-# Reserved issues-table key for the standalone homepage aggregation (mirrors
-# digest.HOME_KEY; defined here too so the web Lambda need not import the
-# heavier digest module just for a constant).
-_HOME_KEY = "home"
-
-# The interactive subject search runs synchronously behind the HTTP API's
-# hard ~30s integration timeout, so it uses a fast model and few search
-# rounds. The digest's web block (300s Lambda budget) keeps the thorough
-# defaults in websearch.search_web.
-_FAST_SEARCH_MODEL = "claude-haiku-4-5-20251001"
-_FAST_SEARCH_ROUNDS = 2
-_FAST_SEARCH_RESULTS = 12
-
-
-def _interactive_search(query: str) -> list:
-    """Run the snappy, timeout-safe variant of the subject search.
-
-    Uses the admin variety dial so the subject box explores ancillary areas
-    to the same degree the daily email's web block does.
-    """
-    return websearch.search_web(
-        query.strip(),
-        max_results=_FAST_SEARCH_RESULTS,
-        max_searches=_FAST_SEARCH_ROUNDS,
-        model=_FAST_SEARCH_MODEL,
-        variety=db.get_config().web_variety,
-    )
-
 
 def _theme_css(config: Config | None = None) -> Markup:
     """The theme's ``:root`` variable block (plus the text-size dial) for a
@@ -228,112 +199,52 @@ def product_guide_markdown() -> Response:
 
 
 # ---------------------------------------------------------------------------
-# Homepage — the rich, browse-everything web experience
+# Homepage — the latest daily email, rendered fresh
 # ---------------------------------------------------------------------------
 
 
-def _home_cards(issue) -> tuple[list[dict], list[dict], list[dict], int]:
-    """Build (pick_cards, web_cards, random_cards, total) with sticky vote state.
-
-    Articles already downvoted are dropped entirely — a downvote makes an
-    article disappear from the page (and stay gone on reload).
-    """
-    votes = _vote_lookup(issue)
-    sorted_picks = sorted(issue.picks, key=lambda p: p.score, reverse=True)
-    pick_cards = [
-        _article_card(
-            url=p.url, title=p.title, blurb=p.blurb, source=p.source,
-            score=p.score, rating=votes.get(str(p.url), ""),
-        )
-        for p in sorted_picks
-        if votes.get(str(p.url)) != "down"
-    ]
-
-    def _web_card(w) -> dict:
-        return _article_card(
-            url=w.url, title=w.title, blurb=w.blurb, source=w.source,
-            score=None, rating=votes.get(str(w.url), ""),
-            points=w.points, comments=w.comments, comments_url=w.comments_url,
-        )
-
-    web_cards = [
-        _web_card(w)
-        for w in issue.web_articles
-        if votes.get(str(w.url)) != "down"
-    ]
-    random_cards = [
-        _web_card(r)
-        for r in issue.random_articles
-        if votes.get(str(r.url)) != "down"
-    ]
-    total = len(pick_cards) + len(web_cards) + len(random_cards)
-    return pick_cards, web_cards, random_cards, total
+_NO_ISSUES_HTML = (
+    '<!doctype html><html><head><meta charset="utf-8"><title>daily scoop</title>'
+    "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}"
+    "a{margin:0 8px}</style></head>"
+    "<body><h1>daily scoop</h1><p>No editions yet — the first daily email builds one.</p>"
+    '<p><a href="/discover">discover</a><a href="/admin">admin</a>'
+    '<a href="/emails">emails</a></p></body></html>'
+)
 
 
 @app.get("/", response_class=HTMLResponse)
 def home(
-    q: str | None = Query(default=None, description="optional subject search"),
+    request: Request,
     admin_token: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    """The newslet homepage: a standalone rich reading surface (separate from
-    the daily email) aggregating lots of ranked picks plus an open-web block,
-    with +/- voting and a subject-search box.
+    """The homepage: the latest daily email, rendered fresh with a web nav.
 
-    The scheduled daily rebuild (the ``{"home": true}`` cron) is the sole
-    updater: the page always renders the latest stored edition immediately
-    and never blocks on (or kicks off) a rebuild. If the newest edition is
-    not from today — Eastern, the reader's calendar day, not UTC — a small
-    non-blocking notice says so above the content."""
+    Always the newest *delivered* issue (before today's send that is
+    yesterday's, clearly dated in the header) — no rebuild, no LLM calls, no
+    staleness logic. Same re-render as ``/emails/{date}`` (including its
+    rate-link re-signing caveat), plus the ``web_nav`` strip.
+
+    Preferring ``sent_at`` rows keeps the page honest when a daily run
+    stored its issue but failed before the send: that undelivered edition
+    stays off the homepage until a retry actually lands it. The fallback to
+    the newest stored row applies only when *nothing in the last 60
+    editions* was ever sent — effectively a fresh install (60 straight
+    delivery failures would mean the system is down, not that the page
+    should resurrect an undelivered edition).
+    """
     _require_admin(admin_token)
-    now = datetime.now(UTC)
-    issue = db.get_issue(_HOME_KEY)
-
-    pick_cards: list[dict] = []
-    web_cards: list[dict] = []
-    random_cards: list[dict] = []
-    total = 0
-    subject = intro = ""
-    if issue is not None:
-        pick_cards, web_cards, random_cards, total = _home_cards(issue)
-        subject, intro = issue.subject, issue.intro
-
-    # "Today's edition" is judged on the Eastern calendar day (see
-    # newslet.clock) — a UTC comparison here made every evening visit look
-    # stale the moment the UTC date rolled over.
-    stale = issue is None or clock.local_date(issue.created_at) != clock.local_date(now)
-    stale_day = (
-        clock.local_date(issue.created_at).strftime("%A") if issue is not None else ""
-    )
-
-    # Optional inline subject search (progressive-enhancement fallback).
-    query = (q or "").strip()
-    search_cards: list[dict] = []
-    if query:
-        for r in _interactive_search(query):
-            search_cards.append(
-                _article_card(
-                    url=r.url, title=r.title, blurb=r.blurb, source=r.source,
-                    score=None, rating="", points=r.points,
-                    comments=r.comments, comments_url=r.comments_url,
-                )
-            )
-
-    local = clock.local_now(now)
-    html = _TEMPLATES.get_template("read.html.j2").render(
-        theme_css=_theme_css(),
-        vote_key=_HOME_KEY,
-        date_header=local.strftime("%A, %B ") + str(local.day) + local.strftime(", %Y"),
-        subject=subject,
-        intro=intro,
-        picks=pick_cards,
-        web_articles=web_cards,
-        random_articles=random_cards,
-        total=total,
-        has_content=issue is not None,
-        stale=stale,
-        stale_day=stale_day,
-        query=query,
-        search_results=search_cards,
+    rows = db.list_issues(limit=60)
+    row = next((r for r in rows if r.get("sent_at")), rows[0] if rows else None)
+    issue = db.get_issue(row["date"]) if row else None
+    if issue is None:
+        return HTMLResponse(_NO_ISSUES_HTML)
+    _, html = email_render.render_email(
+        issue,
+        _base_url(request),
+        theme=themes.get(issue.theme),
+        text_size=issue.text_size,
+        web_nav=True,
     )
     return HTMLResponse(html)
 
@@ -798,36 +709,6 @@ def _base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
-def _vote_lookup(issue) -> dict[str, str]:
-    """Map every article url in the issue to its current rating (or absent).
-
-    One batched read so the rich view can render sticky +/- state — making
-    the *effect* of a vote visible after it is cast.
-    """
-    urls = (
-        [str(p.url) for p in issue.picks]
-        + [str(w.url) for w in issue.web_articles]
-        + [str(r.url) for r in issue.random_articles]
-    )
-    return db.feedback_ratings(urls, issue.date)
-
-
-def _article_card(*, url, title, blurb, source, score, rating,
-                  points=None, comments=None, comments_url="") -> dict:
-    """Normalize a pick or web article into the template's card shape."""
-    return {
-        "url": str(url),
-        "title": title,
-        "blurb": blurb,
-        "source": source or "",
-        "score": score,
-        "rating": rating,
-        "points": points,
-        "comments": comments,
-        "comments_url": comments_url or "",
-    }
-
-
 @app.get("/emails/{date}", response_class=HTMLResponse)
 def view_email(
     date: str,
@@ -836,9 +717,8 @@ def view_email(
 ) -> HTMLResponse:
     """Re-render a past daily email's HTML (the as-sent archive view).
 
-    The rich, browse-everything experience lives on the homepage (``/``); the
-    issue archive deliberately shows the email exactly as it was sent, so the
-    two surfaces stay separate.
+    Unlike the homepage (which adds a web nav strip), the archive shows the
+    email exactly as it was sent.
 
     Note: rate links are regenerated with the *current* ``SIGNING_KEY``.
     If you rotate that key, every old issue's +/- links will start
@@ -863,117 +743,8 @@ def view_email(
 
 
 # ---------------------------------------------------------------------------
-# Web-view actions (admin-cookie authed; no HMAC needed)
+# Live JSON endpoints (admin-cookie authed)
 # ---------------------------------------------------------------------------
-
-
-@app.post("/api/vote")
-def vote(
-    request: Request,
-    url: str = Form(...),
-    rating: str = Form(...),
-    date: str = Form(...),
-    title: str = Form(default=""),
-    admin_token: str | None = Cookie(default=None),
-) -> Response:
-    """Record a +/- vote from the rich web view.
-
-    Writes the same :class:`FeedbackRow` shape the signed email ``/rate``
-    link writes — keyed on ``(article_url, issue_date)`` so re-voting
-    overwrites — so a web vote feeds the next ranking exactly like an email
-    vote. Returns JSON for the fetch-based UI; falls back to a redirect for
-    the no-JS form post.
-    """
-    _require_admin(admin_token)
-    if rating not in ("up", "down"):
-        raise HTTPException(status_code=400, detail="bad rating")
-    try:
-        article_url = db.normalize_url(url)
-    except ValidationError as exc:
-        raise HTTPException(status_code=400, detail="invalid url") from exc
-
-    db.put_feedback(
-        FeedbackRow(
-            article_url=article_url,
-            title=title,
-            rating=rating,  # type: ignore[arg-type]
-            ts=datetime.now(UTC),
-            issue_date=date,
-        )
-    )
-
-    wants_json = "application/json" in request.headers.get("accept", "")
-    if wants_json:
-        return JSONResponse({"ok": True, "rating": rating, "url": article_url})
-    # The rich voting surface is the homepage; no-JS posts return there.
-    return RedirectResponse(url="/", status_code=303)
-
-
-@app.post("/api/home/refresh")
-def home_refresh(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
-    """Kick off a homepage regeneration (async; takes ~a minute).
-
-    Async-invokes the digest Lambda with ``{"home": true}`` — the same
-    fire-and-forget pattern as "send now" — because a full rebuild far
-    exceeds this Lambda's (and the HTTP API's) timeout. The daily cron is
-    the normal updater; this endpoint remains as an operational escape
-    hatch (the page itself no longer calls it on load).
-    """
-    _require_admin(admin_token)
-    fn = settings().digest_function_name
-    if not fn:
-        raise HTTPException(
-            status_code=503,
-            detail="DIGEST_FUNCTION_NAME is not configured for the web app",
-        )
-    boto3.client("lambda").invoke(
-        FunctionName=fn,
-        InvocationType="Event",
-        Payload=json.dumps({"home": True}),
-    )
-    return JSONResponse({"ok": True, "status": "refreshing"})
-
-
-@app.get("/api/home/status")
-def home_status(admin_token: str | None = Cookie(default=None)) -> JSONResponse:
-    """Return the homepage content's current freshness timestamp.
-
-    A caller that triggered ``/api/home/refresh`` can poll this until the
-    timestamp changes to know the async regeneration landed.
-    """
-    _require_admin(admin_token)
-    issue = db.get_issue(_HOME_KEY)
-    created_iso = issue.created_at.isoformat() if issue is not None else ""
-    return JSONResponse({"created_at": created_iso, "ready": bool(created_iso)})
-
-
-@app.get("/api/search")
-def api_search(
-    q: str = Query(..., description="subject to research"),
-    admin_token: str | None = Cookie(default=None),
-) -> JSONResponse:
-    """Live subject search ("textbook"): web-search a topic and return
-    JSON cards the page renders inline. Best-effort — an empty list on any
-    failure, never a 500."""
-    _require_admin(admin_token)
-    results = _interactive_search(q)
-    return JSONResponse(
-        {
-            "query": q,
-            "results": [
-                {
-                    "url": str(r.url),
-                    "title": r.title,
-                    "blurb": r.blurb,
-                    "source": r.source,
-                    "points": r.points,
-                    "comments": r.comments,
-                    "comments_url": r.comments_url,
-                }
-                for r in results
-            ],
-        }
-    )
 
 
 @app.get("/api/hn")

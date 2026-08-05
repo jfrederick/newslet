@@ -46,8 +46,8 @@ minutes over coffee and then closed. Every story carries a thumbs-up and a
 thumbs-down button you can tap right there in your inbox — no app, no login.
 Those taps are the only steering wheel daily scoop has, and they are enough.
 
-At the bottom is a single link to your daily scoop homepage, a richer place to
-browse when you want more than the morning's short list.
+At the bottom is a single link to your daily scoop homepage, the same
+edition on the web — handy when you'd rather read (and vote) in a browser.
 
 :::tier little
 
@@ -140,8 +140,8 @@ morning email becomes yours. An up-vote says "more like this"; a down-vote says
 "less of this." Over days and weeks those reactions become the examples that
 teach daily scoop your taste.
 
-The same buttons work on the homepage, where a thumbs-down also tidies up: a
-story you down-vote disappears from the page and stays gone.
+The same buttons work on the homepage, which renders the same email —
+one voting mechanism everywhere.
 
 :::tier little
 
@@ -163,10 +163,9 @@ signed token.
 
 Votes are written as `FeedbackRow`s keyed on `(article_url, issue_date)`, so
 re-voting the same story overwrites rather than piling up contradictory rows.
-The homepage uses the same row shape through `/api/vote` (authenticated by the
-admin cookie instead of a signed token), and its "down-vote removes and stays
-removed" behavior is enforced when the page is built: already-down-voted URLs
-are dropped before render.
+The homepage renders the same signed links (re-signed with the current
+key on each view), so a vote from the web page lands exactly like a vote from
+your inbox.
 
 :::
 
@@ -275,14 +274,14 @@ ranking pool as your feeds, so a strong HN story can lead your email.
 
 Crucially, HN stories arrive with their context — points, comment counts, and
 for text posts the body — so the ranker can judge them on substance, and the
-homepage can show you how much discussion a story is getting.
+email can show you how much discussion a story is getting.
 
 :::tier little
 
 daily scoop reads Hacker News through its search API rather than the bare RSS feed,
 because the plain feed carries little more than a title. The richer source gives
-each story real signal — how many points and comments it has — which makes both
-the ranking and the homepage better.
+each story real signal — how many points and comments it has — which makes the
+ranking better and the story cards richer.
 
 :::
 
@@ -294,7 +293,7 @@ trustworthy timestamp inside a **7-day** freshness cap, sorts by points, and
 passes the highest-signal subset (a cap of 120) to the ranker as `Article`s with
 a content-rich summary line (points, comments, author, and any body snippet).
 `fetch_hn_rich` returns the lighter `WebArticle` shape — points, comments, and a
-link to the discussion thread — for the homepage's live HN panel. Ask/Show/text
+link to the discussion thread — for the live `/api/hn` JSON endpoint. Ask/Show/text
 posts with no external link fall back to their HN thread URL. Every fetch is
 best-effort: a failed page is skipped, total failure returns nothing, HN never
 blocks the digest. All network access goes through an injected fetch callable so
@@ -448,8 +447,8 @@ against the `Discovery` schema, filtered against already-followed hosts, and
 checked for liveness (`feed_validator` actually parses the feed and requires at
 least one entry) before it is offered. The follow link is `GET /subscribe`,
 signed with the same HMAC scheme as `/rate` over `(feed_url, issue_date)`, and
-`db.add_feed` upserts so a double-click is harmless. Discoveries are an email
-concern: the homepage skips them entirely.
+`db.add_feed` upserts so a double-click is harmless. Discoveries ride the email
+(and therefore the homepage, which renders it).
 
 :::
 
@@ -498,80 +497,34 @@ rather than blanking the page. Rendering hides feeds already present in
 
 ## The homepage
 
-The email is the short list. The homepage is the long one — a richer place to
-browse when you want more than the morning's handful.
+The homepage is the email, on the web. Opening `/` shows the latest daily
+edition — the same ranked picks, web finds, off-your-beat stories, and
+source suggestions, with the same thumbs-up and thumbs-down buttons — plus a
+thin navigation strip (Discover, admin, the email archive) across the top.
 
-It shows a large, ranked spread of stories plus an open-web block, each as a
-card you can vote on. A thumbs-up sticks; a thumbs-down makes the story vanish
-from the page for good. There's a date header so you always know how fresh the
-page is, and a research box (covered next) for chasing a topic on demand.
-
-There is no refresh button, on purpose. The homepage rebuilds itself every
-morning, a little before the email goes out, and always opens instantly on
-the latest edition. If a morning's rebuild ever misses, a small note above
-the stories says which day's edition you're looking at — no waiting, no
-spinner.
+There is nothing to refresh and nothing to wait for: the page simply renders
+the newest edition the moment you open it. Early in the morning, before
+today's email has gone out, you'll see yesterday's edition, clearly dated.
 
 :::tier little
 
-The homepage is a separate, bigger edition than the email — it carries far more
-stories and skips the email-only bits (no "follow this source" suggestions).
-It's built by the same ranking machinery, just with generous limits. The
-morning schedule is the only thing that rebuilds it — the page itself just
-shows the newest edition, with a quiet note if today's rebuild hasn't
-happened yet.
+There is no separate "web edition" to build or go stale — the homepage
+re-renders your newest delivered email on every visit, so it is always
+exactly as fresh as the latest issue that reached your inbox, and costs
+nothing to keep that way.
 
 :::
 
 :::tier medium
 
-The homepage (`GET /`, `read.html.j2`) renders a standalone aggregation stored
-under the reserved issue key `"home"`, built by the digest's home mode
-(`_run_home`) with generous fixed counts (around 40 ranked picks and 20 web
-articles). Unlike the daily email it ignores the seen-store (it's a browse
-surface, not a deduped feed) and skips discovery. A scheduled EventBridge rule
-rebuilds it daily at **09:45 UTC**, 15 minutes before the email, and is the
-sole updater — the page never regenerates on visit. Freshness ("is this
-today's edition?") is judged on the US-Eastern calendar day (`newslet.clock`),
-not UTC, so an evening visit doesn't mistake the morning's build for
-yesterday's. A stale or missing edition still renders, with a small
-non-blocking notice; `/api/home/refresh` + `/api/home/status` remain as an
-operational escape hatch. Voting goes through
-`/api/vote`; down-voted URLs are dropped when the page is assembled, so a
-removed story stays removed. The homepage requires the admin cookie.
-
-:::
-
----
-
-## Researching a subject on demand
-
-Sometimes you want to go deeper on one thing right now. The homepage has a box
-where you type a subject and daily scoop runs a fresh web search on it, returning a
-set of relevant, recent articles as cards you can read and vote on.
-
-It honours the same variety setting as your daily web block, so the results can
-stay narrow or fan out into related territory depending on how you've set the
-dial. It's built to answer quickly, so you're not left waiting.
-
-:::tier little
-
-The research box runs the same kind of Claude web search the daily email uses,
-but tuned to come back fast — a quicker model and fewer search rounds — so it
-returns while you're still looking at the page.
-
-:::
-
-:::tier medium
-
-The subject box hits `/api/search` (and a no-JS fallback path renders inline via
-`?q=` on the homepage). Because it runs synchronously behind the HTTP API's
-~30-second integration timeout, it calls `websearch.search_web` with a fast
-model (`claude-haiku-4-5`), a low search-round cap, and a modest result count,
-while still passing your admin variety dial. The daily digest, with a 300-second
-Lambda budget, keeps the more thorough defaults. A separate `/api/hn` endpoint
-serves the live Hacker News front page (points, comments, thread link) the same
-way.
+`GET /` looks up the newest issue that was actually delivered — falling back
+to the newest stored issue only when nothing in the last 60 editions was
+ever sent (a fresh install) — and re-renders it through the same
+`email_render.render_email` used for sending, with `web_nav=True` adding the
+nav strip (the `/emails/{date}` archive renders without it, staying as-sent).
+Vote links are re-signed with the current signing key on each view. There are
+no LLM calls and no rebuild pipeline; if no issue exists yet, a friendly
+"no editions yet" page appears. The homepage requires the admin cookie.
 
 :::
 
@@ -709,9 +662,8 @@ You never have to think about this part, but here's the shape of it.
 
 daily scoop runs entirely as small, on-demand cloud functions rather than a server
 that's always on. One function wakes up each morning to build and send your
-email; another rebuilds your homepage a little earlier; a third receives any
-newsletter mail as it arrives; and a small web service answers the console and
-homepage when you open them. Between runs, nothing is running and nothing costs
+email; another receives any newsletter mail as it arrives; and a small web
+service answers the console and homepage when you open them. Between runs, nothing is running and nothing costs
 anything to sit idle.
 
 Two outside services do the specialized work: Anthropic's Claude does the
@@ -732,9 +684,8 @@ whenever the code it describes changes.
 The stack is AWS SAM: three Lambdas (digest, web, inbound), an HTTP API in front
 of the web Lambda, seven DynamoDB tables (feeds, profile, seen-articles, issues,
 feedback, subscriptions, inbox), an S3 bucket for raw inbound mail, and SES
-inbound for the newsletter source. Two EventBridge crons drive the daily
-cadence (home rebuild at 09:45 UTC, email at 10:00 UTC, Discover board
-weekly on Mondays at 09:30 UTC). External dependencies
+inbound for the newsletter source. Two EventBridge crons drive the cadence
+(email daily at 10:00 UTC, Discover board weekly on Mondays at 09:30 UTC). External dependencies
 are Anthropic (ranking, summaries, discovery, web search) and Resend (delivery).
 Continuous integration runs tests and linting on every change and deploys to AWS
 on merge to the main branch. This product guide is regenerated from the code by

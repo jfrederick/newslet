@@ -28,16 +28,12 @@ article links, and they join the daily ranking pool. Double opt-in
 automatically. (This is the one feature that needs a domain — see
 [Optional: subscribing to newsletters](#optional-subscribing-to-newsletters).)
 
-The email links generically to the **newslet homepage** — a separate,
-richer web experience: a large aggregation of ranked picks plus an
-open-web block, with `+`/`−` voting (upvote keeps, downvote removes) that
-feeds the same ranking loop, and a "research a subject" box that runs a
-fresh web search on whatever topic you type. The homepage has no manual
-refresh button: a scheduled job rebuilds it every morning at 09:45 UTC
-(15 minutes before the email) and is the sole updater — the page always
-shows the latest built edition instantly, with a small notice if the
-day's rebuild (judged on the US-Eastern calendar day) hasn't landed yet.
-Past daily emails are archived at `/emails/<date>`. A **Discover page**
+The email links generically to the **newslet homepage** — the same
+edition on the web: `/` renders the latest daily email fresh (with a thin
+nav strip on top), so the page is always exactly as current as the
+newest issue, with no separate rebuild pipeline and no LLM calls. The
+`+`/`−` links vote the same way they do from your inbox. Past daily
+emails are archived at `/emails/<date>`. A **Discover page**
 (`/discover`) lists RSS feeds and X accounts matched to your profile —
 precomputed weekly, with one-click feed adds — so your source list can
 grow beyond the email's occasional suggestions.
@@ -57,8 +53,7 @@ sync with the code on every push to `main` (see
 ## Architecture
 
 ```
-EventBridge cron (09:45 UTC, home) ──┐
-EventBridge cron (10:00 UTC, email) ──┼▶ digest Lambda ──▶ Resend (email)
+EventBridge cron (10:00 UTC, email) ──┬▶ digest Lambda ──▶ Resend (email)
 EventBridge cron (Mon 09:30, discover)┘
                                            │
                                            ▼
@@ -89,7 +84,8 @@ python3.12 -m venv .venv
 .venv/bin/python scripts/dry_run.py
 open out/email.html
 
-# Render the rich issue web view to out/read.html (moto-backed, no network)
+# Render the homepage (the latest email + web nav) to out/read.html
+# (moto-backed, no network)
 .venv/bin/python scripts/preview_read.py
 open out/read.html
 ```
@@ -166,9 +162,11 @@ Open the `ApiUrl` from step 3 in a browser and sign in with the value of
 nav, or `/admin`) to add RSS feeds, write a short markdown profile, and
 set the daily-email article counts (including the "off your beat"
 non-tech block), and the web-search variety. The homepage shows a quiet
-"no edition yet" notice until the first scheduled morning rebuild lands
-(or invoke the digest Lambda with `{"home": true}` to build one now — it
-has no manual refresh button).
+"no editions yet" notice until the first scheduled daily email lands —
+it renders the newest delivered edition. (To trigger one immediately,
+invoke the digest Lambda with an empty payload as in step 5; admin's
+**send now** works too but its issues stay out of the archive and the
+homepage by design.)
 
 ### 5. Smoke-test the digest
 
@@ -187,9 +185,8 @@ page back and the vote will appear in the `Feedback` table.
 
 ### 6. Wait for tomorrow
 
-EventBridge fires the digest Lambda twice daily — a homepage rebuild at
-09:45 UTC (`{"home": true}`) and the email digest at 10:00 UTC — plus a
-weekly Discover-page rebuild on Mondays at 09:30 UTC
+EventBridge fires the digest Lambda once daily — the email digest at
+10:00 UTC — plus a weekly Discover-page rebuild on Mondays at 09:30 UTC
 (`{"discover": true}`). Change the crons in `infra/template.yaml` if you
 want different times of day (EventBridge cron is always UTC).
 
@@ -316,7 +313,7 @@ resolve a lockfile.
 - `src/newslet/feeds.py` — feedparser wrapper, 24h filter, dedup via injected `is_seen`
 - `src/newslet/hn.py` — Hacker News via the Algolia API (rich content), injected `fetch`
 - `src/newslet/search_common.py` — shared Claude `web_search` primitives (tool def, JSON extraction, host key) for `discovery` + `websearch`
-- `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block + subject search
+- `src/newslet/websearch.py` — Claude `web_search` for the "from around the web" block
 - `src/newslet/x_grok.py` — X (Twitter) ranking candidates via xAI Grok Live Search (optional; on when `XAI_API_KEY` is set)
 - `src/newslet/newsletters.py` — parse inbound newsletter email → article candidates; double-opt-in handling
 - `src/newslet/db.py` — boto3 DynamoDB wrappers

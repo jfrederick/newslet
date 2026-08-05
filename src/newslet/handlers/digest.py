@@ -52,13 +52,6 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 _RANK_FEEDBACK_LIMIT = 50
 _TUNE_FEEDBACK_LIMIT = 200
 
-# The standalone web homepage is the rich, browse-everything surface; it is
-# generated on demand (the "home" mode) with generous counts, independent of
-# the daily email's admin-configured counts.
-_HOME_RANK_PICKS = 40
-_HOME_MIN_PICKS = 25  # the homepage is a browse surface — keep it full
-_HOME_WEB_ARTICLES = 20
-
 # Fallback counts when no admin config is present (run_digest defaults).
 _DEFAULT_MAX_PICKS = 10
 _DEFAULT_MAX_WEB = 5
@@ -77,9 +70,6 @@ _X_MAX_POSTS = 15
 # /api/search path proved reliable.
 _WEB_SEARCH_MODEL = "claude-haiku-4-5-20251001"
 _WEB_SEARCHES = 2
-
-# Reserved issues-table key for the standalone web homepage aggregation.
-HOME_KEY = "home"
 
 
 def _web_search_query(profile_md: str) -> str:
@@ -421,50 +411,6 @@ def _run_manual(s: Any) -> dict:
     return {"status": "sent", "date": issue.date, "picks": len(issue.picks)}
 
 
-def _run_home(s: Any) -> dict:
-    """Generate the standalone rich homepage aggregation (no email).
-
-    Builds a generous browse surface — RSS + Hacker News, ranked, plus a
-    web-search block — and stores it under the reserved ``HOME_KEY`` (hidden
-    from ``list_issues``). The homepage's refresh button re-runs this. It
-    never emails, never marks seen, and stays out of the daily cadence; unlike
-    the daily digest it ignores the seen-store (it's a browse surface, not a
-    deduped feed) and skips discovery (a subscribe-link/email concern).
-    """
-    now = datetime.now(UTC)
-    feeds_list = db.list_feeds()
-    profile = db.get_profile()
-    config = db.get_config()
-    feedback = db.recent_feedback(limit=_RANK_FEEDBACK_LIMIT)
-    issue, _candidates = run_digest(
-        feed_urls=[str(f.url) for f in feeds_list],
-        profile=profile,
-        feedback=feedback,
-        is_seen=lambda _u: False,
-        discovery_fn=lambda *_a, **_k: [],
-        max_picks=_HOME_RANK_PICKS,
-        min_picks=_HOME_MIN_PICKS,
-        max_web=_HOME_WEB_ARTICLES,
-        max_random=config.max_random_articles,
-        web_variety=config.web_variety,
-        x_enabled=config.x_enabled,
-        max_x_posts=config.max_x_articles,
-        now=now,
-    )
-    issue = issue.model_copy(update={"date": HOME_KEY, "created_at": now})
-    db.put_issue(issue, manual=True)
-    log.info(
-        "home refreshed: %d picks, %d web articles",
-        len(issue.picks),
-        len(issue.web_articles),
-    )
-    return {
-        "status": "home_refreshed",
-        "picks": len(issue.picks),
-        "web": len(issue.web_articles),
-    }
-
-
 def _run_discover(s: Any) -> dict:
     """Regenerate the Discover page's stored recommendations (no email).
 
@@ -502,10 +448,11 @@ def handler(event: dict, context: Any) -> dict:
     """Run the digest pipeline once.
 
     With ``event["manual"]`` truthy, runs an on-demand send isolated from
-    the daily cadence (see :func:`_run_manual`). ``event["home"]`` rebuilds
-    the homepage aggregation; ``event["discover"]`` rebuilds the Discover
-    page's stored recommendations. Otherwise runs the daily pipeline
-    idempotently.
+    the daily cadence (see :func:`_run_manual`). ``event["discover"]``
+    rebuilds the Discover page's stored recommendations. Otherwise runs the
+    daily pipeline idempotently — including for stray ``{"home"}`` events
+    from the retired homepage-rebuild mode, which fall through here and are
+    stopped by the sent-today gate.
 
     Daily idempotency is keyed on ``sent_at`` — *not* mere existence of
     the Issue row — so a partial failure (e.g. ``put_issue`` succeeded but
@@ -535,9 +482,6 @@ def handler(event: dict, context: Any) -> dict:
 
     if event and event.get("manual"):
         return _run_manual(s)
-
-    if event and event.get("home"):
-        return _run_home(s)
 
     if event and event.get("discover"):
         return _run_discover(s)

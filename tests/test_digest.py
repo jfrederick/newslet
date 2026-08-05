@@ -462,27 +462,14 @@ def test_handler_routes_manual(aws, monkeypatch):
     assert len(sent) == 1
 
 
-def test_handler_routes_home(aws, monkeypatch):
-    from newslet import db
+def test_handler_ignores_stale_home_event(aws, monkeypatch):
+    # A leftover {"home": true} invoke (e.g. an in-flight async event during
+    # deploy) must fall through to the idempotent daily path, not crash.
     from newslet.handlers import digest
 
-    db.add_feed("https://example.com/rss", title="F")
-    db.put_profile("test profile")
-
-    monkeypatch.setattr(
-        digest, "run_digest",
-        lambda **_: (
-            Issue(
-                date="home",
-                picks=[_pick("https://a.example.com/1")],
-                created_at=datetime.now(UTC),
-            ),
-            [_article("https://a.example.com/1")],
-        ),
-    )
-
+    monkeypatch.setattr(digest.db, "issue_sent", lambda _d: True)
     result = digest.handler({"home": True}, None)
-    assert result["status"] == "home_refreshed"
+    assert result["status"] == "already_sent"
 
 
 def test_handler_routes_discover(aws, monkeypatch):

@@ -1,10 +1,9 @@
-"""Render the rich issue web view to ``out/read.html`` (no network, no AWS).
+"""Render the homepage to ``out/read.html`` (no network, no AWS).
 
-Seeds a moto-backed DynamoDB with a realistic issue (40 ranked picks + 20
-"from around the web" articles, including Hacker News items with engagement
-metadata), drives the real FastAPI app through a TestClient, and writes the
-rendered page so you can eyeball the layout — the web-view analogue of
-``scripts/dry_run.py`` for the email.
+Seeds a moto-backed DynamoDB with a realistic daily issue, drives the real
+FastAPI app through a TestClient, and writes the rendered ``/`` page — the
+latest email rendered with the web nav strip — so you can eyeball the
+layout; the web-view analogue of ``scripts/dry_run.py`` for the email.
 """
 
 from __future__ import annotations
@@ -34,15 +33,16 @@ import boto3  # noqa: E402
 import moto  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from newslet import themes  # noqa: E402
 from newslet.config import settings  # noqa: E402
-from newslet.contracts import Config, FeedbackRow, Issue, Pick, WebArticle  # noqa: E402
+from newslet.contracts import Issue, Pick, WebArticle  # noqa: E402
 
 _SOURCES = ["The Verge", "Stratechery", "Hacker News", "Nature", "LessWrong", "Quanta"]
 
 
-def _make_issue(date: str) -> Issue:
+def _make_issue(date: str, theme: str | None = None) -> Issue:
     picks = []
-    for i in range(40):
+    for i in range(10):
         src = _SOURCES[i % len(_SOURCES)]
         picks.append(
             Pick(
@@ -57,7 +57,7 @@ def _make_issue(date: str) -> Issue:
             )
         )
     web = []
-    for i in range(20):
+    for i in range(5):
         is_hn = i % 3 == 0
         web.append(
             WebArticle(
@@ -83,12 +83,13 @@ def _make_issue(date: str) -> Issue:
     ]
     return Issue(
         date=date,
+        theme=theme or themes.DEFAULT_THEME,
         picks=picks,
         created_at=datetime.now(UTC),
-        subject="Today's read: 60 articles, ranked and pulled from the web",
+        subject="Today's read: ranked picks plus finds from the web",
         intro=(
-            "Forty ranked picks from your feeds and Hacker News, plus twenty more "
-            "pulled live from the open web. Vote to tune tomorrow's ranking."
+            "Ten ranked picks from your feeds and Hacker News, plus more pulled "
+            "live from the open web. Vote to tune tomorrow's ranking."
         ),
         web_articles=web,
         random_articles=off_beat,
@@ -141,18 +142,14 @@ def main() -> int:
 
         # Optional positional arg picks the theme, e.g. `preview_read.py amber`
         # (unknown names fall back to the default, foundry, at render time).
-        if len(sys.argv) > 1:
-            db.put_config(Config(theme=sys.argv[1]))
+        # The homepage renders the issue's *stamped* theme — as-sent fidelity —
+        # so the theme goes on the seeded issue, not the config row.
+        theme = sys.argv[1] if len(sys.argv) > 1 else None
 
-        # The rich UX is the homepage, backed by the reserved "home" issue key.
-        db.put_issue(_make_issue("home"), manual=True)
-        # Seed a couple of votes so the sticky state is visible in the preview.
-        db.put_feedback(FeedbackRow(article_url="https://example.com/pick/0",
-                                    title="x", rating="up", ts=datetime.now(UTC),
-                                    issue_date="home"))
-        db.put_feedback(FeedbackRow(article_url="https://example.com/pick/3",
-                                    title="x", rating="down", ts=datetime.now(UTC),
-                                    issue_date="home"))
+        # The homepage renders the newest *delivered* issue as the email HTML;
+        # mark the seed sent so the preview walks the same path as production.
+        db.put_issue(_make_issue("2026-08-05", theme=theme))
+        db.mark_issue_sent("2026-08-05")
 
         client = TestClient(app)
         client.cookies.set("admin_token", "preview-token")

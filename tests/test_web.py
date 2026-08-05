@@ -567,17 +567,12 @@ def test_admin_index_flashes_after_send(client):
 
 
 # ---------------------------------------------------------------------------
-# Rich homepage + issue archive (now separate surfaces)
+# Homepage (the latest email) + issue archive
 # ---------------------------------------------------------------------------
 
 
 def _seed_issue(key, created_at=None, random_articles=None):
-    """Seed an issue (picks + web articles) under ``key`` (a date or 'home').
-
-    ``random_articles`` (the "off your beat" block) defaults to ``None``,
-    which keeps the previous behaviour (an empty list) so existing callers
-    are unaffected.
-    """
+    """Seed an issue (picks + web articles) under ``key`` (a date string)."""
     from datetime import UTC, datetime
 
     from newslet import db
@@ -609,169 +604,45 @@ def _seed_issue(key, created_at=None, random_articles=None):
     return key
 
 
-def test_homepage_renders_all_articles(client):
-
+def test_homepage_renders_latest_issue_email(client):
     client.cookies.set("admin_token", "supersecret")
-    _seed_issue("home")
+    _seed_issue("2026-08-01")
+    _seed_issue("2026-08-03")
     r = client.get("/")
     assert r.status_code == 200
+    assert "2026-08-03" in r.text          # newest issue wins
+    assert "2026-08-01" not in r.text
     for title in ["Alpha Pick", "Beta Pick", "Web One", "HN Rich"]:
         assert title in r.text
-    assert "Sharp subject" in r.text
     assert "An intro line." in r.text
-    assert "222" in r.text  # HN points badge
-    assert 'action="/api/vote"' in r.text
-    # The research/search form lives at the bottom, after the article grids.
-    assert r.text.index('id="search-form"') > r.text.index('id="web-grid"')
-    # No refresh button, no source filter, non-sticky header.
-    assert 'id="refresh-btn"' not in r.text
-    assert "data-filter" not in r.text
-    assert "position: sticky" not in r.text
-    # The date header carries today's written weekday (Eastern — the app's
-    # calendar day, which can differ from UTC in the evening).
-    from newslet import clock
-
-    assert clock.local_now().strftime("%A") in r.text
+    # The thin web nav strip rides on top of the email body.
+    assert 'href="/discover"' in r.text
+    assert 'href="/admin"' in r.text
+    assert 'href="/emails"' in r.text
+    # Voting goes through the same signed /rate links as the sent email.
+    assert "/rate?" in r.text
 
 
-def test_homepage_downvoted_article_disappears(client):
-    from datetime import UTC, datetime
-
+def test_homepage_prefers_newest_sent_issue(client):
+    """A stored-but-unsent issue (a daily run that failed before the send)
+    must not appear on the homepage; the newest delivered edition wins."""
     from newslet import db
-    from newslet.contracts import FeedbackRow
 
     client.cookies.set("admin_token", "supersecret")
-    _seed_issue("home")
-    db.put_feedback(
-        FeedbackRow(article_url="https://ex.com/b", title="Beta Pick",
-                    rating="down", ts=datetime.now(UTC), issue_date="home")
-    )
+    _seed_issue("2026-08-01")
+    db.mark_issue_sent("2026-08-01")
+    _seed_issue("2026-08-03")  # stored, never sent
     r = client.get("/")
     assert r.status_code == 200
-    # The downvoted article is gone; the others remain.
-    assert "Beta Pick" not in r.text
-    assert "Alpha Pick" in r.text
+    assert "2026-08-01" in r.text
+    assert "2026-08-03" not in r.text
 
 
-def test_homepage_renders_random_articles(client):
-    from newslet.contracts import WebArticle
-
-    client.cookies.set("admin_token", "supersecret")
-    _seed_issue(
-        "home",
-        random_articles=[
-            WebArticle(url="https://offbeat.ex.com/1", title="Off Beat Story",
-                       blurb="rb", source="Example Magazine"),
-        ],
-    )
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "Off your beat" in r.text
-    assert "Off Beat Story" in r.text
-    # Votable, inside the dedicated random-articles grid.
-    grid = r.text[r.text.index('id="random-grid"'):]
-    assert "Off Beat Story" in grid
-    assert 'action="/api/vote"' in grid
-
-
-def test_homepage_downvoted_random_article_disappears(client):
-    from datetime import UTC, datetime
-
-    from newslet import db
-    from newslet.contracts import FeedbackRow, WebArticle
-
-    client.cookies.set("admin_token", "supersecret")
-    _seed_issue(
-        "home",
-        random_articles=[
-            WebArticle(url="https://offbeat.ex.com/1", title="Off Beat Story",
-                       blurb="rb", source="Example Magazine"),
-        ],
-    )
-    db.put_feedback(
-        FeedbackRow(article_url="https://offbeat.ex.com/1", title="Off Beat Story",
-                    rating="down", ts=datetime.now(UTC), issue_date="home")
-    )
-    r = client.get("/")
-    assert r.status_code == 200
-    # The downvoted random article is gone; the other content remains.
-    assert "Off Beat Story" not in r.text
-    assert "Alpha Pick" in r.text
-
-
-def test_homepage_empty_state_shows_notice_without_rebuilding(client):
+def test_homepage_empty_state(client):
     client.cookies.set("admin_token", "supersecret")
     r = client.get("/")
     assert r.status_code == 200
-    # No stored edition yet → a quiet notice; the cron owns rebuilds, so the
-    # page must not park the reader on a spinner or kick a refresh itself.
-    assert "No edition yet" in r.text
-    assert "Preparing today's edition" not in r.text
-    assert "/api/home/refresh" not in r.text
-    assert 'id="refresh-btn"' not in r.text
-
-
-def test_homepage_same_eastern_day_edition_is_fresh(client):
-    """The evening bug: an edition built this Eastern day must not read as
-    stale merely because its UTC date differs from the current UTC date."""
-    from datetime import UTC, datetime
-
-    from newslet import clock
-
-    client.cookies.set("admin_token", "supersecret")
-    now = datetime.now(UTC)
-    d = clock.local_date(now)
-    # The Eastern day always straddles a UTC midnight, so one of these two
-    # same-Eastern-day instants has a different UTC date than "now".
-    morning = datetime(d.year, d.month, d.day, 0, 30, tzinfo=clock.EASTERN)
-    evening = datetime(d.year, d.month, d.day, 23, 30, tzinfo=clock.EASTERN)
-    created = next(
-        t for t in (morning, evening) if t.astimezone(UTC).date() != now.date()
-    )
-    assert clock.local_date(created) == d  # same Eastern day — fresh
-    _seed_issue("home", created_at=created.astimezone(UTC))
-    r = client.get("/")
-    assert r.status_code == 200
-    assert 'id="stale-note"' not in r.text
-    assert "Alpha Pick" in r.text
-
-
-def test_homepage_old_edition_renders_content_with_notice(client):
-    from datetime import UTC, datetime, timedelta
-
-    client.cookies.set("admin_token", "supersecret")
-    _seed_issue("home", created_at=datetime.now(UTC) - timedelta(days=3))
-    r = client.get("/")
-    assert r.status_code == 200
-    # The old edition still renders in full — no blocking spinner, no
-    # auto-kicked rebuild — with a small notice naming the edition's day.
-    assert "Alpha Pick" in r.text
-    assert 'id="stale-note"' in r.text
-    assert "today's update hasn't run yet" in r.text
-    assert "Preparing today's edition" not in r.text
-    assert "/api/home/refresh" not in r.text
-
-
-def test_homepage_shows_sticky_vote_state(client):
-    from datetime import UTC, datetime
-
-    from newslet import db
-    from newslet.contracts import FeedbackRow
-
-    client.cookies.set("admin_token", "supersecret")
-    _seed_issue("home")
-    db.put_feedback(
-        FeedbackRow(
-            article_url="https://ex.com/a",
-            title="Alpha Pick",
-            rating="up",
-            ts=datetime.now(UTC),
-            issue_date="home",
-        )
-    )
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "voted-up" in r.text
+    assert "No editions yet" in r.text
 
 
 def test_homepage_requires_admin(client):
@@ -780,25 +651,16 @@ def test_homepage_requires_admin(client):
     assert r.headers["location"] == "/login"
 
 
-def test_homepage_server_rendered_search(client, monkeypatch):
-    from newslet.contracts import WebArticle
-    from newslet.handlers import web
-
+def test_home_endpoints_removed(client):
+    """The old card-homepage plumbing is gone (deleted, not just hidden)."""
     client.cookies.set("admin_token", "supersecret")
-    _seed_issue("home")
-
-    monkeypatch.setattr(
-        web.websearch,
-        "search_web",
-        lambda q, **k: [
-            WebArticle(url="https://ex.com/found", title="Found Article",
-                       blurb="from search", source="Search Src")
-        ],
-    )
-    r = client.get("/", params={"q": "neural nets"})
-    assert r.status_code == 200
-    assert "Found Article" in r.text
-    assert "neural nets" in r.text
+    assert client.post(
+        "/api/vote",
+        data={"url": "https://ex.com/a", "rating": "up", "date": "2026-08-03"},
+    ).status_code in (404, 405)
+    assert client.get("/api/search", params={"q": "x"}).status_code == 404
+    assert client.post("/api/home/refresh").status_code in (404, 405)
+    assert client.get("/api/home/status").status_code == 404
 
 
 def test_email_archive_renders_email(client):
@@ -809,6 +671,8 @@ def test_email_archive_renders_email(client):
     assert r.status_code == 200
     assert "Alpha Pick" in r.text
     assert "picks today" in r.text  # email footer
+    # Archive fidelity: the as-sent email carries no web nav strip.
+    assert 'href="/admin"' not in r.text
 
 
 def test_email_view_404_for_missing(client):
@@ -818,87 +682,8 @@ def test_email_view_404_for_missing(client):
 
 
 # ---------------------------------------------------------------------------
-# Vote / search / HN endpoints
+# HN endpoint
 # ---------------------------------------------------------------------------
-
-
-def test_vote_requires_admin(client):
-    r = client.post("/api/vote", data={"url": "https://ex.com/a", "rating": "up",
-                                       "date": "2026-05-21"})
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-
-def test_vote_records_feedback_and_redirects(client):
-    from newslet import db
-
-    client.cookies.set("admin_token", "supersecret")
-    r = client.post(
-        "/api/vote",
-        data={"url": "https://ex.com/a", "title": "Alpha", "rating": "up",
-              "date": "2026-05-21"},
-    )
-    assert r.status_code == 303
-    assert r.headers["location"] == "/"
-    ratings = db.feedback_ratings(["https://ex.com/a"], "2026-05-21")
-    assert ratings == {"https://ex.com/a": "up"}
-
-
-def test_vote_returns_json_when_accept_json(client):
-    client.cookies.set("admin_token", "supersecret")
-    r = client.post(
-        "/api/vote",
-        data={"url": "https://ex.com/a", "title": "Alpha", "rating": "down",
-              "date": "2026-05-21"},
-        headers={"accept": "application/json"},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert body["rating"] == "down"
-
-
-def test_vote_rejects_bad_rating(client):
-    client.cookies.set("admin_token", "supersecret")
-    r = client.post(
-        "/api/vote",
-        data={"url": "https://ex.com/a", "rating": "sideways", "date": "2026-05-21"},
-    )
-    assert r.status_code == 400
-
-
-def test_vote_rejects_bad_url(client):
-    client.cookies.set("admin_token", "supersecret")
-    r = client.post(
-        "/api/vote",
-        data={"url": "not-a-url", "rating": "up", "date": "2026-05-21"},
-    )
-    assert r.status_code == 400
-
-
-def test_api_search_returns_json(client, monkeypatch):
-    from newslet.contracts import WebArticle
-    from newslet.handlers import web
-
-    client.cookies.set("admin_token", "supersecret")
-    monkeypatch.setattr(
-        web.websearch,
-        "search_web",
-        lambda q, **k: [
-            WebArticle(url="https://ex.com/r1", title="Result 1", blurb="b",
-                       source="Src"),
-        ],
-    )
-    r = client.get("/api/search", params={"q": "rust async"})
-    assert r.status_code == 200
-    data = r.json()
-    assert data["query"] == "rust async"
-    assert data["results"][0]["url"] == "https://ex.com/r1"
-
-
-def test_api_search_requires_admin(client):
-    r = client.get("/api/search", params={"q": "x"})
-    assert r.status_code == 303
 
 
 def test_api_hn_returns_json(client, monkeypatch):
@@ -1030,63 +815,6 @@ def test_config_requires_admin(client):
     )
     assert r.status_code == 303
     assert r.headers["location"] == "/login"
-
-
-# ---------------------------------------------------------------------------
-# Homepage refresh
-# ---------------------------------------------------------------------------
-
-
-def test_home_refresh_invokes_digest_home_mode(client, monkeypatch):
-    import json
-
-    from newslet.config import settings
-    from newslet.handlers import web
-
-    monkeypatch.setenv("DIGEST_FUNCTION_NAME", "newslet-Digest-abc123")
-    settings.cache_clear()
-
-    calls: list[dict] = []
-
-    class _FakeLambda:
-        def invoke(self, **kwargs):
-            calls.append(kwargs)
-            return {"StatusCode": 202}
-
-    monkeypatch.setattr(web.boto3, "client", lambda svc, **_: _FakeLambda())
-
-    client.cookies.set("admin_token", "supersecret")
-    r = client.post("/api/home/refresh", headers={"accept": "application/json"})
-    assert r.status_code == 200
-    assert r.json()["ok"] is True
-    assert len(calls) == 1
-    assert calls[0]["InvocationType"] == "Event"
-    assert json.loads(calls[0]["Payload"]) == {"home": True}
-
-
-def test_home_refresh_requires_admin(client):
-    r = client.post("/api/home/refresh")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-
-def test_home_status_reports_freshness(client):
-    from datetime import UTC, datetime
-
-    from newslet import db
-    from newslet.contracts import Issue
-
-    client.cookies.set("admin_token", "supersecret")
-
-    # No home doc yet.
-    r = client.get("/api/home/status")
-    assert r.status_code == 200
-    assert r.json()["ready"] is False
-
-    db.put_issue(Issue(date="home", picks=[], created_at=datetime.now(UTC)), manual=True)
-    r = client.get("/api/home/status")
-    assert r.json()["ready"] is True
-    assert r.json()["created_at"]
 
 
 # ---------------------------------------------------------------------------
@@ -1304,8 +1032,10 @@ def test_pages_render_selected_theme(client):
 
     client.cookies.set("admin_token", "supersecret")
     _save_config(client, theme="amber")
+    # The homepage ("/") is the email render, themed by the issue's stamped
+    # inline styles rather than the web pages' CSS vars — not asserted here.
     amber_bg = themes.THEMES["amber"].palette.bg
-    for path in ("/", "/admin", "/emails", "/login"):
+    for path in ("/admin", "/emails", "/login"):
         r = client.get(path)
         assert r.status_code == 200
         assert f"--bg: {amber_bg};" in r.text, path
@@ -1333,7 +1063,7 @@ def test_unknown_stored_theme_falls_back_to_default(client):
         "newslet-profile"
     ).put_item(Item={"id": "config", "theme": "from-the-future"})
 
-    r = client.get("/")
+    r = client.get("/emails")
     assert r.status_code == 200
     assert f"--bg: {themes.THEMES['foundry'].palette.bg};" in r.text
 

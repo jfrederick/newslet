@@ -15,6 +15,25 @@
 <title>daily scoop · {{ date|e }}</title>
 </head>
 <body style="margin:0; padding:0; background:{{ p.bg }}; font-family:{{ t.font_body }}; color:{{ p.fg }}; -webkit-text-size-adjust:100%;">
+  {% if web_nav %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{{ p.bg }};">
+    <tr>
+      <td align="center" style="padding:14px 12px 0;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;">
+          <tr>
+            <td style="font-size:{{ fs(13) }}; color:{{ p.muted }};">
+              <a href="/discover" style="color:{{ p.muted }}; text-decoration:none;">discover</a>
+              &nbsp;&middot;&nbsp;
+              <a href="/admin" style="color:{{ p.muted }}; text-decoration:none;">admin</a>
+              &nbsp;&middot;&nbsp;
+              <a href="/emails" style="color:{{ p.muted }}; text-decoration:none;">emails</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+  {% endif %}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{{ p.bg }};">
     <tr>
       <td align="center" style="padding:24px 12px;">
@@ -184,7 +203,7 @@
           <tr>
             <td align="center" style="padding:22px 24px; border-bottom:1px solid {{ p.border_soft }};">
               <a href="{{ home_url|e }}" style="display:inline-block; padding:11px 20px; font-size:{{ fs(15) }}; font-weight:600; color:{{ p.accent_fg }}; background:{{ p.accent }}; border-radius:{{ t.radius_sm }}; text-decoration:none;">Open daily scoop &rarr;</a>
-              <div style="font-size:{{ fs(12) }}; color:{{ p.muted }}; margin-top:8px;">More stories, a live Hacker News feed, and subject search on the web.</div>
+              <div style="font-size:{{ fs(12) }}; color:{{ p.muted }}; margin-top:8px;">This edition on the web &mdash; read, vote, and browse the archive.</div>
             </td>
           </tr>
 
