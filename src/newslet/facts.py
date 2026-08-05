@@ -136,18 +136,27 @@ def fetch_facts(
         logger.warning("facts: API call failed: %s", exc)
         return []
 
+    stop_reason = getattr(response, "stop_reason", None)
     text = last_text_block(response.content)
     if text is None:
-        logger.warning("facts: no text block in response")
+        logger.warning("facts: no text block in response (stop_reason=%s)", stop_reason)
         return []
     json_str = extract_json_object(text)
     if json_str is None:
-        logger.warning("facts: no JSON object found: %.200s", text)
+        logger.warning(
+            "facts: no JSON object found (stop_reason=%s): %.200s", stop_reason, text
+        )
         return []
     try:
-        payload = json.loads(json_str)
+        # strict=False: two ~500-word essays are the first multi-paragraph
+        # prose through this JSON contract, and a model reply with a literal
+        # control character inside a string would otherwise cost the reader
+        # both fact blocks under the all-or-nothing rule.
+        payload = json.loads(json_str, strict=False)
     except json.JSONDecodeError as err:
-        logger.warning("facts: could not parse response: %s", err)
+        logger.warning(
+            "facts: could not parse response (stop_reason=%s): %s", stop_reason, err
+        )
         return []
 
     raw = payload.get("facts", []) if isinstance(payload, dict) else []

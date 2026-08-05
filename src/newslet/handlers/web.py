@@ -558,8 +558,7 @@ _THANKS_HTML_TEMPLATE = (
     "<style>body{font:14px system-ui;text-align:center;margin-top:5rem}"
     "textarea{font:inherit;width:90%;max-width:32rem;height:4rem}"
     "form{margin-top:1.5rem}</style></head>"
-    '<body><h1>thanks</h1><p>recorded your __RATING__ for<br>'
-    '<a href="__URL__">__URL__</a></p>'
+    "<body><h1>thanks</h1><p>recorded your __RATING__ for<br>__TARGET__</p>"
     '<form method="post" action="/rate/note">'
     '<input type="hidden" name="a" value="__URL__">'
     '<input type="hidden" name="d" value="__DATE__">'
@@ -571,11 +570,26 @@ _THANKS_HTML_TEMPLATE = (
 )
 
 
-def _thanks_html(rating: str, url: str, issue_date: str, token: str) -> str:
+def _thanks_html(
+    rating: str, url: str, issue_date: str, token: str, label: str = ""
+) -> str:
+    """The post-vote thanks page.
+
+    ``label`` (used for synthetic vote targets like facts) shows a plain
+    title instead of a link — the synthetic /facts/... path has no route,
+    so linking it would 404. The hidden note-form fields always carry the
+    original ``url`` + token: that is what the HMAC signed.
+    """
     from html import escape
 
+    if label:
+        target = f"<strong>{escape(label)}</strong>"
+    else:
+        escaped = escape(url, quote=True)
+        target = f'<a href="{escaped}">{escaped}</a>'
     return (
         _THANKS_HTML_TEMPLATE.replace("__RATING__", escape(rating))
+        .replace("__TARGET__", target)
         .replace("__URL__", escape(url, quote=True))
         .replace("__DATE__", escape(issue_date, quote=True))
         .replace("__TOKEN__", escape(token, quote=True))
@@ -608,24 +622,26 @@ def rate(
     # the thanks page lands on this exact row regardless of HttpUrl rewrites.
     article_url = db.normalize_url(a)
 
+    # Fact votes carry synthetic /facts/{date}/{slot} URLs (see email_render);
+    # they get a title lookup by slot and a link-free thanks page (the
+    # synthetic path has no route to link to).
+    parts = urlparse(article_url).path.rstrip("/").split("/")
+    is_fact_vote = (
+        len(parts) >= 3 and parts[-3] == "facts" and parts[-1] in ("mid", "end")
+    )
+
     # Best-effort title lookup from the stored issue
     title = ""
     issue = db.get_issue(d)
     if issue:
-        for pick in issue.picks:
-            if str(pick.url) == article_url:
-                title = pick.title
-                break
-        if not title:
-            # Fact votes carry synthetic /facts/{date}/{slot} URLs (see
-            # email_render); resolve the slot to the fact's title so the
-            # facts tuner sees what was actually voted on.
-            parts = urlparse(article_url).path.rstrip("/").split("/")
-            if len(parts) >= 2 and parts[-3:-2] == ["facts"]:
-                slot = parts[-1]
-                title = next(
-                    (f.title for f in issue.facts if f.slot == slot), ""
-                )
+        if is_fact_vote:
+            slot = parts[-1]
+            title = next((f.title for f in issue.facts if f.slot == slot), "")
+        else:
+            for pick in issue.picks:
+                if str(pick.url) == article_url:
+                    title = pick.title
+                    break
 
     db.put_feedback(
         FeedbackRow(
@@ -638,7 +654,8 @@ def rate(
     )
     # The note form carries the original ``a`` + token (what the HMAC signed),
     # not the normalized key, so /rate/note's token check still passes.
-    return HTMLResponse(_thanks_html(v, a, d, t))
+    label = (title or "this fact") if is_fact_vote else ""
+    return HTMLResponse(_thanks_html(v, a, d, t, label=label))
 
 
 @app.post("/rate/note", response_class=HTMLResponse)

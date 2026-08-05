@@ -829,14 +829,14 @@ def test_run_digest_facts_disabled_skips_call(env):
     assert issue.facts == []
 
 
-def test_fresh_issue_appends_fact_topics_capped(aws, monkeypatch):
+def test_fresh_issue_does_not_burn_topics_before_send(aws, monkeypatch):
+    """The no-repeat log advances only after a confirmed send — a build whose
+    send later fails must not burn topics no reader saw."""
     from newslet import db
     from newslet.contracts import FactsState
     from newslet.handlers import digest
 
-    db.put_facts_state(
-        FactsState(markdown="- m", recent_topics=[f"t{i}" for i in range(59)])
-    )
+    db.put_facts_state(FactsState(markdown="- m", recent_topics=["t0"]))
     fake_issue = Issue(
         date="2026-08-06",
         picks=[_pick("https://a.example.com/1")],
@@ -847,10 +847,32 @@ def test_fresh_issue_appends_fact_topics_capped(aws, monkeypatch):
 
     issue, _ = digest._fresh_issue()
     assert [f.slot for f in issue.facts] == ["mid", "end"]
+    assert db.get_facts_state().recent_topics == ["t0"]
+
+
+def test_advance_facts_topic_log_dedupes_and_caps(aws):
+    from newslet import db
+    from newslet.contracts import FactsState
+    from newslet.handlers import digest
+
+    db.put_facts_state(
+        FactsState(markdown="- m", recent_topics=[f"t{i}" for i in range(59)])
+    )
+    issue = Issue(
+        date="2026-08-06",
+        picks=[],
+        created_at=datetime.now(UTC),
+        facts=_facts_pair(),
+    )
+    digest._advance_facts_topic_log(issue)
     state = db.get_facts_state()
-    assert len(state.recent_topics) == 60
+    assert len(state.recent_topics) == 60  # capped
     assert state.recent_topics[-2:] == ["Mid fact", "End fact"]
-    assert state.markdown == "- m"  # topic log update never touches the profile
+    assert state.markdown == "- m"  # never touches the taste profile
+
+    # A duplicate-send retry appends nothing new.
+    digest._advance_facts_topic_log(issue)
+    assert db.get_facts_state().recent_topics == state.recent_topics
 
 
 def test_fresh_issue_passes_general_feedback_only(aws, monkeypatch):

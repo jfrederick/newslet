@@ -146,3 +146,20 @@ def test_tune_facts_profile_rewrites_markdown(env):
     sent = json.dumps(client.calls[0]["messages"])
     assert "three-way handshake" in sent
     assert "old understanding" in sent
+
+
+def test_literal_control_chars_in_essay_still_parse(env):
+    # A model reply with a real newline inside a JSON string is invalid under
+    # strict json.loads; strict=False must accept it rather than costing the
+    # reader both fact blocks.
+    reply = (
+        '{"facts": [\n'
+        '{"title": "Mid", "body_md": "line one\nline two", '
+        '"genre": "algorithms & math", "slot": "mid"},\n'
+        '{"title": "End", "body_md": "b", '
+        '"genre": "computing history & lore", "slot": "end"}\n'
+        "]}"
+    )
+    out = facts.fetch_facts("", [], client=_FakeClient(reply))
+    assert len(out) == 2
+    assert out[0].body_md == "line one\nline two"

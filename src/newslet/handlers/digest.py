@@ -432,19 +432,7 @@ def _fresh_issue(now: datetime | None = None) -> tuple[Issue, list[Article]]:
         facts_enabled=config.facts_enabled,
         now=now,
     )
-    # Advance the no-repeat topic log as soon as facts are attached. A retry
-    # that reuses the stored issue never refetches facts, so a failed send
-    # burns these two topics at most once.
-    if issue.facts:
-        topics = (facts_state.recent_topics + [f.title for f in issue.facts])[
-            -_FACTS_TOPIC_LOG_CAP:
-        ]
-        try:
-            db.put_facts_state(
-                FactsState(markdown=facts_state.markdown, recent_topics=topics)
-            )
-        except Exception:  # noqa: BLE001 - the log is best effort
-            log.exception("failed to update the facts topic log")
+
     # Stamp the appearance (theme + text size) the issue will be sent with,
     # so the stored row keeps the /emails/{date} archive faithful to the
     # as-sent look even after the admin changes appearance settings.
@@ -467,6 +455,32 @@ def _tune_profile_after_send() -> None:
             db.put_profile(new_markdown)
     except Exception:  # noqa: BLE001 - tuning is best effort, never raise
         log.exception("profile tuning failed after send")
+
+
+def _advance_facts_topic_log(issue: Issue) -> None:
+    """Append the sent issue's fact titles to the no-repeat log.
+
+    Called only after a confirmed send (like ``mark_seen`` and the tuners) so
+    a failed send never burns topics no reader saw. Re-reads the state row at
+    write time (not the copy captured before the multi-minute model chain) so
+    an overlapping run's markdown update isn't reverted, and skips titles
+    already present so a duplicate-send retry stays idempotent. Best effort.
+    """
+    if not issue.facts:
+        return
+    try:
+        state = db.get_facts_state()
+        new_titles = [
+            f.title for f in issue.facts if f.title not in state.recent_topics
+        ]
+        if not new_titles:
+            return
+        topics = (state.recent_topics + new_titles)[-_FACTS_TOPIC_LOG_CAP:]
+        db.put_facts_state(
+            FactsState(markdown=state.markdown, recent_topics=topics)
+        )
+    except Exception:  # noqa: BLE001 - the log is best effort
+        log.exception("failed to update the facts topic log")
 
 
 def _tune_facts_after_send() -> None:
@@ -520,6 +534,7 @@ def _run_manual(s: Any) -> dict:
     )
     _send_email(subject, html)
     # Intentionally no mark_issue_sent / mark_seen here — see docstring.
+    _advance_facts_topic_log(issue)
     _tune_profile_after_send()
     _tune_facts_after_send()
 
@@ -640,6 +655,7 @@ def handler(event: dict, context: Any) -> dict:
     if seen_urls:
         db.mark_seen(seen_urls)
 
+    _advance_facts_topic_log(issue)
     _tune_profile_after_send()
     _tune_facts_after_send()
 
