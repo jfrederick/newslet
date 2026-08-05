@@ -461,4 +461,5 @@ def test_quote_epigraph_renders_after_intro_before_picks(stub_sign: None) -> Non
 
 def test_no_quote_block_when_absent(stub_sign: None) -> None:
     _, html = render_email(_issue([_pick("https://a.example.com/1", "T", "B")]), BASE_URL)
-    assert "&ldquo;" not in html.replace("&ldquo;", "“") or "“" not in html
+    assert "&ldquo;" not in html
+    assert quote(f"{BASE_URL}/quote/{DATE}", safe="") not in html
