@@ -567,6 +567,7 @@ def test_run_digest_drops_already_seen_discovery(env, monkeypatch):
         discovery_fn=fake_discovery,
         hn_fn=lambda *a, **k: [],
         websearch_fn=lambda *a, **k: [],
+        weather_fn=lambda **_: None,
     )
 
     urls = [str(d.url) for d in issue.discoveries]
@@ -617,6 +618,7 @@ def test_run_digest_merges_hn_and_adds_web_block(env, monkeypatch):
         websearch_fn=lambda *a, **k: [
             WebArticle(url="https://web.example/1", title="Web One", source="Web"),
         ],
+        weather_fn=lambda **_: None,
     )
 
     # HN candidate was merged into the pool the ranker saw.
@@ -662,6 +664,7 @@ def test_run_digest_merges_subscribed_newsletters(env, monkeypatch):
         hn_fn=lambda **k: [],
         websearch_fn=lambda *a, **k: [],
         newsletters_fn=lambda since, **k: [nl_fresh, nl_seen],
+        weather_fn=lambda **_: None,
     )
 
     pool = seen_candidates[0]
@@ -708,6 +711,7 @@ def test_run_digest_merges_x_posts(env, monkeypatch):
         websearch_fn=lambda *a, **k: [],
         newsletters_fn=lambda since, **k: [],
         x_fn=lambda *a, **k: [x_fresh, x_seen],
+        weather_fn=lambda **_: None,
     )
 
     pool = seen_candidates[0]
@@ -756,6 +760,7 @@ def test_run_digest_skips_x_when_disabled(env, monkeypatch):
         newsletters_fn=lambda since, **k: [],
         x_fn=fake_x,
         x_enabled=False,
+        weather_fn=lambda **_: None,
     )
     assert called["x"] == 0
     assert pools[0] == ["https://feed.example/rss-1"]  # no X candidate in pool
@@ -802,6 +807,7 @@ def test_run_digest_passes_config_counts_and_variety(env, monkeypatch):
         min_picks=4,
         max_web=3,
         web_variety=85,
+        weather_fn=lambda **_: None,
     )
     assert seen == {
         "max_picks": 7, "min_picks": 4, "max_web": 3, "variety": 85,
@@ -836,6 +842,7 @@ def test_run_digest_web_block_keeps_feed_domain_results(env, monkeypatch):
                        source="F"),
         ],
         max_web=5,
+        weather_fn=lambda **_: None,
     )
     assert [str(w.url) for w in issue.web_articles] == ["https://feed.example/web-piece"]
 
@@ -869,6 +876,7 @@ def test_run_digest_skips_web_block_when_max_web_zero(env, monkeypatch):
         hn_fn=lambda **k: [],
         websearch_fn=fake_web,
         max_web=0,
+        weather_fn=lambda **_: None,
     )
     assert called["web"] == 0
     assert issue.web_articles == []
@@ -939,6 +947,7 @@ def test_run_digest_drops_seen_web_article(env, monkeypatch):
             WebArticle(url=seen, title="seen", source="W"),
             WebArticle(url=fresh, title="fresh", source="W"),
         ],
+        weather_fn=lambda **_: None,
     )
     urls = [str(w.url) for w in issue.web_articles]
     assert fresh in urls
